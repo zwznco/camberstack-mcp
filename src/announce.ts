@@ -34,7 +34,7 @@ export interface Preset {
 export const PRESETS: Preset[] = [
   {
     id: "ga4-open",
-    plan: "Now: Google verified the Analytics scopes 2026-10-17 and they're on for everyone (LAUNCH.md).",
+    plan: "Now: Google verified the Analytics scopes 2026-10-17 and they're on for everyone (projects/camberstack/README.md).",
     audience: "all",
     subject: "Google Analytics now works in Camberstack",
     body: `Hi,
