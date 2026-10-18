@@ -49,10 +49,10 @@ The Search Console tools take either `days` or exact `start_date`/`end_date`, an
 days Google is still filling in. Requesting indexing and submitting sitemaps aren't available: Camberstack only holds
 the read-only scope.
 
-The Google Analytics tools need `analytics.readonly` and `analytics.edit`, sensitive scopes that aren't part of connecting:
-the first call without them returns a personal `/connect/analytics` link that adds both to the same Google account
-(incremental authorization, per API rather than per permission). Until Google verifies them, they're listed only for `ADMIN_EMAILS`/`PRO_EMAILS`; `GA4_PUBLIC=1`
-lists them for everyone. The Cloud project needs the Google Analytics Data API and Admin API enabled.
+The Google Analytics tools need `analytics.readonly` and `analytics.edit` (Google-verified sensitive scopes). Sign-in
+asks for them alongside Ads and Search Console; a connection made before they were added gets a personal
+`/connect/analytics` link on its first Analytics call, which adds both to the same Google account. The Cloud project
+needs the Google Analytics Data API and Admin API enabled.
 
 What a proposal can do:
 
@@ -109,7 +109,6 @@ BASE_URL=https://your.host npm run dev
 | `DATA_DIR` | SQLite location (default `./data`) |
 | `FREE_ACCOUNTS` / `PRO_ACCOUNTS` / `PRO_EMAILS` | Google Ads accounts each plan covers at a time, counted as distinct accounts used in the last 30 days plus one switch per 30 days, manager and demo accounts excluded (defaults 1 / 10) / emails treated as Pro |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
-| `GA4_PUBLIC` | `1` lists the Google Analytics tools for everyone; unset = internal users only (while the scope awaits Google's verification) |
 
 The hosted HTTP server is `npm run start:http` (the Docker image runs `node dist/server.js`).
 `npm start` is a stdio mode that needs no env, database or Google login: it lists every tool for
