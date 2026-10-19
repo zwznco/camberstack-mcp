@@ -227,14 +227,24 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpUrl),
   });
 
+  // ChatGPT's plugin guidelines bar upgrade prompts and checkout links, so its connections get none. Known by the
+  // redirect_uri it registered (chatgpt.com/connector/oauth/…): its client_name is whatever the user typed.
+  const clientInfo = db.prepare("SELECT info FROM clients WHERE client_id = ?");
+  const isChatGpt = (clientId: string | null) => {
+    const row = clientId ? clientInfo.get(clientId) as { info: string } | undefined : undefined;
+    const uris = row ? (JSON.parse(row.info) as { redirect_uris?: string[] }).redirect_uris ?? [] : [];
+    return uris.some((u) => { try { return new URL(u).hostname === "chatgpt.com"; } catch { return false; } });
+  };
+
   // A fresh server per request, bound to the caller the bearer middleware verified.
   const serverFor = (auth: AuthInfo | undefined) => {
     const userId = String(auth?.extra?.userId ?? "");
     const clientId = auth?.clientId ?? null;
+    const noUpsell = isChatGpt(clientId);
     let session: UserSession | undefined;
-    return buildServer(() => (session ??= UserSession.load(deps, userId)), (c) => {
+    return buildServer(() => (session ??= UserSession.load(deps, userId, { noUpsell })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null);
-    });
+    }, [], { noUpsell });
   };
   // 2026-07-28 traffic (server/discover, per-request _meta envelope). The SDK's own legacy leg would
   // answer 2025-era requests over SSE, so it is off and those keep the JSON-response wiring below.

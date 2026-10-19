@@ -91,7 +91,8 @@ export interface ToolCall {
 /** What the /tools page and llms.txt show about each tool; filled as buildServer registers them. */
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
-export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = []): McpServer {
+export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
+  o: { noUpsell?: boolean } = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: INSTRUCTIONS });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
@@ -154,7 +155,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           ? `One switch per ${ACCOUNT_WINDOW_DAYS} days: using a "switch" account makes it active and locks ${st.active.at(-1)}, `
             + "switching back included. The first call on it asks for confirm_switch before anything is spent."
           : `This ${ACCOUNT_WINDOW_DAYS}-day switch is used; locked accounts open up from ${st.switchOpens}`
-            + (s.isPro ? "." : ", or on Pro, which covers more (the billing tool has the upgrade link)."),
+            + (s.isPro || s.noUpsell ? "." : ", or on Pro, which covers more (the billing tool has the upgrade link)."),
       } } : {}),
       ...(s.lastUnreadable.length ? { unreadable: s.lastUnreadable } : {}),
       // Google Ads wasn't granted (connected for Search Console only): one link adds it, nothing to reconnect.
@@ -414,7 +415,9 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("billing", {
     title: "Plan and billing",
-    description: "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Pro 10). Returns a personal link to upgrade (Free) or to change card and cancel (Pro).",
+    description: o.noUpsell
+      ? "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers."
+      : "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Pro 10). Returns a personal link to upgrade (Free) or to change card and cancel (Pro).",
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, () => session().plan());
 

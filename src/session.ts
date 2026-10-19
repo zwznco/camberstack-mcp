@@ -146,7 +146,11 @@ export class UserSession {
   /** Accounts the login can see but Google refused to read, from the last accounts() call. */
   lastUnreadable: Unreadable[] = [];
 
-  constructor(private deps: SessionDeps, readonly user: UserRow) {
+  /** No upgrade links or plan pitches: ChatGPT's plugin guidelines bar promoting upgrades or linking to checkout. */
+  readonly noUpsell: boolean;
+
+  constructor(private deps: SessionDeps, readonly user: UserRow, o: { noUpsell?: boolean } = {}) {
+    this.noUpsell = o.noUpsell ?? false;
     const link = (kind: GrantKind) => () => deps.grantLink?.(kind, user.id) ?? null;
     const google = deps.adsFactory?.(user) ?? new AdsClient(() => this.googleAccessToken(), deps.google.developerToken, fetch, link("google-ads"));
     this.ads = routed(google, new DemoAds(deps.db, user.id));
@@ -156,11 +160,11 @@ export class UserSession {
   }
 
   /** `seen: false` leaves last_seen_at alone: an admin viewing the user's /account through "Log in as user". */
-  static load(deps: SessionDeps, userId: string, o: { seen?: boolean } = {}): UserSession {
+  static load(deps: SessionDeps, userId: string, o: { seen?: boolean; noUpsell?: boolean } = {}): UserSession {
     const user = deps.db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow | undefined;
     if (!user) throw new NotConnectedError("Unknown user; connect Camberstack again.");
     if (o.seen !== false) deps.db.prepare("UPDATE users SET last_seen_at = ? WHERE id = ?").run(now(), userId);
-    return new UserSession(deps, user);
+    return new UserSession(deps, user, o);
   }
 
   /** An access token for this user's Google connection (cached; refreshed from the stored refresh token). */
@@ -303,14 +307,14 @@ export class UserSession {
     // Once spent, the switch comes back when the account it locks ages out of the window.
     const last = this.usage().find((u) => u.c === locks)?.last ?? now();
     const reopens = new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
-    const url = this.isPro ? null : this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const url = this.isPro || this.noUpsell ? null : this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     throw new PlanLimitError(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one switch per ${ACCOUNT_WINDOW_DAYS} days. `
       + `${locks} would lock until ${reopens}, including switching back to it. Nothing has been used yet. `
       + `Ask the user; if they want to go ahead, call again with confirm_switch: true.`,
       { error: "switch_confirmation_needed", plan: this.isPro ? "pro" : "free", switch_to: cid, locks_account: locks,
         locked_until: reopens, accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
         to_go_ahead: "call again with confirm_switch: true, once the user agrees",
-        ...(this.isPro ? {} : { keep_both: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts,
+        ...(this.isPro || this.noUpsell ? {} : { keep_both: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts,
           upgrade_url: url, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } }) });
   }
 
@@ -326,9 +330,13 @@ export class UserSession {
       throw new PlanLimitError(`${used}; Pro ${rule}`,
         { error: "plan_limit", ...common, contact: "adam@camberstack.io" });
     }
-    const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     // Lead with what gets them working again: someone refused here is working on more than one account.
     const wait = st.used.includes(cid) ? `${cid} opens again on ${st.switchOpens}` : `the next switch opens on ${st.switchOpens}`;
+    if (this.noUpsell) {
+      throw new PlanLimitError(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}: the current plan ${rule} `
+        + `More accounts at a time need a different plan.`, { error: "plan_limit", ...common });
+    }
+    const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     throw new PlanLimitError(`${used} (${st.used.join(", ")}). Pro (${PRO_PRICE_LABEL}) covers up to ${this.deps.proAccounts}, `
       + `so ${cid} works right away. On Free, ${wait}: the Free plan ${rule}`,
       { error: "plan_limit", ...common,
@@ -338,6 +346,12 @@ export class UserSession {
   }
 
   plan() {
+    if (this.noUpsell) {
+      const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
+      return this.isPro ? { plan: "pro", ...usage }
+        : { plan: "free", ...usage, included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
+            note: "More accounts at a time need a different plan." };
+    }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     const account_page = `${this.deps.baseUrl}/account`;
     const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };

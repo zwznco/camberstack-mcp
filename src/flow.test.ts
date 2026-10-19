@@ -708,6 +708,25 @@ describe("OAuth + MCP end to end", () => {
       refused_account: "9998887777", upgrade: { plan: "pro", accounts_included: 10 } });
     expect(limit.upgrade.upgrade_url).toBe(link);
     expect(blocked.text).not.toMatch(/word for word|Show the user/i);
+
+    // ChatGPT connections (known by their chatgpt.com redirect) get the same limit with no plan pitch or checkout link:
+    // its plugin guidelines bar promoting upgrades.
+    const clientId = (db.prepare("SELECT client_id FROM tool_calls WHERE client_id IS NOT NULL ORDER BY id DESC LIMIT 1").get() as { client_id: string }).client_id;
+    const info = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(clientId) as { info: string }).info;
+    db.prepare("UPDATE clients SET info = ? WHERE client_id = ?")
+      .run(JSON.stringify({ ...JSON.parse(info), redirect_uris: ["https://chatgpt.com/connector/oauth/abc"] }), clientId);
+    const gpt = await call(token, "account_overview", { customer_id: "999-888-7777", days: 30 });
+    expect(gpt.text).toContain("Plan limit:");
+    expect(gpt.text).toContain("More accounts at a time need a different plan.");
+    expect(gpt.text).not.toMatch(/upgrade|\bPro\b|\$|pricing/i);
+    const gptPlan = await call(token, "billing", {});
+    expect(gptPlan.json).toMatchObject({ plan: "free", accounts_included: 1 });
+    expect(JSON.stringify(gptPlan.json)).not.toMatch(/upgrade|\bPro\b|\$|account_page|https?:/i);
+    const list = await fetch(`${base}/mcp`, { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/list" }),
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
+    const billingTool = (await list.json()).result.tools.find((t: { name: string }) => t.name === "billing");
+    expect(billingTool.description).not.toMatch(/upgrade|\bPro\b/i);
+    db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(info, clientId);
     // A refused call doesn't count as use, and the demo never counts.
     expect((await call(token, "account_overview", { customer_id: "0000000001", days: 30 })).isError).toBe(false);
 
