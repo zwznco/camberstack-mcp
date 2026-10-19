@@ -296,7 +296,9 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
         noteToolList.run(String(req.auth.extra?.userId ?? ""), req.auth.clientId, SERVER_VERSION, now());
       }
     });
-    res.on("close", () => { if (!res.writableFinished) diagnose("close"); });
+    // subscriptions/listen is a long-lived SSE stream the client holds open and hangs up on by design
+    // (Claude at ~295s, then reconnects), so its "abort" is the normal end, not a failure.
+    res.on("close", () => { if (!res.writableFinished && (req.body as { method?: string } | undefined)?.method !== "subscriptions/listen") diagnose("close"); });
     try {
       leg = (await isLegacyRequest(await toWebRequest(req, req.body), req.body)) ? "legacy" : "modern";
       if (leg === "modern") return await modern(req, res, req.body);
