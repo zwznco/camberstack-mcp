@@ -638,7 +638,10 @@ export async function resolveChange(
       if (!rows.length) throw new Error(`Campaign ${change.campaign_id} not found, or it has no conversion goals yet`);
       const cats = [...new Set(rows.map((r) => r.campaignConversionGoal.category as string))];
       if (!cats.includes(change.category)) {
-        throw new Error(`No ${change.category} goal on this campaign. The account's conversion actions give it: ${cats.join(", ")}.`);
+        throw new Error(`No ${change.category} goal on this campaign. The account's conversion actions give it: ${cats.join(", ")}. `
+          + `A GA4 key event becomes a goal only once it is imported in Google Ads (Goals → Conversions → New conversion action → Import → `
+          + `Google Analytics 4), and then under the category it was imported with. An imported action that is HIDDEN counts toward no goal: `
+          + `check with SELECT conversion_action.name, conversion_action.category, conversion_action.type, conversion_action.status FROM conversion_action.`);
       }
       const flips = rows.filter((r) => !!r.campaignConversionGoal.biddable !== (r.campaignConversionGoal.category === change.category));
       const before = [...new Set(rows.filter((r) => r.campaignConversionGoal.biddable).map((r) => r.campaignConversionGoal.category as string))];

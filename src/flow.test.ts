@@ -922,6 +922,7 @@ describe("OAuth + MCP end to end", () => {
       { type: "link_google_ads", property_id: "321", customer_id: "111-222-3333" }] });
     if (p.isError) throw new Error(p.text);
     expect(p.json.summary).toContain('Mark "generate_lead" as a key event in GA4 property "Example" (counted once per session)');
+    expect(p.json.summary).toContain("To bid on it, import it in Google Ads");
     expect(p.json.summary).toContain('Link GA4 property "Example" to Google Ads account 111-222-3333');
     expect(ga.keyEvents).toHaveLength(0);  // proposing writes nothing
 
@@ -1846,7 +1847,7 @@ describe("OAuth + MCP end to end", () => {
     expect(ads.removed).toContain("customers/1112223333/adGroupCriteria/20~700");
 
     // Conversion goal: bid on SIGNUP only, undo restores PURCHASE.
-    await expect(propose([{ type: "set_conversion_goal", campaign_id: "10", category: "PHONE_CALL_LEAD" }])).rejects.toThrow("No PHONE_CALL_LEAD goal");
+    await expect(propose([{ type: "set_conversion_goal", campaign_id: "10", category: "PHONE_CALL_LEAD" }])).rejects.toThrow(/No PHONE_CALL_LEAD goal.*Import → Google Analytics 4/);
     const g = await propose([{ type: "set_conversion_goal", campaign_id: "10", category: "SIGNUP" }]);
     expect(g.summary).toContain('Campaign "Search" counts and bids on SIGNUP conversions only (was: PURCHASE, SIGNUP)');
     await call(token, "apply_changes", { proposal_id: g.proposal_id });
