@@ -52,6 +52,12 @@ describe("analytics", () => {
     expect(p.e_n).toBeUndefined();
   });
 
+  it("names the service when one is added to a connection", () => {
+    const { a, sent } = setup();
+    a.event(req(CHROME), "grant_added", "analytics");
+    expect(Object.fromEntries(sent[0]!)).toMatchObject({ e_c: "camberstack", e_a: "grant_added", e_n: "analytics" });
+  });
+
   it("logs AI-assistant page fetches as bot requests, not visits, and ignores MCP POSTs", () => {
     const { a, sent } = setup();
     const res = Object.assign(new EventEmitter(), { statusCode: 200, getHeader: () => "1234" }) as any;

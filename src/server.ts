@@ -200,7 +200,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     }
     const state = typeof req.query.state === "string" ? req.query.state : undefined;
     if (grants.owns(state)) {
-      await grants.finish(req, res, info).catch((e: Error) => res.status(400).type("html").send(errorPage(cfg.baseUrl, e.message)));
+      const added = await grants.finish(req, res, info).catch((e: Error) => void res.status(400).type("html").send(errorPage(cfg.baseUrl, e.message)));
+      if (added) analytics.event(req, "grant_added", added);
       return;
     }
     try {

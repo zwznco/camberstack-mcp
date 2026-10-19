@@ -67,15 +67,15 @@ export class Grants {
     });
   }
 
-  /** Google came back to the shared callback with one of our states. */
-  async finish(req: Request, res: Response, page: (title: string, body: string) => string): Promise<void> {
+  /** Google came back to the shared callback with one of our states. Returns the service added, or null if refused. */
+  async finish(req: Request, res: Response, page: (title: string, body: string) => string): Promise<GrantKind | null> {
     const state = String(req.query.state);
     const row = this.d.db.prepare("SELECT params, created_at FROM pending_auth WHERE id = ? AND client_id = '__grant'").get(state) as
       { params: string; created_at: number } | undefined;
     this.d.db.prepare("DELETE FROM pending_auth WHERE id = ?").run(state);
     const p = row ? JSON.parse(row.params) as { userId: string; kind: GrantKind; nonce: string } : null;
     const label = p && isKind(p.kind) ? GRANTS[p.kind].label : "Google";
-    const fail = (msg: string) => void res.status(400).type("html").send(page(`${label} not added`, `<p>${esc(msg)}</p>`));
+    const fail = (msg: string) => (res.status(400).type("html").send(page(`${label} not added`, `<p>${esc(msg)}</p>`)), null);
     if (!row || !p || !isKind(p.kind) || row.created_at < now() - 600 || !safeEqual(p.nonce, readCookie(req, STATE_COOKIE) ?? "")) {
       return fail("This sign-in expired or was started in another browser. Open the link from your AI assistant again.");
     }
@@ -92,6 +92,7 @@ export class Grants {
     res.append("Set-Cookie", `${STATE_COOKIE}=; Path=/oauth/; Max-Age=0; SameSite=Lax`);
     res.status(200).type("html").send(page(`${label} added`, `<p><strong>${label} is now part of your Camberstack connection.</strong></p>`
       + "<p>Go back to your AI assistant and ask again.</p>"));
+    return p.kind;
   }
 
   private user(id: string): UserRow | undefined {

@@ -111,10 +111,10 @@ export class Analytics {
   }
 
   /** Server-side outcome event, e.g. a Google Ads account connected. Same browser → same daily visitor. */
-  event(req: Request, action: string): void {
+  event(req: Request, action: string, name?: string): void {
     const w = this.who(req);
     if (!w) return;
-    this.send({ url: `${this.cfg.site}/`, e_c: "camberstack", e_a: action, ua: w.ua, cid: w.cid }, w.ip);
+    this.send({ url: `${this.cfg.site}/`, e_c: "camberstack", e_a: action, ...(name ? { e_n: name } : {}), ua: w.ua, cid: w.cid }, w.ip);
   }
 
   /** An AI assistant fetching a public page because a user asked it something. Not a visit. */
