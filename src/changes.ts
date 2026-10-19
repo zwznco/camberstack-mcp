@@ -258,6 +258,10 @@ export const PUBLIC_CHANGES = [
   z.object({ type: z.literal("set_conversion_counting"), conversion_action_id: id.describe("conversion_action.id from run_gaql"),
     counting: z.enum(["ONE_PER_CLICK", "MANY_PER_CLICK"]) })
     .describe("Set how many conversions one ad click can produce for a conversion action"),
+  z.object({ type: z.literal("import_ga4_key_event"), property_id: id.describe("GA4 property id (from analytics_properties)"),
+    event_name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/).describe("The GA4 key event, e.g. generate_lead, purchase, sign_up"),
+    primary: z.boolean().default(true).describe("Primary actions count in Conversions and can steer bidding") })
+    .describe("Import a GA4 key event into Google Ads as a conversion action, so campaigns can count and bid on it. The GA4 property must be linked to this account"),
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
@@ -279,6 +283,8 @@ export const ChangeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("restore_shared_bid_strategy"), bidding_strategy_id: id, fields: z.record(z.string(), z.any()), mask: z.string(), label: z.string() }),
   z.object({ type: z.literal("remove_campaign_criteria"), campaign_id: id, resource_names: z.array(z.string()).min(1), what: z.string() }),
   z.object({ type: z.literal("remove_conversion_action"), resource_name: z.string(), name: z.string() }),
+  z.object({ type: z.literal("remove_imported_conversion_action"), resource_name: z.string(), name: z.string(), property_id: id, event_name: z.string(), primary: z.boolean(),
+    category: z.string(), biddable_before: z.array(z.string()) }),
   z.object({ type: z.literal("restore_conversion_goals"), campaign_id: id, goals: z.array(z.object({ resource_name: z.string(), biddable: z.boolean() })).min(1) }),
 ]);
 export type Change = z.infer<typeof ChangeSchema>;
@@ -295,6 +301,20 @@ export interface ResolvedChange {
   inverse?: Change;
 }
 
+
+/** One conversion category's goals: the account default (no campaign) and each live campaign's. */
+async function goalsOf(q: (gaql: string) => Promise<any[]>, category: string) {
+  const cat = gaqlStr(category);
+  const [acct, camps] = await Promise.all([
+    q(`SELECT customer_conversion_goal.resource_name, customer_conversion_goal.biddable FROM customer_conversion_goal WHERE customer_conversion_goal.category = '${cat}'`),
+    q(`SELECT campaign.name, campaign.status, campaign_conversion_goal.resource_name, campaign_conversion_goal.biddable FROM campaign_conversion_goal
+      WHERE campaign_conversion_goal.category = '${cat}'`)]);
+  return [
+    ...acct.map((r) => ({ resourceName: r.customerConversionGoal.resourceName as string, biddable: !!r.customerConversionGoal.biddable, campaign: undefined as string | undefined })),
+    ...camps.filter((r) => r.campaign.status !== "REMOVED")
+      .map((r) => ({ resourceName: r.campaignConversionGoal.resourceName as string, biddable: !!r.campaignConversionGoal.biddable, campaign: r.campaign.name as string })),
+  ];
+}
 
 /** Google's stand-in for "no end date". */
 const NO_END_DATE_TIME = "2037-12-30 23:59:59";
@@ -639,9 +659,9 @@ export async function resolveChange(
       const cats = [...new Set(rows.map((r) => r.campaignConversionGoal.category as string))];
       if (!cats.includes(change.category)) {
         throw new Error(`No ${change.category} goal on this campaign. The account's conversion actions give it: ${cats.join(", ")}. `
-          + `A GA4 key event becomes a goal only once it is imported in Google Ads (Goals → Conversions → New conversion action → Import → `
-          + `Google Analytics 4), and then under the category it was imported with. An imported action that is HIDDEN counts toward no goal: `
-          + `check with SELECT conversion_action.name, conversion_action.category, conversion_action.type, conversion_action.status FROM conversion_action.`);
+          + `A GA4 key event becomes a goal only once it is imported (the import_ga4_key_event change), and then under its category; `
+          + `a HIDDEN action is one not imported yet. Check with SELECT conversion_action.name, conversion_action.category, conversion_action.status, `
+          + `conversion_action.google_analytics_4_settings.event_name FROM conversion_action.`);
       }
       const flips = rows.filter((r) => !!r.campaignConversionGoal.biddable !== (r.campaignConversionGoal.category === change.category));
       const before = [...new Set(rows.filter((r) => r.campaignConversionGoal.biddable).map((r) => r.campaignConversionGoal.category as string))];
@@ -936,6 +956,68 @@ export async function resolveChange(
         operations: before === change.counting ? [] : [{ update: { resourceName: `customers/${customerId}/conversionActions/${change.conversion_action_id}`, countingType: change.counting }, updateMask: "counting_type" }],
         describe: `Set conversion action "${a.conversionAction.name}" to count ${change.counting === "ONE_PER_CLICK" ? "one conversion per click" : "every conversion"} (was ${before})`,
         inverse: { type: "set_conversion_counting", conversion_action_id: change.conversion_action_id, counting: before },
+      };
+    }
+    case "import_ga4_key_event": {
+      // Google Ads keeps a HIDDEN conversion action for each key event of a linked GA4 property; "Import" in its UI enables it.
+      // The API can enable it but can't hide it again, so undo removes it (and importing again re-enables it).
+      const rows = await q(`SELECT conversion_action.resource_name, conversion_action.name, conversion_action.status, conversion_action.category,
+          conversion_action.primary_for_goal FROM conversion_action
+        WHERE conversion_action.google_analytics_4_settings.property_id = ${change.property_id}
+          AND conversion_action.google_analytics_4_settings.event_name = '${gaqlStr(change.event_name)}'`);
+      const rank = { ENABLED: 0, HIDDEN: 1, REMOVED: 2 } as Record<string, number>;
+      const a = rows.map((r) => r.conversionAction).sort((x, y) => (rank[x.status] ?? 3) - (rank[y.status] ?? 3))[0];
+      if (!a) {
+        throw new Error(`Google Ads has no conversion action for "${change.event_name}" from GA4 property ${change.property_id}. Google adds one once the `
+          + `property is linked to this account (link_google_ads) and the event is a key event (mark_key_event); check both with analytics_setup.`);
+      }
+      const on = a.status === "ENABLED", wasPrimary = !!a.primaryForGoal;
+      const label = `"${a.name}" (${a.category}${change.primary ? ", primary" : ", secondary"})`;
+      const op = { update: { resourceName: a.resourceName, status: "ENABLED", primaryForGoal: change.primary }, updateMask: "status,primary_for_goal" };
+      if (on) {
+        return {
+          change, service: "conversionActions", operations: wasPrimary === change.primary ? [] : [op],
+          describe: `Make GA4 conversion action "${a.name}" ${change.primary ? "primary" : "secondary"}` + (wasPrimary === change.primary ? " (already imported)" : ""),
+          inverse: { ...change, primary: wasPrimary },
+        };
+      }
+      // A primary import can make Google bid on its category: in the account's default goals and in every campaign using them.
+      // Undo needs what bid before, to switch off only what the import turned on.
+      const biddableBefore = (await goalsOf(q, a.category)).filter((g) => g.biddable).map((g) => g.resourceName);
+      return {
+        change, service: "conversionActions", operations: [op],
+        describe: `Import GA4 key event "${change.event_name}" into Google Ads as ${label}. It counts only while "${change.event_name}" is a key event in GA4`
+          + (change.primary ? " ⚠ a primary action counts toward every campaign that uses account-default goals; scope campaigns with set_conversion_goal" : ""),
+        inverse: { type: "remove_imported_conversion_action", resource_name: a.resourceName, name: a.name, property_id: change.property_id,
+          event_name: change.event_name, primary: change.primary, category: a.category, biddable_before: biddableBefore },
+      };
+    }
+    case "remove_imported_conversion_action": {
+      const before = new Set(change.biddable_before);
+      const off = (await goalsOf(q, change.category)).filter((g) => g.biddable && !before.has(g.resourceName));
+      // Google refuses to leave a campaign on its own goals with none biddable: say what to do instead of passing on EMPTY_CONVERSION_GOALS.
+      const offCampaigns = off.filter((g) => g.campaign);
+      if (offCampaigns.length) {
+        const bidding = (await q(`SELECT campaign_conversion_goal.resource_name FROM campaign_conversion_goal WHERE campaign_conversion_goal.biddable = TRUE`))
+          .map((r) => r.campaignConversionGoal.resourceName as string);
+        const cid = (rn: string) => rn.split("/").at(-1)!.split("~")[0];
+        const only = offCampaigns.filter((g) => !bidding.some((rn) => cid(rn) === cid(g.resourceName) && rn !== g.resourceName));
+        if (only.length) {
+          throw new Error(`Campaign(s) ${only.map((g) => `"${g.campaign}"`).join(", ")} bid only on ${change.category} conversions, so undoing this import would leave `
+            + `them nothing to bid on. First give them another goal (set_conversion_goal), or undo the change that scoped them to ${change.category}; then undo this.`);
+        }
+      }
+      const campaigns = offCampaigns.map((g) => `"${g.campaign}"`);
+      const account = off.some((g) => !g.campaign);
+      return {
+        change, service: "googleAds",
+        operations: [{ conversionActionOperation: { remove: change.resource_name } },
+          ...off.map((g) => ({ [g.campaign ? "campaignConversionGoalOperation" : "customerConversionGoalOperation"]:
+            { update: { resourceName: g.resourceName, biddable: false }, updateMask: "biddable" } }))],
+        describe: `Remove conversion action "${change.name}" from Google Ads (Google can't hide an import again; import_ga4_key_event brings it back)`
+          + (off.length ? `, and stop bidding on ${change.category} conversions${account ? " in the account's default goals" : ""}`
+            + `${account && campaigns.length ? " and" : ""}${campaigns.length ? ` in campaign(s) ${campaigns.join(", ")}` : ""}, which bid on them since the import` : ""),
+        inverse: { type: "import_ga4_key_event", property_id: change.property_id, event_name: change.event_name, primary: change.primary },
       };
     }
     case "remove_campaign_criteria":

@@ -94,8 +94,7 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
             body: { eventName: change.event_name, countingMethod: change.counting } }],
           describe: `Mark "${change.event_name}" as a key event in GA4 property "${name}" (counted ${change.counting === "ONCE_PER_SESSION" ? "once per session" : "every time"})`
             + (k ? " (already a key event)" : "")
-            + ". To bid on it, import it in Google Ads (Goals → Conversions → New conversion action → Import → Google Analytics 4); "
-            + "until then it is no conversion goal there" };
+            + ". To bid on it in Google Ads, import it there next (the import_ga4_key_event change; the property must be linked to the Ads account)" };
       }
       return { ...base,
         operations: k ? [{ method: "DELETE", path: k.name }] : [],

@@ -81,6 +81,18 @@ class FakeAds {
     if (q.includes("FROM ad_group_criterion")) {
       return [{ adGroupCriterion: { status: this.kwStatus, cpcBidMicros: this.kwBid, keyword: { text: "invoice", matchType: "BROAD" } }, adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Search" } }];
     }
+    if (q.includes("WHERE campaign_conversion_goal.biddable = TRUE")) {
+      return Object.entries(this.goals).filter(([, b]) => b).map(([cat]) => ({ campaignConversionGoal: { resourceName: `customers/1112223333/campaignConversionGoals/10~${cat}~WEBSITE` } }));
+    }
+    if (q.includes("FROM customer_conversion_goal")) {
+      const cat = /category = '(\w+)'/.exec(q)![1]!;
+      return cat in this.acctGoals ? [{ customerConversionGoal: { resourceName: `customers/1112223333/customerConversionGoals/${cat}~WEBSITE`, biddable: this.acctGoals[cat] } }] : [];
+    }
+    if (q.includes("FROM campaign_conversion_goal WHERE campaign_conversion_goal.category")) {
+      const cat = /category = '(\w+)'/.exec(q)![1]!;
+      return cat in this.goals ? [{ campaign: { name: "Search", status: "PAUSED" }, campaignConversionGoal: {
+        resourceName: `customers/1112223333/campaignConversionGoals/10~${cat}~WEBSITE`, biddable: this.goals[cat] } }] : [];
+    }
     if (q.includes("FROM campaign_conversion_goal")) {
       return Object.entries(this.goals).map(([cat, biddable]) => ({ campaign: { name: "Search" }, campaignConversionGoal: {
         resourceName: `customers/1112223333/campaignConversionGoals/10~${cat}~WEBSITE`, category: cat, origin: "WEBSITE", biddable } }));
@@ -88,6 +100,10 @@ class FakeAds {
     if (q.includes("FROM ad_group WHERE")) return [{ adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Search", status: this.campaignStatus } }];
     if (q.includes("FROM ad_group_ad")) return [{ adGroupAd: { status: "ENABLED", ad: { finalUrls: ["https://example.com/old"] } }, adGroup: { name: "AG" }, campaign: { name: "Search" } }];
     if (q.includes("FROM conversion_action WHERE conversion_action.name")) return [];
+    if (q.includes("google_analytics_4_settings.event_name")) {
+      return q.includes("property_id = 321") && q.includes("'generate_lead'") ? [{ conversionAction: { resourceName: "customers/1112223333/conversionActions/90",
+        name: "Site (web) generate_lead", category: "SUBMIT_LEAD_FORM", ...this.ga4Lead } }] : [];
+    }
     if (q.includes("FROM conversion_action WHERE conversion_action.id")) return [{ conversionAction: { name: "Signup", countingType: "MANY_PER_CLICK" } }];
     if (q.includes("campaign.name = ")) return q.includes("campaign.name = 'Search'") ? [{ campaign: { id: "10" } }] : [];
     if (q.includes("FROM bidding_strategy WHERE bidding_strategy.name")) return q.includes("'Taken'") ? [{ biddingStrategy: { id: "5" } }] : [];
@@ -137,6 +153,10 @@ class FakeAds {
     } }] };
   }
   goals: Record<string, boolean> = { PURCHASE: true, SIGNUP: true };
+  /** The HIDDEN copy Google Ads keeps of linked GA4 property 321's key event generate_lead. */
+  ga4Lead = { status: "HIDDEN", primaryForGoal: false };
+  /** The account's default conversion goals: category → biddable. */
+  acctGoals: Record<string, boolean> = { PURCHASE: true, SIGNUP: false };
   /** When set, campaign 10 is on this shared (portfolio) Target CPA strategy, with campaign "Brand". */
   portfolio: { id: string; cpa: string } | undefined;
   /** Campaigns a strategy-membership query returns; default: Search and Brand. */
@@ -155,6 +175,10 @@ class FakeAds {
     if (service === "googleAds") {
       return { results: operations.map((op, i) => {
         const key = Object.keys(op)[0]!, inner = op[key];
+        if (key === "conversionActionOperation" && inner.remove?.endsWith("/90")) { this.ga4Lead.status = "REMOVED"; return { resourceName: inner.remove }; }
+        if (key === "campaignConversionGoalOperation") this.goals[inner.update.resourceName.split("~")[1]] = inner.update.biddable;
+        if (key === "customerConversionGoalOperation") this.acctGoals[inner.update.resourceName.split("/").at(-1).split("~")[0]] = inner.update.biddable;
+        if (key.endsWith("ConversionGoalOperation")) return { resourceName: inner.update.resourceName };
         if (inner.remove) { this.removed.push(inner.remove); return { resourceName: inner.remove }; }
         const coll = key.replace(/Operation$/, "").replace(/Criterion$/, "Criteria").replace(/y$/, "ie").replace(/^(?!.*Criteria$)(.*)$/, "$1s");
         return { resourceName: `customers/1112223333/${coll}/${500 + i}` };
@@ -164,6 +188,7 @@ class FakeAds {
       for (const op of operations) this.goals[op.update.resourceName.split("~")[1]] = op.update.biddable;
       return { results: operations.map((op) => ({ resourceName: op.update.resourceName })) };
     }
+    if (operations[0]?.remove && service === "conversionActions" && operations[0].remove.endsWith("/90")) this.ga4Lead.status = "REMOVED";
     if (operations[0]?.remove && service !== "campaignCriteria") {
       this.removed.push(...operations.map((op) => op.remove));
       return { results: operations.map((op) => ({ resourceName: op.remove })) };
@@ -177,6 +202,12 @@ class FakeAds {
           const rn = `customers/1112223333/campaignCriteria/10~${900 + this.negatives.length + i}`;
           this.negatives.push({ text: op.create.keyword.text, matchType: op.create.keyword.matchType, rn });
           return { resourceName: rn };
+        }
+        if (service === "conversionActions" && op.update?.status) {
+          Object.assign(this.ga4Lead, op.update);
+          // Like Google: a primary action makes its category bid in the account's default goals, and in campaigns that use them.
+          if (op.update.primaryForGoal) this.acctGoals.SUBMIT_LEAD_FORM = this.goals.SUBMIT_LEAD_FORM = true;
+          return { resourceName: op.update.resourceName };
         }
         if (op.remove) { this.negatives = this.negatives.filter((n) => n.rn !== op.remove); return { resourceName: op.remove }; }
         if (op.updateMask === "cpc_bid_micros") {
@@ -922,7 +953,7 @@ describe("OAuth + MCP end to end", () => {
       { type: "link_google_ads", property_id: "321", customer_id: "111-222-3333" }] });
     if (p.isError) throw new Error(p.text);
     expect(p.json.summary).toContain('Mark "generate_lead" as a key event in GA4 property "Example" (counted once per session)');
-    expect(p.json.summary).toContain("To bid on it, import it in Google Ads");
+    expect(p.json.summary).toContain("import it there next (the import_ga4_key_event change");
     expect(p.json.summary).toContain('Link GA4 property "Example" to Google Ads account 111-222-3333');
     expect(ga.keyEvents).toHaveLength(0);  // proposing writes nothing
 
@@ -1847,7 +1878,7 @@ describe("OAuth + MCP end to end", () => {
     expect(ads.removed).toContain("customers/1112223333/adGroupCriteria/20~700");
 
     // Conversion goal: bid on SIGNUP only, undo restores PURCHASE.
-    await expect(propose([{ type: "set_conversion_goal", campaign_id: "10", category: "PHONE_CALL_LEAD" }])).rejects.toThrow(/No PHONE_CALL_LEAD goal.*Import → Google Analytics 4/);
+    await expect(propose([{ type: "set_conversion_goal", campaign_id: "10", category: "PHONE_CALL_LEAD" }])).rejects.toThrow(/No PHONE_CALL_LEAD goal.*import_ga4_key_event/);
     const g = await propose([{ type: "set_conversion_goal", campaign_id: "10", category: "SIGNUP" }]);
     expect(g.summary).toContain('Campaign "Search" counts and bids on SIGNUP conversions only (was: PURCHASE, SIGNUP)');
     await call(token, "apply_changes", { proposal_id: g.proposal_id });
@@ -2033,6 +2064,38 @@ describe("OAuth + MCP end to end", () => {
     expect(ca.summary).toContain('Create conversion action "Provider signup" (SIGNUP, uploaded click ids, one per click, primary) ⚠');
     const cnt = await propose([{ type: "set_conversion_counting", conversion_action_id: "77", counting: "ONE_PER_CLICK" }]);
     expect(cnt.summary).toContain('"Signup" to count one conversion per click (was MANY_PER_CLICK)');
+
+    // Importing a GA4 key event enables Google's HIDDEN copy; Google can't hide it again, so undo removes it, and undoing that re-enables it.
+    const imp = await propose([{ type: "import_ga4_key_event", property_id: "321", event_name: "generate_lead" }]);
+    expect(imp.summary).toContain('Import GA4 key event "generate_lead" into Google Ads as "Site (web) generate_lead" (SUBMIT_LEAD_FORM, primary)');
+    expect(imp.summary).toContain("⚠");
+    await call(token, "apply_changes", { proposal_id: imp.proposal_id });
+    expect(last().operations).toEqual([{ update: { resourceName: "customers/1112223333/conversionActions/90", status: "ENABLED", primaryForGoal: true },
+      updateMask: "status,primary_for_goal" }]);
+    expect((await call(token, "propose_changes", { customer_id: "111-222-3333", changes: [{ type: "import_ga4_key_event", property_id: "321", event_name: "generate_lead" }] })).text)
+      .toContain("already in place");
+    expect([ads.acctGoals.SUBMIT_LEAD_FORM, ads.goals.SUBMIT_LEAD_FORM]).toEqual([true, true]);
+    // A campaign bidding only on the import's category can't be left with no goal: refused with what to do.
+    const others = { ...ads.goals };
+    ads.goals = { SUBMIT_LEAD_FORM: true, PURCHASE: false };
+    expect((await call(token, "undo_changes", { proposal_id: imp.proposal_id })).text).toContain('"Search" bid only on SUBMIT_LEAD_FORM conversions');
+    ads.goals = others;
+    const impUndo = (await call(token, "undo_changes", { proposal_id: imp.proposal_id })).json;
+    expect(impUndo.summary).toContain('Remove conversion action "Site (web) generate_lead" from Google Ads');
+    expect(impUndo.summary).toContain(`and stop bidding on SUBMIT_LEAD_FORM conversions in the account's default goals and in campaign(s) "Search", which bid on them since the import`);
+    await call(token, "apply_changes", { proposal_id: impUndo.proposal_id });
+    expect(last()).toMatchObject({ service: "googleAds", operations: [
+      { conversionActionOperation: { remove: "customers/1112223333/conversionActions/90" } },
+      { customerConversionGoalOperation: { update: { resourceName: "customers/1112223333/customerConversionGoals/SUBMIT_LEAD_FORM~WEBSITE", biddable: false }, updateMask: "biddable" } },
+      { campaignConversionGoalOperation: { update: { resourceName: "customers/1112223333/campaignConversionGoals/10~SUBMIT_LEAD_FORM~WEBSITE", biddable: false }, updateMask: "biddable" } }] });
+    expect([ads.ga4Lead.status, ads.acctGoals.SUBMIT_LEAD_FORM, ads.goals.SUBMIT_LEAD_FORM]).toEqual(["REMOVED", false, false]);
+    const redo = (await call(token, "undo_changes", { proposal_id: impUndo.proposal_id })).json;
+    expect(redo.summary).toContain('Import GA4 key event "generate_lead"');
+    await call(token, "apply_changes", { proposal_id: redo.proposal_id });
+    expect(ads.ga4Lead).toMatchObject({ status: "ENABLED", primaryForGoal: true });
+    ads.ga4Lead = { status: "HIDDEN", primaryForGoal: false };
+    delete ads.goals.SUBMIT_LEAD_FORM; delete ads.acctGoals.SUBMIT_LEAD_FORM;
+    await expect(propose([{ type: "import_ga4_key_event", property_id: "321", event_name: "sign_up" }])).rejects.toThrow(/no conversion action for "sign_up".*link_google_ads/);
   });
 
   it("uploads one conversion for a first connection that came from our ad, and none otherwise", async () => {

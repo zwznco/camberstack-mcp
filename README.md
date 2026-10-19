@@ -71,11 +71,12 @@ What a proposal can do:
   uploaded. A proposal can also add an ad group, keywords, an ad or sitelinks to an existing campaign.
 - **Tune:** keyword and ad group bids, bid strategy, location and language targeting, presence-only location
   mode, final URL suffix.
-- **Measure:** create a conversion action, set its counting, scope a campaign to one conversion goal.
+- **Measure:** create a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 
 Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, more than doubling a budget or a
 bid, switching bid strategy, removing the last location, a new primary conversion action. Undo removes only
-what Camberstack itself created; nothing the user built is ever deleted. Search Console is read-only.
+what Camberstack itself created; nothing the user built is ever deleted. (Undoing a GA4 import removes the action, since
+Google can't hide it again; importing again restores it.) Search Console is read-only.
 
 ## How auth works
 
