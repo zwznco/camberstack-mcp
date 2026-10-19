@@ -142,7 +142,7 @@ export async function listProperties(ga: Analytics) {
     if (properties.length) return { properties, accounts };
     return { properties: demo, accounts, note: accounts.length
       ? "This login's Google Analytics account has no property yet, so the demo property (sample data) is offered. create_ga4_property "
-        + "(through propose_analytics_changes) can make one in an account listed here. Tell the user the data shown is a demo."
+        + "(through a proposal) can make one in an account listed here. Tell the user the data shown is a demo."
       : "This Google login has no Google Analytics account. The user creates one at analytics.google.com (Google requires accepting its "
         + "terms there); Camberstack can then add the property. Until then only the demo property (sample data) is offered: say so." };
   } catch (e) {

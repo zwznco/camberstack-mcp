@@ -146,11 +146,14 @@ export class UserSession {
   /** Accounts the login can see but Google refused to read, from the last accounts() call. */
   lastUnreadable: Unreadable[] = [];
 
-  /** No upgrade links or plan pitches: ChatGPT's plugin guidelines bar promoting upgrades or linking to checkout. */
-  readonly noUpsell: boolean;
+  /**
+   * A ChatGPT connection, held to its plugin guidelines: no upgrade links or plan pitches (no promoting upgrades or
+   * linking to checkout), and one propose_<operation> tool per change instead of propose_changes (tools.ts).
+   */
+  readonly chatgpt: boolean;
 
-  constructor(private deps: SessionDeps, readonly user: UserRow, o: { noUpsell?: boolean } = {}) {
-    this.noUpsell = o.noUpsell ?? false;
+  constructor(private deps: SessionDeps, readonly user: UserRow, o: { chatgpt?: boolean } = {}) {
+    this.chatgpt = o.chatgpt ?? false;
     const link = (kind: GrantKind) => () => deps.grantLink?.(kind, user.id) ?? null;
     const google = deps.adsFactory?.(user) ?? new AdsClient(() => this.googleAccessToken(), deps.google.developerToken, fetch, link("google-ads"));
     this.ads = routed(google, new DemoAds(deps.db, user.id));
@@ -160,7 +163,13 @@ export class UserSession {
   }
 
   /** `seen: false` leaves last_seen_at alone: an admin viewing the user's /account through "Log in as user". */
-  static load(deps: SessionDeps, userId: string, o: { seen?: boolean; noUpsell?: boolean } = {}): UserSession {
+  /** The name a result should give a write tool: ChatGPT connections have per-operation tools instead (tools.ts). */
+  tool(name: "propose_changes" | "undo_changes"): string {
+    if (!this.chatgpt) return name;
+    return name === "undo_changes" ? "propose_undo" : "the matching propose_<operation> tool";
+  }
+
+  static load(deps: SessionDeps, userId: string, o: { seen?: boolean; chatgpt?: boolean } = {}): UserSession {
     const user = deps.db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow | undefined;
     if (!user) throw new NotConnectedError("Unknown user; connect Camberstack again.");
     if (o.seen !== false) deps.db.prepare("UPDATE users SET last_seen_at = ? WHERE id = ?").run(now(), userId);
@@ -308,14 +317,14 @@ export class UserSession {
     // Once spent, the switch comes back when the account it locks ages out of the window.
     const last = this.usage().find((u) => u.c === locks)?.last ?? now();
     const reopens = new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
-    const url = this.isPro || this.noUpsell ? null : this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const url = this.isPro || this.chatgpt ? null : this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     throw new PlanLimitError(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one switch per ${ACCOUNT_WINDOW_DAYS} days. `
       + `${locks} would lock until ${reopens}, including switching back to it. Nothing has been used yet. `
       + `Ask the user; if they want to go ahead, call switch_account with customer_id ${cid}, then this tool again.`,
       { error: "switch_confirmation_needed", plan: this.isPro ? "pro" : "free", switch_to: cid, locks_account: locks,
         locked_until: reopens, accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
         to_go_ahead: `once the user agrees, call switch_account with customer_id ${cid}, then this tool again`,
-        ...(this.isPro || this.noUpsell ? {} : { keep_both: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts,
+        ...(this.isPro || this.chatgpt ? {} : { keep_both: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts,
           upgrade_url: url, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } }) });
   }
 
@@ -326,14 +335,14 @@ export class UserSession {
     const common = { plan: this.isPro ? "pro" : "free", accounts_in_use: st.used, active_accounts: st.active,
       accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS, refused_account: cid,
       switching: `one switch per ${ACCOUNT_WINDOW_DAYS} days, already used; the next opens ${st.switchOpens}`,
-      still_available: ["the active accounts", "undo_changes", "change_history", "billing"] };
+      still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"] };
     if (this.isPro) {
       throw new PlanLimitError(`${used}; Pro ${rule}`,
         { error: "plan_limit", ...common, contact: "adam@camberstack.io" });
     }
     // Lead with what gets them working again: someone refused here is working on more than one account.
     const wait = st.used.includes(cid) ? `${cid} opens again on ${st.switchOpens}` : `the next switch opens on ${st.switchOpens}`;
-    if (this.noUpsell) {
+    if (this.chatgpt) {
       throw new PlanLimitError(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}: the current plan ${rule} `
         + `More accounts at a time need a different plan.`, { error: "plan_limit", ...common });
     }
@@ -347,7 +356,7 @@ export class UserSession {
   }
 
   plan() {
-    if (this.noUpsell) {
+    if (this.chatgpt) {
       const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
       return this.isPro ? { plan: "pro", ...usage }
         : { plan: "free", ...usage, included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
@@ -470,7 +479,7 @@ export class UserSession {
   }
 
   async runQuery(customerId: string, query: string) {
-    if (!/^\s*select\b/i.test(query)) throw new Error("Only SELECT (read-only GAQL) queries are allowed. Use propose_changes to change anything.");
+    if (!/^\s*select\b/i.test(query)) throw new Error(`Only SELECT (read-only GAQL) queries are allowed. Use ${this.tool("propose_changes")} to change anything.`);
     const lookup = fieldQuery(query);
     if (lookup !== null) return this.fieldLookup(lookup);
     const a = await this.account(customerId);
@@ -852,7 +861,7 @@ export class UserSession {
         + "Ads sit above organic results and brand terms defend against competitors, so don't cut them all: suggest testing one at a time "
         + "(set_keyword_bid lower, or add_negative_keywords) and comparing total clicks before and after. "
         + "organic_gaps: searches the site shows up for on page 2 or lower with no ad and no keyword in the account; check them with "
-        + "keyword_metrics, then add_keywords or add_ad_group through propose_changes. Search Console leaves out rare queries, so both lists are partial.",
+        + `keyword_metrics, then add_keywords or add_ad_group through ${this.tool("propose_changes")}. Search Console leaves out rare queries, so both lists are partial.`,
     };
   }
 
@@ -948,7 +957,7 @@ export class UserSession {
       save("applied", outcomes);
       return { proposal_id: p.id, status: "applied", results: publicResults(outcomes),
         // A removal has no inverse (a removed campaign can't be restored), so don't offer an undo that would fail.
-        undo: outcomes.some((o) => o.inverse) ? `To reverse this, call undo_changes with proposal_id "${p.id}".` : undefined };
+        undo: outcomes.some((o) => o.inverse) ? `To reverse this, call ${this.tool("undo_changes")} with proposal_id "${p.id}".` : undefined };
     }
 
     // A write failed despite validating (the account changed in between, or Google hiccuped): roll back the
@@ -972,7 +981,7 @@ export class UserSession {
       proposal_id: p.id, status: outcomes.some((o) => o.ok && o.error) ? "partially applied" : "failed",
       note: outcomes.some((o) => o.ok && o.error) ? "Some changes stayed applied; see results." : "Nothing was changed: the changes made before the failure were rolled back.",
       results: publicResults(outcomes),
-      undo: stuck ? `To reverse what stayed applied, call undo_changes with proposal_id "${p.id}".` : undefined,
+      undo: stuck ? `To reverse what stayed applied, call ${this.tool("undo_changes")} with proposal_id "${p.id}".` : undefined,
     };
   }
 

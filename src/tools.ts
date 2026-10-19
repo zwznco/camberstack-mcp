@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ListToolsResult, ToolAnnotations } from "@modelcontextprotocol/server";
-import { MAX_CHANGES, PublicChangeSchema } from "./changes.js";
+import { MAX_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
 import { fieldQuery, queryShape } from "./gaql.js";
-import { GA_TARGET, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
+import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
 import { ACCOUNT_WINDOW_DAYS, PlanLimitError } from "./plans.js";
 import { isDemo, type Account, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
@@ -20,8 +20,14 @@ For keyword_ideas and keyword_metrics, pass the account's own market: location_i
 Search Console is read-only: lead with search_console_summary (per-query rows leave out rare queries). Camberstack can't request indexing or submit sitemaps: the user does that in Search Console.
 Account 000-000-0001 is a demo with sample data: anyone can try every tool on it, and changes there never touch Google. Always say when you are using it.`;
 
+/** ChatGPT's connections have no propose_changes or undo_changes: one propose_<operation> tool per change, and propose_undo. */
+const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
+  .replace("propose_changes → show", "the propose_<operation> tool for that change (propose_pause_campaign, propose_set_daily_budget, …) → show")
+  .replace("reversed with undo_changes", "reversed with propose_undo (a proposal like any other: approve, then apply_changes)");
+
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
-const GATED = new Set(["account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account"]);
+const GATED = new Set(["account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
+  ...PUBLIC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
 
 /** A run_gaql field lookup reads Google's field catalog, not the account named: no plan gate, and no account in the log. */
 const isLookup = (name: string, a: unknown) => {
@@ -90,8 +96,8 @@ export interface ToolCall {
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { noUpsell?: boolean } = {}): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: INSTRUCTIONS });
+  o: { chatgpt?: boolean } = {}): McpServer {
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
       const t0 = Date.now();
@@ -154,7 +160,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           ? `One switch per ${ACCOUNT_WINDOW_DAYS} days: using a "switch" account makes it active and locks ${st.active.at(-1)}, `
             + "switching back included. Nothing is spent until the user agrees and switch_account is called."
           : `This ${ACCOUNT_WINDOW_DAYS}-day switch is used; locked accounts open up from ${st.switchOpens}`
-            + (s.isPro || s.noUpsell ? "." : ", or on Pro, which covers more (the billing tool has the upgrade link)."),
+            + (s.isPro || s.chatgpt ? "." : ", or on Pro, which covers more (the billing tool has the upgrade link)."),
       } } : {}),
       ...(s.lastUnreadable.length ? { unreadable: s.lastUnreadable } : {}),
       // Google Ads wasn't granted (connected for Search Console only): one link adds it, nothing to reconnect.
@@ -340,7 +346,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     annotations: read,
   }, ({ property_id }: { property_id: string }) => gaSetup(session().ga, property_id));
 
-  tool("propose_analytics_changes", {
+  if (!o.chatgpt) tool("propose_analytics_changes", {
     title: "Propose Google Analytics changes (applies nothing)",
     description: "Checks Google Analytics setup changes against the live property and stores them as a proposal with a plain-English summary; "
       + "nothing is changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). "
@@ -376,22 +382,59 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   }, ({ property_id, ...o }: GaWindow & { property_id: string; dimensions: string[]; metrics: string[];
     filter?: { dimension: string; contains: string }; order_by?: string; limit: number }) => report(session().ga, property_id, o));
 
-  tool("propose_changes", {
+  if (!o.chatgpt) tool("propose_changes", {
     title: "Propose Google Ads changes (applies nothing)",
     description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, create_conversion_action, set_conversion_counting. Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
     inputSchema: { customer_id: customerId, changes: z.array(PublicChangeSchema).min(1).max(MAX_CHANGES).describe(`Changes to propose; several can go in one proposal, up to ${MAX_CHANGES} (each keyword counts as one)`) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, ({ customer_id, changes }: { customer_id: string; changes: unknown[] }) => session().propose(customer_id, changes));
 
+  // ChatGPT's plugin guidelines want each model-callable operation exposed as its own tool, not picked by a `type` field.
+  // Same schemas and the same proposal: each tool proposes one change, which apply_changes applies once approved.
+  const proposeNote = "Changes nothing: checks the change against the live account, stores it as a proposal and returns a plain-English summary. "
+    + "Show the summary, and any ⚠ line in it, to the user and call apply_changes only after they approve.";
+  const proposes = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
+  if (o.chatgpt) {
+    for (const c of PUBLIC_CHANGES) {
+      const { type, ...shape } = c.shape;
+      const op = type.value;
+      tool(`propose_${op}`, {
+        title: `Propose: ${op.replace(/_/g, " ")}`,
+        description: `${c.description}. ${proposeNote}`,
+        inputSchema: { customer_id: customerId, ...shape },
+        annotations: proposes,
+      }, ({ customer_id, ...rest }: { customer_id: string } & Record<string, unknown>) => session().propose(customer_id, [{ type: op, ...rest }]));
+    }
+    for (const c of PUBLIC_GA_CHANGES) {
+      // A top-level customer_id would be logged as Google Ads use (wrap), so the Ads account a link names is ads_customer_id here.
+      const { type, customer_id: ads, ...shape } = c.shape as typeof c.shape & { customer_id?: z.ZodString };
+      const op = type.value;
+      tool(`propose_${op}`, {
+        title: `Propose: ${op.replace(/_/g, " ").replace("ga4", "GA4")}`,
+        description: `${c.description}. ${proposeNote}`,
+        inputSchema: { ...shape, ...(ads ? { ads_customer_id: ads } : {}) },
+        annotations: proposes,
+      }, ({ ads_customer_id, ...rest }: { ads_customer_id?: string } & Record<string, unknown>) =>
+        session().propose(GA_TARGET, [{ type: op, ...rest, ...(ads_customer_id ? { customer_id: ads_customer_id } : {}) }]));
+    }
+    tool("propose_undo", {
+      title: "Propose reversing an applied proposal",
+      description: "Builds a new proposal that would reverse an applied one (removes the negatives it added, restores statuses and budgets). "
+        + "Changes nothing by itself: like any proposal, it must be approved and then applied with apply_changes.",
+      inputSchema: { proposal_id: z.string().describe("The id of an applied proposal, from change_history or apply_changes") },
+      annotations: proposes,
+    }, ({ proposal_id }: { proposal_id: string }) => session().undo(proposal_id));
+  }
+
   tool("apply_changes", {
     title: "Apply an approved proposal",
-    description: "Applies a proposal from propose_changes to the Google Ads account. Only call this after the user has explicitly approved that proposal. All or nothing: every change is checked with Google first, and if one still fails the ones before it are rolled back. Each change is logged and can be reversed with undo_changes. "
+    description: `Applies a proposal from ${o.chatgpt ? "a propose_ tool" : "propose_changes"} to the account. Only call this after the user has explicitly approved that proposal. All or nothing: every change is checked with Google first, and if one still fails the ones before it are rolled back. Each change is logged and can be reversed with ${o.chatgpt ? "propose_undo" : "undo_changes"}. `
       + "If the account changed since the proposal, nothing is applied and the result (status \"needs approval\") is a new proposal with the updated summary: show it to the user and apply it only after they approve.",
-    inputSchema: { proposal_id: z.string().describe("The id returned by propose_changes") },
+    inputSchema: { proposal_id: z.string().describe("The proposal_id a propose tool returned") },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, ({ proposal_id }: { proposal_id: string }) => session().apply(proposal_id));
 
-  tool("undo_changes", {
+  if (!o.chatgpt) tool("undo_changes", {
     title: "Propose reversing an applied proposal",
     description: "Builds a new proposal that would reverse an applied one (removes the negatives it added, restores statuses and budgets). Changes nothing by itself: like any proposal, it must be approved and then applied with apply_changes.",
     inputSchema: { proposal_id: z.string().describe("The id of an applied proposal, from change_history or apply_changes") },
@@ -401,7 +444,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   tool("discard_proposal", {
     title: "Discard a proposal",
     description: "Marks an open proposal as discarded so it can never be applied; this can't be reversed (propose again instead). Changes nothing in the Google Ads account.",
-    inputSchema: { proposal_id: z.string().describe("The id returned by propose_changes") },
+    inputSchema: { proposal_id: z.string().describe("The proposal_id a propose tool returned") },
     // Cancelling counts as destructive in ChatGPT's annotation rules, even though the account is untouched.
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, ({ proposal_id }: { proposal_id: string }) => session().discard(proposal_id));
@@ -431,7 +474,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("billing", {
     title: "Plan and billing",
-    description: o.noUpsell
+    description: o.chatgpt
       ? "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers."
       : "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Pro 10). Returns a personal link to upgrade (Free) or to change card and cancel (Pro).",
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },

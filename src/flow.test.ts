@@ -13,7 +13,8 @@ import { openDb } from "./db.js";
 import type { Config } from "./config.js";
 import { decrypt, encrypt } from "./crypto.js";
 import { AdsApiError, NotGrantedError } from "./google.js";
-import { io } from "./changes.js";
+import { io, PUBLIC_CHANGES } from "./changes.js";
+import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { SERVER_VERSION } from "./tools.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { buildReport } from "./report.js";
@@ -967,6 +968,53 @@ describe("OAuth + MCP end to end", () => {
 
     const h = (await call(token, "change_history", { customer_id: "ga4" })).json;
     expect(h[0].customer_id).toBe("ga4");
+  });
+
+  it("gives ChatGPT one propose tool per operation, with the same proposals, apply and undo", async () => {
+    // ChatGPT's plugin guidelines: each model-callable operation is its own tool, not one picked by a `type` field.
+    const clientId = (db.prepare("SELECT client_id FROM tool_calls WHERE client_id IS NOT NULL ORDER BY id DESC LIMIT 1").get() as { client_id: string }).client_id;
+    const info = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(clientId) as { info: string }).info;
+    db.prepare("UPDATE clients SET info = ? WHERE client_id = ?")
+      .run(JSON.stringify({ ...JSON.parse(info), redirect_uris: ["https://chatgpt.com/connector/oauth/abc"] }), clientId);
+    try {
+      const listed = await fetch(`${base}/mcp`, { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/list" }),
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
+      const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
+      const names = tools.map((t) => t.name);
+      expect(names).not.toContain("propose_changes");
+      expect(names).not.toContain("propose_analytics_changes");
+      expect(names).not.toContain("undo_changes");
+      for (const n of ["propose_pause_campaign", "propose_create_performance_max_campaign", "propose_set_conversion_counting",
+        "propose_link_google_ads", "propose_create_ga4_property", "propose_undo", "apply_changes"]) expect(names).toContain(n);
+      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + PUBLIC_GA_CHANGES.length + 1);
+      for (const t of tools.filter((t) => t.name.startsWith("propose_"))) {
+        expect(t.description, t.name).not.toMatch(/undefined|propose_changes|undo_changes/);
+        expect(t.inputSchema.properties, t.name).not.toHaveProperty("type");
+        expect(t.annotations, t.name).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: true });
+      }
+      // The Ads account a GA4 link names isn't logged as Google Ads use: it is ads_customer_id, not customer_id.
+      expect(tools.find((t) => t.name === "propose_link_google_ads")!.inputSchema.properties).toHaveProperty("ads_customer_id");
+
+      const p = await call(token, "propose_pause_keyword", { customer_id: "111-222-3333", ad_group_id: "5", criterion_id: "7" });
+      if (p.isError) throw new Error(p.text);
+      expect(p.json.summary).toContain("Pause keyword");
+      const a = await call(token, "apply_changes", { proposal_id: p.json.proposal_id });
+      expect(a.json.status).toBe("applied");
+      expect(a.json.undo).toContain("call propose_undo with proposal_id");
+      expect(ads.kwStatus).toBe("PAUSED");
+      const u = await call(token, "propose_undo", { proposal_id: p.json.proposal_id });
+      expect((await call(token, "apply_changes", { proposal_id: u.json.proposal_id })).json.status).toBe("applied");
+      expect(ads.kwStatus).toBe("ENABLED");
+
+      const before = (db.prepare("SELECT count(*) n FROM tool_calls WHERE customer_id = '1112223333'").get() as { n: number }).n;
+      const g = await call(token, "propose_link_google_ads", { property_id: "321", ads_customer_id: "111-222-3333" });
+      if (g.isError) throw new Error(g.text);
+      expect(g.json.summary).toContain('Link GA4 property "Example" to Google Ads account 111-222-3333');
+      expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE customer_id = '1112223333'").get() as { n: number }).n).toBe(before);
+      await call(token, "discard_proposal", { proposal_id: g.json.proposal_id });
+    } finally {
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(info, clientId);
+    }
   });
 
   it("undoes a change only once", async () => {

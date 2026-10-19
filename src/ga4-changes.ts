@@ -18,7 +18,7 @@ const eventName = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/, "a GA4 event 
 const adsCustomer = z.string().regex(/^\d{3}-?\d{3}-?\d{4}$/).transform((s) => s.replace(/-/g, "")).describe("Google Ads customer ID, with or without dashes");
 const counting = z.enum(["ONCE_PER_EVENT", "ONCE_PER_SESSION"]);
 
-const PUBLIC_GA_CHANGES = [
+export const PUBLIC_GA_CHANGES = [
   z.object({ type: z.literal("create_ga4_property"), account_id: digits.describe("Google Analytics account id (from analytics_properties' accounts)"),
     name: z.string().min(1).max(100).describe("Property name, usually the business or site"),
     website_url: z.string().url().describe("The site's address, e.g. https://www.example.com"),

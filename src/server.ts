@@ -240,11 +240,11 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   const serverFor = (auth: AuthInfo | undefined) => {
     const userId = String(auth?.extra?.userId ?? "");
     const clientId = auth?.clientId ?? null;
-    const noUpsell = isChatGpt(clientId);
+    const chatgpt = isChatGpt(clientId);
     let session: UserSession | undefined;
-    return buildServer(() => (session ??= UserSession.load(deps, userId, { noUpsell })), (c) => {
+    return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null);
-    }, [], { noUpsell });
+    }, [], { chatgpt });
   };
   // 2026-07-28 traffic (server/discover, per-request _meta envelope). The SDK's own legacy leg would
   // answer 2025-era requests over SSE, so it is off and those keep the JSON-response wiring below.

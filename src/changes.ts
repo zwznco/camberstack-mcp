@@ -119,7 +119,7 @@ const goalCategory = z.string().regex(/^[A-Z_]+$/, "a conversion category such a
  * id comes from or what unit an amount is in (ChatGPT took ~2 minutes to work out a budget change
  * before these existed).
  */
-const PUBLIC_CHANGES = [
+export const PUBLIC_CHANGES = [
   z.object({
     type: z.literal("add_negative_keywords"),
     campaign_id: campaignId,
