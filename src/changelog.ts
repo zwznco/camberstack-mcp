@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.16.0", date: "2026-10-19",
+    summary: "Switching accounts is its own step, and ChatGPT gets a tool for each kind of change.",
+    items: [
+      "**Switching your plan's active account is a separate, explicit step** (`switch_account`). Asking about a new account still stops first and says what the switch would lock and until when; nothing is spent until you agree. A switch is never spent on an account your login can't reach.",
+      "**In ChatGPT, every kind of change has its own tool**, such as `propose_pause_campaign`, `propose_set_daily_budget` or `propose_mark_key_event`, plus `propose_undo`. Each still makes a proposal that waits for your approval. In ChatGPT, after updating, refresh the connector to get the new tools. Claude and other apps keep the same tools as before.",
+      "**Clearer names for undo and discard:** undo makes a proposal that reverses an applied change, which you approve like any other, and a discarded proposal can't be brought back.",
+    ],
+  },
+  {
     version: "0.15.0", date: "2026-10-17",
     summary: "Google Analytics 4 for everyone.",
     items: [
