@@ -1028,7 +1028,7 @@ describe("OAuth + MCP end to end", () => {
     ads.search = async (cid: string, q: string) => { await new Promise((r) => setTimeout(r, 50)); return realSearch(cid, q); };
     try {
       // Free takes one account plus one switch, so of three new accounts at once exactly one is refused.
-      const all = await Promise.all(["111-222-3333", "999-888-7777", "888-777-6666"].map((c) => call(token, "account_overview", { customer_id: c, days: 30, confirm_switch: true })));
+      const all = await Promise.all(["111-222-3333", "999-888-7777", "888-777-6666"].map((c) => call(token, "switch_account", { customer_id: c })));
       expect(all.filter((r) => r.text.includes("Plan limit:"))).toHaveLength(1);
     } finally {
       ads.search = realSearch;
@@ -1049,6 +1049,7 @@ describe("OAuth + MCP end to end", () => {
     expect(notice).toMatchObject({ error: "switch_confirmation_needed", switch_to: "2223334444", locks_account: "1112223333",
       keep_both: { plan: "pro", accounts_included: 10 } });
     expect(notice.keep_both.upgrade_url).toContain("/upgrade?t=");
+    expect(notice.to_go_ahead).toContain("call switch_account with customer_id 2223334444");
     // A field lookup reads Google's catalog, not the account it names: no switch, and the account isn't logged as used.
     const look = await call(token, "run_gaql", { customer_id: "222-333-4444", query: "SELECT name, category WHERE name LIKE '%search_term%'" });
     expect(look.isError).toBe(false);
@@ -1059,9 +1060,26 @@ describe("OAuth + MCP end to end", () => {
     // The account in use, the demo and the switch once confirmed all go through (this login just can't read 2223334444).
     expect((await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).not.toContain("Account switch:");
     expect((await call(token, "account_overview", { customer_id: "0000000001", days: 30 })).isError).toBe(false);
-    const sw = await call(token, "account_overview", { customer_id: "222-333-4444", days: 30, confirm_switch: true });
-    expect(sw.text).not.toContain("Plan limit:");
-    expect(sw.text).not.toContain("Account switch:");
+    // Spending the switch is its own write tool: no read tool takes a flag that changes the plan. It never spends the
+    // switch on an account the login can't reach.
+    const unreachable = await call(token, "switch_account", { customer_id: "222-333-4444" });
+    expect(unreachable.isError).toBe(true);
+    expect(unreachable.text).toContain("Nothing was spent");
+    expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
+    const realSearch = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
+      ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
+      : realSearch(cid, q);
+    try {
+      const sw = await call(token, "switch_account", { customer_id: "222-333-4444" });
+      expect(sw.json).toMatchObject({ switched_to: "2223334444", active_accounts: ["2223334444"] });
+      const after = await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 });
+      expect(after.text).not.toContain("Plan limit:");
+      expect(after.text).not.toContain("Account switch:");
+    } finally {
+      ads.search = realSearch;
+      db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444'").run(uid);
+    }
 
     // As if they'd been on Pro: three accounts used, 2223334444 most recently. Free covers one, the switch is spent.
     const saved = db.prepare("SELECT * FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").all(uid);
@@ -1072,7 +1090,7 @@ describe("OAuth + MCP end to end", () => {
     use.run(t - 3 * 86400, uid, "3334445555");
     use.run(t - 86400, uid, "2223334444");
     try {
-      const blocked = await call(token, "account_overview", { customer_id: "111-222-3333", days: 30, confirm_switch: true });
+      const blocked = await call(token, "switch_account", { customer_id: "111-222-3333" });
       expect(blocked.text).toContain("Plan limit:");
       // Switching back to an account used before: lead with Pro, then when it opens again.
       expect(blocked.text).toContain("Pro ($15/month) covers up to 10, so 1112223333 works right away. On Free, 1112223333 opens again on ");

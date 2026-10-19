@@ -210,9 +210,10 @@ export class UserSession {
 
   /** accountsInUse, most recently used first, with when each was last used. */
   private usage(): { c: string; last: number }[] {
+    // max(id): a same-second tie goes to the later call, so switch_account's account is the active one.
     return this.deps.db.prepare(`SELECT customer_id c, max(at) last FROM tool_calls
         WHERE user_id = ? AND ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?) AND at >= ?
-        GROUP BY customer_id ORDER BY last DESC, c`)
+        GROUP BY customer_id ORDER BY last DESC, max(id) DESC, c`)
       .all(this.user.id, DEMO_CID, GA_TARGET, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0)) as { c: string; last: number }[];
   }
 
@@ -251,8 +252,8 @@ export class UserSession {
    * One user's checks run one at a time, and a passed account counts as in use until its call ends (call the
    * returned release): AI clients call tools in parallel, which otherwise let several new accounts through at once.
    *
-   * Spending the switch takes `confirmSwitch`: without it the call stops with a notice naming what will lock and
-   * until when. Users found out only on the way back, after days of work on both (2026-10-16).
+   * Spending the switch takes `confirmSwitch`, which only switch_account passes: any other tool stops with a notice
+   * naming what will lock and until when. Users found out only on the way back, after days of work on both (2026-10-16).
    */
   checkAccount(customerId: string, confirmSwitch = false): Promise<() => void> {
     const prev = gateQueue.get(this.user.id) ?? Promise.resolve();
@@ -310,10 +311,10 @@ export class UserSession {
     const url = this.isPro || this.noUpsell ? null : this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     throw new PlanLimitError(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one switch per ${ACCOUNT_WINDOW_DAYS} days. `
       + `${locks} would lock until ${reopens}, including switching back to it. Nothing has been used yet. `
-      + `Ask the user; if they want to go ahead, call again with confirm_switch: true.`,
+      + `Ask the user; if they want to go ahead, call switch_account with customer_id ${cid}, then this tool again.`,
       { error: "switch_confirmation_needed", plan: this.isPro ? "pro" : "free", switch_to: cid, locks_account: locks,
         locked_until: reopens, accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
-        to_go_ahead: "call again with confirm_switch: true, once the user agrees",
+        to_go_ahead: `once the user agrees, call switch_account with customer_id ${cid}, then this tool again`,
         ...(this.isPro || this.noUpsell ? {} : { keep_both: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts,
           upgrade_url: url, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } }) });
   }

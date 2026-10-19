@@ -40,6 +40,7 @@ Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time wit
 | `propose_changes` | no | resolves changes against the live account, dry-runs them with Google (`validateOnly`), stores a proposal with a plain-English summary |
 | `apply_changes` | **yes** | applies a stored proposal (the user's own, un-applied, still matching the account; if the account moved, returns an updated proposal to approve instead); records each change's inverse |
 | `undo_changes` | no | builds the reversing proposal for an applied one |
+| `switch_account` | plan only | spends the plan's one account switch per 30 days on an account, after the user agrees; changes nothing in Google Ads |
 | `billing` | no | plan, Google Ads accounts in use (last 30 days) vs. the plan's limit, and a personal upgrade or manage-billing link |
 | `discard_proposal` | no | marks an open proposal discarded so it can't be applied |
 | `change_history` | no | every proposal, with what was applied, what failed and what was undone |

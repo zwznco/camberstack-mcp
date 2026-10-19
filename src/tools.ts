@@ -21,7 +21,7 @@ Search Console is read-only: lead with search_console_summary (per-query rows le
 Account 000-000-0001 is a demo with sample data: anyone can try every tool on it, and changes there never touch Google. Always say when you are using it.`;
 
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
-const GATED = new Set(["account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap"]);
+const GATED = new Set(["account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account"]);
 
 /** A run_gaql field lookup reads Google's field catalog, not the account named: no plan gate, and no account in the log. */
 const isLookup = (name: string, a: unknown) => {
@@ -35,8 +35,6 @@ const isLookup = (name: string, a: unknown) => {
  */
 const UNLISTED = new Set(["gaql_fields"]);
 
-const confirmSwitch = z.boolean().optional()
-  .describe("Only after the user has agreed to spend their plan's account switch (a call answered \"Account switch:\"). Leave out otherwise");
 const customerId = z.string().describe("Google Ads customer ID, with or without dashes (from list_accounts)");
 const locationIds = z.array(z.string().regex(/^\d+$/)).min(1).max(10).default(["2840"])
   .describe("Google geo target IDs. 2840 United States, 2826 United Kingdom, 2124 Canada, 2036 Australia, 2356 India. "
@@ -103,7 +101,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       let release = () => {};
       try {
         if (GATED.has(name) && typeof cid === "string")
-          release = await session().checkAccount(cid, (a as { confirm_switch?: unknown }).confirm_switch === true);
+          // Only switch_account may spend the plan's switch: the read tools stay free of side effects.
+          release = await session().checkAccount(cid, name === "switch_account");
         out = ok(await fn(a));
       } catch (e) {
         out = fail(e);
@@ -127,7 +126,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     fn: (a: A) => Promise<unknown> | unknown) => (UNLISTED.has(name) || catalog.push({ name, ...config }),
     server.registerTool(name, {
       ...config,
-      inputSchema: config.inputSchema && z.object(GATED.has(name) ? { ...config.inputSchema, confirm_switch: confirmSwitch } : config.inputSchema),
+      inputSchema: config.inputSchema && z.object(config.inputSchema),
       annotations: { ...config.annotations, title: config.title },
     }, wrap(name, fn) as never));
   // Every tool sets all three hints (publish.test.ts): ChatGPT's plugin review rejects an unset one.
@@ -153,7 +152,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         plan: s.isPro ? "pro" : "free", accounts_included: s.accountLimit, active_accounts: st.active,
         switching: st.canSwitch
           ? `One switch per ${ACCOUNT_WINDOW_DAYS} days: using a "switch" account makes it active and locks ${st.active.at(-1)}, `
-            + "switching back included. The first call on it asks for confirm_switch before anything is spent."
+            + "switching back included. Nothing is spent until the user agrees and switch_account is called."
           : `This ${ACCOUNT_WINDOW_DAYS}-day switch is used; locked accounts open up from ${st.switchOpens}`
             + (s.isPro || s.noUpsell ? "." : ", or on Pro, which covers more (the billing tool has the upgrade link)."),
       } } : {}),
@@ -412,6 +411,22 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     inputSchema: { customer_id: customerId.optional(), limit: z.number().int().min(1).max(100).default(20).describe("Most proposals to return, newest first") },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, ({ customer_id, limit }: { customer_id?: string; limit: number }) => session().history(customer_id, limit));
+
+  tool("switch_account", {
+    title: "Switch the plan's active account",
+    description: "Spends the plan's one account switch per 30 days on customer_id: it becomes an active account, and the least recently used active account "
+      + "locks until the date the \"Account switch:\" notice gave, switching back included. Call it only after another tool answered \"Account switch:\" "
+      + "for this account and the user agreed. Changes nothing in Google Ads; a no-op for an account that is already active.",
+    inputSchema: { customer_id: customerId },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, async ({ customer_id }: { customer_id: string }) => {
+    const s = session(), id = customer_id.replace(/-/g, "");
+    // Throwing logs the call as failed, which spends nothing: never spend the switch on an account the login can't use.
+    const reaches = (list: Account[]) => list.some((a) => a.customerId === id);
+    if (!reaches(await s.accounts()) && !reaches(await s.accounts({ fresh: true })))
+      throw new Error(`${id} isn't a Google Ads account this login can reach (list_accounts shows the ones it can). Nothing was spent.`);
+    return { switched_to: id, active_accounts: s.planState(new Set()).active };
+  });
 
   tool("billing", {
     title: "Plan and billing",
