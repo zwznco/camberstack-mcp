@@ -341,7 +341,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   }, ({ property_id }: { property_id: string }) => gaSetup(session().ga, property_id));
 
   tool("propose_analytics_changes", {
-    title: "Propose Google Analytics changes (writes nothing)",
+    title: "Propose Google Analytics changes (applies nothing)",
     description: "Checks Google Analytics setup changes against the live property and stores them as a proposal with a plain-English summary; "
       + "nothing is changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). "
       + "Supported: create_ga4_property (a property plus a web stream; the applied result gives the measurement ID and the tag the site needs), "
@@ -377,7 +377,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     filter?: { dimension: string; contains: string }; order_by?: string; limit: number }) => report(session().ga, property_id, o));
 
   tool("propose_changes", {
-    title: "Propose changes (writes nothing)",
+    title: "Propose Google Ads changes (applies nothing)",
     description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, create_conversion_action, set_conversion_counting. Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
     inputSchema: { customer_id: customerId, changes: z.array(PublicChangeSchema).min(1).max(MAX_CHANGES).describe(`Changes to propose; several can go in one proposal, up to ${MAX_CHANGES} (each keyword counts as one)`) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -392,17 +392,18 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   }, ({ proposal_id }: { proposal_id: string }) => session().apply(proposal_id));
 
   tool("undo_changes", {
-    title: "Undo an applied proposal",
-    description: "Builds a new proposal that reverses an applied one (removes the negatives it added, restores statuses and budgets). Like any proposal, it must be approved and applied.",
+    title: "Propose reversing an applied proposal",
+    description: "Builds a new proposal that would reverse an applied one (removes the negatives it added, restores statuses and budgets). Changes nothing by itself: like any proposal, it must be approved and then applied with apply_changes.",
     inputSchema: { proposal_id: z.string().describe("The id of an applied proposal, from change_history or apply_changes") },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
   }, ({ proposal_id }: { proposal_id: string }) => session().undo(proposal_id));
 
   tool("discard_proposal", {
     title: "Discard a proposal",
-    description: "Marks an open proposal as discarded so it cannot be applied.",
+    description: "Marks an open proposal as discarded so it can never be applied; this can't be reversed (propose again instead). Changes nothing in the Google Ads account.",
     inputSchema: { proposal_id: z.string().describe("The id returned by propose_changes") },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    // Cancelling counts as destructive in ChatGPT's annotation rules, even though the account is untouched.
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, ({ proposal_id }: { proposal_id: string }) => session().discard(proposal_id));
 
   tool("change_history", {
