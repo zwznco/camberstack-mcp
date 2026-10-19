@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.17.0", date: "2026-10-19",
+    summary: "Import a GA4 key event into Google Ads without leaving the chat.",
+    items: [
+      "**Import a GA4 key event into Google Ads** (`import_ga4_key_event`), so a campaign can count and bid on it, such as a `generate_lead` you just marked as a key event. The GA4 property must be linked to the Ads account. Like every change, it waits for your approval.",
+      "**Undo removes the import** (Google can't hide one again; importing again brings it back), and stops bidding on any goals the import turned on. If a campaign bids only on that conversion, undo says to give it another goal first.",
+      "**Clearer pointers:** marking a key event says how to import it next, and asking a campaign to bid on a goal the account doesn't have yet explains why.",
+    ],
+  },
+  {
     version: "0.16.0", date: "2026-10-19",
     summary: "Switching accounts is its own step, and ChatGPT gets a tool for each kind of change.",
     items: [
