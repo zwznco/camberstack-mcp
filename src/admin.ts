@@ -8,7 +8,7 @@ import type { DB } from "./db.js";
 import type { GoogleCreds } from "./google.js";
 import { SignIn } from "./signin.js";
 import { startLoginAs } from "./account.js";
-import { buildReport, permissionLabels, SCOPE_LABELS, userDetail, type Report, type UserDetail } from "./report.js";
+import { buildReport, permissionLabels, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
 import { now } from "./db.js";
 import { esc } from "./pages.js";
 import { PRO_PRICE_LABEL } from "./plans.js";
@@ -61,14 +61,14 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
     res.redirect(302, "/");
   });
   site.post("/logout", (req, res) => { auth.close(req, res); res.redirect(303, d.baseUrl); });
-  // Every page takes the same filters: ?days=1|7|30|90 and ?internal=1 (include the operator's and testers' accounts).
+  // Every page takes the same filters: ?days=1|7|30|90 (whole UTC days; 1 is today) and ?internal=1 (include the operator's and testers' accounts).
   const view = (req: Request) => {
     const days = [1, 7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
     const all = req.query.internal === "1";
     const report = buildReport(d.db, { days, exclude: all ? [] : [...d.internalEmails] });
     for (const u of report.users) if (u.plan === "free" && d.proEmails?.has(u.email.toLowerCase())) u.plan = "pro";
     return { days, all, internal: d.internalEmails.size, report,
-      feedback: feedbackCount(d.db, now() - days * 86400) };
+      feedback: feedbackCount(d.db, windowStart(days)) };
   };
   const pages: Record<string, (v: ReturnType<typeof view>) => string> = {
     "/": overviewPage, "/users": usersPage, "/activity": activityPage, "/revenue": revenuePage,
@@ -165,6 +165,15 @@ const qs = (v: Pick<View, "days" | "all">, p: Partial<{ days: number; all: boole
   const days = p.days ?? v.days, all = p.all ?? v.all;
   return `?days=${days}${all ? "&internal=1" : ""}`;
 };
+/** The window in words: "today", or "7d" counting today. `lastW` and `inW` read as a phrase ("last 7d", "in 7d"). */
+const range = (days: number) => (days === 1 ? "today" : `${days}d`);
+const lastW = (days: number) => (days === 1 ? "today" : `last ${days}d`);
+const inW = (days: number) => (days === 1 ? "today" : `in ${days}d`);
+/** A tool error: Google's code as a chip and its message as text (all red was a wall), the whole of it on hover. */
+function errorText(e: string | null): string {
+  const m = /^(Google [\w ]+? API \d{3}): ([A-Z][A-Z0-9_]{3,}) ([\s\S]*)$/.exec(e ?? "");
+  return m ? `<span title="${esc(e)}"><span class="chip badc">${esc(m[2]!)}</span> ${esc(m[3]!)}</span>` : `<span title="${esc(e)}">${esc(e)}</span>`;
+}
 const userLink = (v: View, id: string, email: string) => `<a href="/users/${encodeURIComponent(id)}${qs(v)}">${esc(email)}</a>`;
 const cid = (c: string | null) => (c ? `<code>${esc(c.replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3"))}</code>` : `<span class="dim">—</span>`);
 
@@ -255,7 +264,9 @@ td{padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap;verti
 .dim{color:var(--dim)}.bad{color:var(--bad)}.ok{color:var(--ok)}.muted{color:var(--muted)}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim)}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
 .chart{display:flex;align-items:flex-end;gap:2px;height:120px;padding:14px 14px 0}.chart div{flex:1;background:var(--bar);opacity:.85;min-height:2px;border-radius:2px 2px 0 0}
-.chart div:hover{opacity:1}.axis{display:flex;justify-content:space-between;padding:6px 14px 10px;color:var(--dim);font:11px ui-monospace,Menlo,monospace}
+.chart div:hover{opacity:1}.chart div{position:relative;overflow:hidden}.chart div.future{background:none;border:1px dashed var(--line);border-bottom:0;opacity:1}
+.chart i{position:absolute;left:0;right:0;bottom:0;background:var(--bad)}.axis b{font-weight:400}
+.err{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:90ch}.err .chip{vertical-align:1px}.axis{display:flex;justify-content:space-between;padding:6px 14px 10px;color:var(--dim);font:11px ui-monospace,Menlo,monospace}
 .bar{height:6px;background:var(--chip);border-radius:3px;min-width:80px}.bar i{display:block;height:100%;background:var(--bar);border-radius:3px}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 20px;margin:0;padding:14px}dt{color:var(--muted)}dd{margin:0;min-width:0;overflow-wrap:anywhere}
 button{font:inherit;font-size:12px;background:none;border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:3px 10px;cursor:pointer}button:hover{color:var(--fg)}
@@ -274,7 +285,7 @@ table.users td:nth-child(5){margin-left:auto;color:var(--dim);font-size:12px}}
 <div class="ext"><span>Links</span>${EXTERNAL.map(([l, href]) => `<a href="${href}" target="_blank" rel="noopener">${l} <i>↗</i></a>`).join("")}</div>
 <div class="who"><span title="${esc(who)}">${esc(who)}</span><form method="post" action="/logout"><button>Sign out</button></form></div></aside>
 <main><div class="top"><h1>${heading ?? title}</h1><div class="tools"${path === "/announcements" ? ' style="display:none"' : ""}>
-<span class="seg">${[1, 7, 30, 90].map((d) => `<a class="${d === v.days ? "on" : ""}" href="?${qs(v, { days: d }).slice(1)}">${d === 1 ? "24h" : `${d}d`}</a>`).join("")}</span>
+<span class="seg" title="Whole days in UTC, counting today">${[1, 7, 30, 90].map((d) => `<a class="${d === v.days ? "on" : ""}" href="?${qs(v, { days: d }).slice(1)}">${d === 1 ? "Today" : `${d}d`}</a>`).join("")}</span>
 <a class="toggle ${v.all ? "on" : ""}" href="${qs(v, { all: !v.all })}" title="Include the operator's and testers' accounts (ADMIN_EMAILS, PRO_EMAILS)">${v.all ? "showing" : "hiding"} internal</a></div></div>
 ${body}
 <footer class="mfoot">${EXTERNAL.map(([l, href]) => `<a href="${href}" target="_blank" rel="noopener">${l} ↗</a>`).join("")}
@@ -283,32 +294,20 @@ ${body}
 }
 
 function overviewPage(v: View): string {
-  const r = v.report, w = `${v.days === 1 ? "24h" : `${v.days}d`}`;
+  const r = v.report, w = range(v.days);
   const stages = Object.keys(r.funnel.all) as (keyof Report["funnel"]["all"])[];
   const top = Math.max(1, r.funnel.all.connected);
-  // Every day in the window, zeros included, so the bars are a real time axis.
-  const byDay = new Map(r.daily.map((x) => [x.day, x]));
-  // One bar per UTC day the window touches, its first one partial: `days` bars alone dropped the oldest
-  // (partial) day, so the bars didn't add up to the calls total beside them (24h showed only today).
-  const daily = Array.from({ length: v.days + 1 }, (_, i) => {
-    const day = new Date((now() - (v.days - i) * 86400) * 1000).toISOString().slice(0, 10);
-    return byDay.get(day) ?? { day, calls: 0, users: 0, errors: 0 };
-  });
-  const maxCalls = Math.max(1, ...daily.map((x) => x.calls));
   const errs = r.errorsInWindow;
   const paying = r.paying;
   const callsInWindow = r.daily.reduce((a, x) => a + x.calls, 0);
   return `<div class="stats">
-${stat("Users", num(r.funnel.all.connected), `+${r.funnel.window.connected} in ${w}`)}
+${stat("Users", num(r.funnel.all.connected), `+${r.funnel.window.connected} ${inW(v.days)}`)}
 ${stat(`Active · ${w}`, num(r.activeInWindow), `${callsInWindow.toLocaleString("en-US")} calls`)}
 ${stat("Applied a change", num(r.funnel.all.applied), `${Math.round((100 * r.funnel.all.applied) / top)}% of users`)}
 ${stat("Paying", num(paying), `$${paying * MRR_PER_PRO} MRR`)}
 ${stat(`Tool errors · ${w}`, errs ? `<span class="n bad">${errs}</span>` : num(0), callsInWindow ? `${((100 * errs) / callsInWindow).toFixed(1)}% of calls` : "")}
 </div>
-${card(`Calls per day`, r.daily.length
-    ? `<div class="chart">${daily.map((x) => `<div style="height:${Math.max(1, Math.round((100 * x.calls) / maxCalls))}%" title="${x.day}: ${x.calls} calls · ${x.users} users · ${x.errors} errors"></div>`).join("")}</div>
-<div class="axis"><span>${daily[0]!.day} (from ${date(now() - v.days * 86400).slice(11)} UTC)</span><span>peak ${maxCalls}/day</span><span>${daily.at(-1)!.day}</span></div>`
-    : `<p class="empty">No calls in this window.</p>`, `<small>last ${w}</small>`)}
+${callsChart(v)}
 <div class="grid2">
 ${card("Funnel", table(["stage", ["all time", "r"], "", [`new · ${w}`, "r"]], stages.map((k) => [k.replace(/_/g, " "), num(r.funnel.all[k]),
     `<div class="bar"><i style="width:${Math.round((100 * r.funnel.all[k]) / top)}%"></i></div>`, num(r.funnel.window[k])])))}
@@ -327,6 +326,33 @@ ${card("Latest signups", table(["user", "plan", "permissions", ["signed up", "r"
 ${card("Top tools", table(["tool", ["calls", "r"], ["errors", "r"]], r.tools.slice(0, 6).map((t) => [`<code>${esc(t.tool)}</code>`, num(t.calls), bad(t.errors)]), "No calls in this window."),
     `<a class="muted" href="/activity${qs(v)}">activity →</a>`)}
 </div>`;
+}
+
+/**
+ * Calls over the window, errors stacked in red: one bar per UTC day, zeros included so the bars are a real time axis,
+ * or for today one per UTC hour (hours still to come drawn empty).
+ */
+function callsChart(v: View): string {
+  const r = v.report, start = windowStart(v.days), hourNow = new Date(now() * 1000).getUTCHours();
+  type Bar = { label: string; calls: number; users: number; errors: number; future?: boolean };
+  let bars: Bar[];
+  if (v.days === 1) {
+    const byHour = new Map(r.hourly.map((x) => [x.hour, x]));
+    bars = Array.from({ length: 24 }, (_, h) => ({ label: `${String(h).padStart(2, "0")}:00`, calls: 0, users: 0, errors: 0, ...byHour.get(h), future: h > hourNow }));
+  } else {
+    const byDay = new Map(r.daily.map((x) => [x.day, x]));
+    bars = Array.from({ length: v.days }, (_, i) => {
+      const day = new Date((start + i * 86400) * 1000).toISOString().slice(0, 10);
+      return { label: day, calls: 0, users: 0, errors: 0, ...byDay.get(day) };
+    });
+  }
+  const per = v.days === 1 ? "hour" : "day", max = Math.max(1, ...bars.map((b) => b.calls));
+  const body = r.daily.length
+    ? `<div class="chart">${bars.map((b) => `<div class="${b.future ? "future" : ""}" style="height:${b.future ? 100 : Math.max(1, Math.round((100 * b.calls) / max))}%" title="${b.label}${
+        v.days === 1 ? " UTC" : ""}: ${b.calls} calls · ${b.users} users · ${b.errors} errors">${b.errors ? `<i style="height:${Math.round((100 * b.errors) / b.calls)}%"></i>` : ""}</div>`).join("")}</div>
+<div class="axis"><span>${bars[0]!.label}</span><span>peak ${max}/${per} · <b class="bad">■</b> errors</span><span>${bars.at(-1)!.label}${v.days === 1 ? " UTC" : ""}</span></div>`
+    : `<p class="empty">No calls in this window.</p>`;
+  return card(`Calls per ${per}`, body, `<small>${lastW(v.days)} · UTC</small>`);
 }
 
 function usersPage(v: View): string {
@@ -387,19 +413,19 @@ function callsTable(rows: { at: number; email: string | null; id?: string; tool:
   return table(["when", ...(withUser ? ["user"] : []), "tool", "account", ["ms", "r"], "result", "app"], rows.map((c) => [
     `<span class="mono" title="${date(c.at)} UTC">${date(c.at).slice(5)}</span>`, ...(withUser ? [v && c.id ? userLink(v, c.id, c.email!) : esc(c.email ?? "")] : []),
     `<code>${esc(c.tool)}</code>`, cid(c.customer_id), num(c.ms),
-    c.ok ? `<span class="ok">ok</span>` : `<span class="bad">${esc(c.error)}</span>`, `<span class="muted">${esc(c.client)}</span>`]))
-    .replaceAll('<td><span class="bad">', '<td class="wrap"><span class="bad">');
+    c.ok ? `<span class="ok">ok</span>` : `<span class="err">${errorText(c.error)}</span>`, `<span class="muted">${esc(c.client)}</span>`]))
+    .replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">');
 }
 
 function activityPage(v: View): string {
-  const r = v.report, w = `${v.days === 1 ? "24h" : `${v.days}d`}`;
+  const r = v.report, w = lastW(v.days);
   return `<div class="grid2">
 ${card("Tools", table(["tool", ["calls", "r"], ["users", "r"], ["errors", "r"], ["avg ms", "r"], ["max ms", "r"]], r.tools.map((t) => [`<code>${esc(t.tool)}</code>`,
-    num(t.calls), num(t.users), bad(t.errors), num(t.avg_ms), num(t.max_ms)]), "No calls in this window."), `<small>last ${w}</small>`)}
-${card("AI apps", table(["app", ["calls", "r"], ["users", "r"]], r.clients.map((c) => [esc(c.client), num(c.calls), num(c.users)]), "No calls in this window."), `<small>last ${w}</small>`)}
+    num(t.calls), num(t.users), bad(t.errors), num(t.avg_ms), num(t.max_ms)]), "No calls in this window."), `<small>${w}</small>`)}
+${card("AI apps", table(["app", ["calls", "r"], ["users", "r"]], r.clients.map((c) => [esc(c.client), num(c.calls), num(c.users)]), "No calls in this window."), `<small>${w}</small>`)}
 </div>
-${card("Errors", table(["tool", "error", ["count", "r"], "last"], r.errors.map((e) => [`<code>${esc(e.tool)}</code>`, `<span class="bad">${esc(e.error)}</span>`, num(e.n), when(e.last)]), "No errors in this window.")
-    .replaceAll('<td><span class="bad">', '<td class="wrap"><span class="bad">'), `<small>last ${w}, grouped, newest first</small>`)}
+${card("Errors", table(["tool", "error", ["count", "r"], ["users", "r"], "last"], r.errors.map((e) => [`<code>${esc(e.tool)}</code>`, `<span class="err">${errorText(e.error)}</span>`, num(e.n), num(e.users), when(e.last)]), "No errors in this window.")
+    .replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">'), `<small>${w}, grouped, newest first</small>`)}
 ${card("Recent calls", callsTable(r.recent.map((c) => ({ ...c, id: r.users.find((u) => u.email === c.email)?.id })), v), "<small>last 50, any window</small>")}`;
 }
 
@@ -416,7 +442,7 @@ ${stat("Ad connects uploaded", num(r.adConversions?.uploaded), `${r.adConversion
 ${card("Pro users", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
     perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No Pro users yet."))}
 <div class="grid2">
-${card("Emails", table(["email", ["all time", "r"], [`last ${v.days === 1 ? "24h" : `${v.days}d`}`, "r"]], r.emails.map((e) => [`<code>${esc(e.kind)}</code>`, num(e.sent), num(e.in_window)]), "No emails sent yet."))}
+${card("Emails", table(["email", ["all time", "r"], [lastW(v.days), "r"]], r.emails.map((e) => [`<code>${esc(e.kind)}</code>`, num(e.sent), num(e.in_window)]), "No emails sent yet."))}
 ${card("Ad conversions", `<dl><dt>Recorded</dt><dd>${num(r.adConversions?.recorded)}</dd><dt>Uploaded to Google Ads</dt><dd>${num(r.adConversions?.uploaded)}</dd>
 <dt>Failing</dt><dd>${bad(r.adConversions?.failing ?? 0)}</dd><dt>Last error</dt><dd class="${r.adConversions?.last_error ? "bad" : "dim"}">${esc(r.adConversions?.last_error ?? "—")}</dd></dl>`)}
 </div>

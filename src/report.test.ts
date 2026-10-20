@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { openDb, now } from "./db.js";
-import { buildReport } from "./report.js";
+import { buildReport, windowStart } from "./report.js";
 
 describe("buildReport", () => {
   const seed = () => {
@@ -33,5 +33,13 @@ describe("buildReport", () => {
     const r = buildReport(seed(), { days: 7, exclude: [] });
     expect(r.paying).toBe(1);
     expect(r.users.find((u) => u.id === "lapsed")?.paying).toBe(0);
+  });
+});
+
+describe("windowStart", () => {
+  it("counts whole UTC days ending today", () => {
+    const t = Date.parse("2026-10-20T00:52:00Z") / 1000;
+    expect(new Date(windowStart(1, t) * 1000).toISOString()).toBe("2026-10-20T00:00:00.000Z");
+    expect(new Date(windowStart(7, t) * 1000).toISOString()).toBe("2026-10-14T00:00:00.000Z");
   });
 });

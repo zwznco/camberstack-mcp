@@ -14,8 +14,16 @@ export interface ReportOptions {
   exclude: string[];
 }
 
+/**
+ * Where a window of `days` starts: whole UTC days ending today, so 1 is today since 00:00 UTC and 7 is today plus the six
+ * days before it. Every chart bar is then a whole day. A rolling 24h straddled two UTC days and drew two half bars.
+ */
+export function windowStart(days: number, t = now()): number {
+  return t - (t % 86400) - (days - 1) * 86400;
+}
+
 export function buildReport(db: DB, o: ReportOptions) {
-  const since = now() - o.days * 86400;
+  const since = windowStart(o.days);
   const ex = o.exclude.map((e) => e.toLowerCase());
   // Every query joins through `u`, so the exclusion applies everywhere at once.
   const U = `(SELECT * FROM users WHERE lower(email) NOT IN (${ex.map(() => "?").join(",") || "''"}))`;
@@ -63,12 +71,16 @@ export function buildReport(db: DB, o: ReportOptions) {
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id
        WHERE at >= ? GROUP BY 1 ORDER BY calls DESC`, since),
     /** The 15 most recently seen error groups, newest first (by count, a wide window buried today's errors). */
-    errors: q<{ tool: string; error: string; n: number; last: number }>(
-      `SELECT tool, substr(error, 1, 160) error, count(*) n, max(at) last FROM tool_calls c JOIN {U} u ON u.id = c.user_id
+    errors: q<{ tool: string; error: string; n: number; users: number; last: number }>(
+      `SELECT tool, substr(error, 1, 300) error, count(*) n, count(DISTINCT c.user_id) users, max(at) last FROM tool_calls c JOIN {U} u ON u.id = c.user_id
        WHERE at >= ? AND ok = 0 GROUP BY 1, 2 ORDER BY last DESC LIMIT 15`, since),
     daily: q<{ day: string; calls: number; users: number; errors: number }>(
       `SELECT date(at, 'unixepoch') day, count(*) calls, count(DISTINCT c.user_id) users, sum(ok = 0) errors
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE at >= ? GROUP BY 1 ORDER BY 1`, since),
+    /** Today's window only: one row per UTC hour with calls (a single daily bar says nothing). */
+    hourly: o.days === 1 ? q<{ hour: number; calls: number; users: number; errors: number }>(
+      `SELECT cast(strftime('%H', at, 'unixepoch') AS int) hour, count(*) calls, count(DISTINCT c.user_id) users, sum(ok = 0) errors
+       FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE at >= ? GROUP BY 1 ORDER BY 1`, since) : [],
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by first-touch source (firsttouch.ts), so a paid test is read by its own users, not a date window.
@@ -89,7 +101,7 @@ export function buildReport(db: DB, o: ReportOptions) {
       n("SELECT count(*) n FROM {U} u WHERE enc_refresh IS NOT NULL AND (' ' || google_scopes || ' ') LIKE ?", `% ${scope} %`)])) as Record<string, number>,
     permissionsUnknown: n("SELECT count(*) n FROM {U} u WHERE enc_refresh IS NOT NULL AND google_scopes IS NULL"),
     recent: q<{ at: number; email: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
-      `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 160) error, c.ms, ${client} client
+      `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id
        ORDER BY c.id DESC LIMIT 50`),
   };
