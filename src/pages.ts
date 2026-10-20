@@ -148,9 +148,30 @@ ol.steps>li{margin-bottom:28px}
 .faq{display:grid;grid-template-columns:1fr 1fr;gap:8px 56px}.faq h3{font-size:17px;margin:20px 0 6px}.faq p{margin:0;color:var(--muted);font-size:16px}
 .closer{padding:96px 0;text-align:center;border-top:1px solid var(--line)}.closer h2{margin-bottom:10px}.closer p{margin:0 0 28px}.closer .ctas{justify-content:center}
 .home footer{margin-top:0}
+.demo-note{margin:24px 0 0;font-size:15px;color:var(--muted);max-width:520px}.demo-note strong{color:var(--fg)}
+.warn{margin-top:24px;max-width:560px;padding:14px 16px;border-radius:10px;border:1px solid color-mix(in srgb,#c78a12 45%,var(--line));background:color-mix(in srgb,#c78a12 8%,var(--card))}.warn p{margin:0;font-size:15px}
+.mini{font-size:14px;margin:0 0 14px;font-variant-numeric:tabular-nums}.mini th{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}.mini td,.mini th{padding:7px 8px 7px 0}.mini td+td,.mini th+th{text-align:right}
+.guide{padding-top:24px;border-top:1px solid var(--line)}
+.prose{max-width:800px}
+.prose h2{margin:72px 0 16px;scroll-margin-top:76px}.prose>h2:first-child{margin-top:40px}
+.prose h3{font-size:18px;margin:28px 0 6px}
+.prose p,.prose li{font-size:17px}
+.prose details{margin:16px 0;padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.prose details p{margin:8px 0 0}.prose summary{cursor:pointer;font-weight:600}
+ol.steps{list-style:none;padding:0;margin:20px 0;counter-reset:step}
+ol.steps>li{counter-increment:step;position:relative;padding:0 0 28px 52px;margin:0}
+ol.steps>li::before{content:counter(step);position:absolute;left:0;top:-2px;width:32px;height:32px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center}
+ol.steps>li:not(:last-child)::after{content:"";position:absolute;left:15.5px;top:36px;bottom:6px;width:1px;background:var(--line)}
+ol.steps .shot{max-width:400px;box-shadow:0 8px 24px -12px rgba(20,24,20,.18)}
+.prompts{list-style:none;padding:0;margin:20px 0;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.prompts li{background:var(--card);border:1px solid var(--line);border-radius:12px 12px 12px 4px;padding:12px 16px;font-size:15px!important;line-height:1.5}
+.prompts em{font-style:normal}
+.checks{list-style:none;padding:0;margin:16px 0}.checks li{position:relative;padding-left:30px;margin:0 0 10px}
+.checks li::before{content:"";position:absolute;left:0;top:.3em;width:18px;height:18px;border-radius:50%;background:var(--accent-soft)}
+.checks li::after{content:"";position:absolute;left:6.5px;top:calc(.3em + 4px);width:4px;height:8px;border:solid var(--accent);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.prose .changes{grid-template-columns:1fr;margin-top:16px}.prose .changes li:nth-child(even){padding-left:0;border-left:0}
 @media (max-width:900px){
 .hero{padding:40px 0 56px}.hero-grid,.duo{grid-template-columns:1fr;gap:40px}
-.pillars{grid-template-columns:1fr;gap:28px}.also,.changes,.apps,.plans,.faq{grid-template-columns:1fr}
+.pillars{grid-template-columns:1fr;gap:28px}.also,.changes,.apps,.plans,.faq,.prompts{grid-template-columns:1fr}
 .changes li:nth-child(even){padding-left:0;border-left:0}.changes li{padding-right:0}
 .sec{padding:64px 0}.band{padding:44px 0}
 }
@@ -233,8 +254,40 @@ const CHANGES: [string, string][] = [
   ["Create a conversion action, or set how many conversions a click can count", "Removes it / restores the previous setting"],
 ];
 
-const changeList = (rows: [string, string][]) =>
-  `<ul class="changes">${rows.map(([c, u]) => `<li><span>${c}</span><span class="undo"><b>Undo:</b> ${u}</span></li>`).join("")}</ul>`;
+/** Two-part rows: the thing, then a labelled line under it ("Undo: …", "Reads: …"). */
+const pairList = (rows: [string, string][], label: string) =>
+  `<ul class="changes">${rows.map(([c, u]) => `<li><span>${c}</span><span class="undo"><b>${label}:</b> ${u}</span></li>`).join("")}</ul>`;
+
+/** The demo account's negative-keyword exchange as an app window: the hero visual. `at` prefixes the user's messages (ChatGPT's @-mention). */
+const demoWindow = (at = "") => `<figure class="window" aria-label="What a change looks like, from the demo account">
+<div class="window-bar"><i></i><i></i><i></i><span>Demo account · sample plumbing business</span></div>
+<div class="window-body">
+<p class="said you">${at}Which search terms are wasting money in Emergency Plumbing?</p>
+<p class="ai"><em>"plumber jobs near me"</em> cost $84.60 and <em>"plumber salary"</em> $41.20, with no conversions: people looking for work, not a plumber. I can add "jobs" and "salary" as negative keywords.</p>
+<div class="change"><div class="change-top"><strong>Proposal</strong><span class="pill proposed">proposed</span></div>
+<ul><li>Add 2 negative keyword(s) to campaign "Emergency Plumbing – Search": "jobs", "salary"</li></ul>
+<div class="change-foot">Checked with Google, nothing changed yet</div></div>
+<p class="said you">${at}Apply it.</p>
+<p class="ai"><span class="pill applied">applied</span>&nbsp; Done. If it blocks searches you wanted, ask me to undo it: that removes exactly these two negatives.</p>
+</div>
+</figure>`;
+
+/** A guide's first screen: copy and buttons on the left, `aside` (a window) on the right. */
+const guideHero = (o: { kicker: string; title: string; lede: string; ctas: string; note?: string; aside?: string }) =>
+  `<section class="hero"><div class="wrap${o.aside ? " hero-grid" : ""}">
+<div class="hero-copy">
+<p class="eyebrow"><span class="dot ok"></span>${o.kicker}</p>
+<h1>${o.title}</h1>
+<p class="lede">${o.lede}</p>
+<div class="ctas">${o.ctas}</div>${o.note ?? ""}
+</div>${o.aside ?? ""}
+</div></section>`;
+
+/** A guide's body: the readable column under the hero. */
+const guideBody = (html: string) => `<section class="sec guide"><div class="wrap prose">${html}</div></section>`;
+
+const closer = (title: string, sub: string, ctas: string) =>
+  `<section class="closer"><div class="wrap"><h2>${title}</h2><p class="muted">${sub}</p><div class="ctas">${ctas}</div></div></section>`;
 
 export function homePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
@@ -262,18 +315,7 @@ export function homePage(baseUrl: string): string {
 <div class="ctas"><a class="btn btn-lg" href="#setup">Connect for free</a><a class="btn btn-lg btn-ghost" href="#demo">Try the demo account</a></div>
 <p class="works">Works with <span>Claude</span><span>ChatGPT</span><span>Cursor</span><span>Claude Code</span><span>any MCP app</span></p>
 </div>
-<figure class="window" id="example" aria-label="What a change looks like, from the demo account">
-<div class="window-bar"><i></i><i></i><i></i><span>Demo account · sample plumbing business</span></div>
-<div class="window-body">
-<p class="said you">Which search terms are wasting money in Emergency Plumbing?</p>
-<p class="ai"><em>"plumber jobs near me"</em> cost $84.60 and <em>"plumber salary"</em> $41.20, with no conversions: people looking for work, not a plumber. I can add "jobs" and "salary" as negative keywords.</p>
-<div class="change"><div class="change-top"><strong>Proposal</strong><span class="pill proposed">proposed</span></div>
-<ul><li>Add 2 negative keyword(s) to campaign "Emergency Plumbing – Search": "jobs", "salary"</li></ul>
-<div class="change-foot">Checked with Google, nothing changed yet</div></div>
-<p class="said you">Apply it.</p>
-<p class="ai"><span class="pill applied">applied</span>&nbsp; Done. If it blocks searches you wanted, ask me to undo it: that removes exactly these two negatives.</p>
-</div>
-</figure>
+<div id="example">${demoWindow()}</div>
 </div></section>
 
 <section class="band"><div class="wrap">
@@ -293,7 +335,7 @@ export function homePage(baseUrl: string): string {
 <section class="sec" id="changes"><div class="wrap">
 <div class="sec-head"><p class="kicker">Google Ads</p><h2>What it can change</h2>
 <p class="muted">Every change is a proposal you approve, and every one has an undo. A new campaign is always created paused, so building it and letting it spend are two separate approvals.</p></div>
-${changeList(CHANGES)}
+${pairList(CHANGES, "Undo")}
 <p class="muted small">Besides the warnings above, a proposal also warns before removing a campaign's last location.
 It cannot delete anything you built, touch billing, or edit anything outside Google Ads and the <a href="#analytics">Google Analytics setup changes</a> below.
 Any question beyond these tools is answered with read-only queries. <a href="/tools">Every tool and what it can do</a>;
@@ -322,11 +364,11 @@ queries and positions, and line them up against your ads:</p>
 <dt>Setup check</dt><dd>Each property's web streams and measurement IDs, which events count as key events, and which Google Ads accounts it's linked to.</dd>
 </dl>
 <p>It can also change that setup, with the same proposal, approval and undo as a Google Ads change:</p>
-${changeList([
+${pairList([
   ["Create a GA4 property with a web stream (the result gives the measurement ID and the tag your site needs)", "Moves the property it created to Google Analytics' trash (restorable there for 35 days)"],
   ["Mark or unmark an event as a key event", "Restores the previous setting"],
   ["Link or unlink a Google Ads account", "Restores the previous link"],
-])}
+], "Undo")}
 <p class="muted small">Google Ads, Search Console and Google Analytics are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property.</p>
 </div>
 </div></section>
@@ -389,11 +431,8 @@ checkout link. Undo and change history always work.</p></div>
 </div>
 </div></section>
 
-<section class="closer"><div class="wrap">
-<h2>Ask your Google Ads account a question.</h2>
-<p class="muted">Free for one account, with unlimited changes and undo.</p>
-<div class="ctas"><a class="btn btn-lg" href="#setup">Connect for free</a><a class="btn btn-lg btn-ghost" href="#demo">Try the demo account</a></div>
-</div></section>
+${closer("Ask your Google Ads account a question.", "Free for one account, with unlimited changes and undo.",
+  `<a class="btn btn-lg" href="#setup">Connect for free</a><a class="btn btn-lg btn-ghost" href="#demo">Try the demo account</a>`)}
 `,
   });
 }
@@ -401,7 +440,7 @@ checkout link. Undo and change history always work.</p></div>
 // ---------------------------------------------------------------- shared by the setup guides
 
 const ASK_FIRST = `<h2>What to ask first</h2>
-<ul>
+<ul class="prompts">
 <li><em>"How did each campaign do last month: spend, clicks, conversions?"</em></li>
 <li><em>"Which search terms cost the most in the last 30 days?"</em></li>
 <li><em>"Add 'jobs' as a negative keyword to my Search campaign. Show me the change first."</em></li>
@@ -477,7 +516,7 @@ const commonQuestions = (app: string) => `<h3>Do I need a Google Ads developer t
 export function claudeGuidePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
   return layout({
-    baseUrl, path: "/google-ads-claude",
+    baseUrl, path: "/google-ads-claude", wide: true,
     title: "Connect Google Ads to Claude: MCP setup in 2 minutes | Camberstack",
     description: "Connect your Google Ads account to Claude with an MCP server. No developer token or Google Cloud project: sign in with Google, then ask Claude about your account.",
     jsonLd: {
@@ -487,14 +526,18 @@ export function claudeGuidePage(baseUrl: string): string {
       about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
     },
     body: `
-<h1>Connect Google Ads to Claude</h1>
-<p class="lede">Claude can read your Google Ads account, answer questions about it,
-and make the changes you approve. Camberstack is in Claude's connector directory, so it takes a few clicks and a Google sign-in. No developer token, no Google Cloud project.</p>
-<p><a class="btn" href="https://claude.ai/directory/connectors/camberstack">Open in Claude's directory</a></p>
-<p id="demo"><strong>Try it on a demo account first.</strong> Once connected, ask <em>"Show me Camberstack's demo account"</em>: a sample
-plumbing business where you can try questions, proposals and undo. Changes there never reach Google.</p>
-
-<h2>Set it up</h2>
+${guideHero({
+  kicker: "In Claude's connector directory",
+  title: "Connect Google Ads to Claude",
+  lede: `Claude can read your Google Ads account, answer questions about it,
+and make the changes you approve. Camberstack is in Claude's connector directory, so it takes a few clicks and a Google sign-in. No developer token, no Google Cloud project.`,
+  ctas: `<a class="btn btn-lg" href="https://claude.ai/directory/connectors/camberstack">Open in Claude's directory</a><a class="btn btn-lg btn-ghost" href="#setup">See the steps</a>`,
+  note: `<p class="demo-note" id="demo"><strong>Try it on a demo account first.</strong> Once connected, ask <em>"Show me Camberstack's demo account"</em>: a sample
+plumbing business where you can try questions, proposals and undo. Changes there never reach Google.</p>`,
+  aside: demoWindow(),
+})}
+${guideBody(`
+<h2 id="setup">Set it up</h2>
 <p>Camberstack is a hosted Google Ads MCP server. MCP (Model Context Protocol) is how Claude connects to outside tools.</p>
 <h3>Claude on the web or desktop app</h3>
 <ol class="steps">
@@ -531,8 +574,9 @@ you approve, with undo.</p>
 
 <h2>Questions</h2>
 ${commonQuestions("Claude")}
-
-<p><a class="btn" href="/#setup">Connect Google Ads to Claude</a></p>
+`)}
+${closer("Ask Claude about your Google Ads.", "Free for one account, with unlimited changes and undo.",
+  `<a class="btn btn-lg" href="https://claude.ai/directory/connectors/camberstack">Open in Claude's directory</a><a class="btn btn-lg btn-ghost" href="/#setup">Other AI apps</a>`)}
 `,
   });
 }
@@ -547,7 +591,7 @@ ${commonQuestions("Claude")}
 export function chatgptGuidePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
   return layout({
-    baseUrl, path: "/google-ads-chatgpt",
+    baseUrl, path: "/google-ads-chatgpt", wide: true,
     title: "Connect Google Ads to ChatGPT: MCP setup, step by step | Camberstack",
     description: "Connect your Google Ads account to ChatGPT with a plugin. No developer token or Google Cloud project: turn on developer mode, add one URL, sign in with Google, then ask about your account.",
     jsonLd: {
@@ -557,21 +601,26 @@ export function chatgptGuidePage(baseUrl: string): string {
       about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
     },
     body: `
-<h1>Connect Google Ads to ChatGPT</h1>
-<p class="lede">ChatGPT can read your Google Ads account, answer questions about it,
+${guideHero({
+  kicker: "Plus, Pro, Business, Enterprise and Edu",
+  title: "Connect Google Ads to ChatGPT",
+  lede: `ChatGPT can read your Google Ads account, answer questions about it,
 and make the changes you approve. Setup takes a few menus in ChatGPT's settings and a Google sign-in. No developer token,
-no Google Cloud project.</p>
-
+no Google Cloud project.`,
+  ctas: `<a class="btn btn-lg" href="#setup">Set it up: 9 steps</a><a class="btn btn-lg btn-ghost" href="#before">Before you start</a>`,
+  aside: demoWindow("@Camberstack "),
+})}
+${guideBody(`
 <h2 id="before">Before you start</h2>
-<ul>
+<ul class="checks">
 <li><strong>A paid ChatGPT plan:</strong> Plus, Pro, Business, Enterprise or Edu. The free plan can't add plugins like this one.</li>
 <li><strong>ChatGPT on the web</strong> (chatgpt.com) for setup. Once it's added, it works in the ChatGPT phone app too.</li>
 <li><strong>On Business or Enterprise,</strong> a workspace admin may need to allow developer mode first, under
 <strong>Workspace settings</strong>, under <strong>Permissions &amp; roles</strong>.</li>
 </ul>
 
-<h2>Set it up</h2>
-<ol>
+<h2 id="setup">Set it up</h2>
+<ol class="steps">
 <li>In ChatGPT, click your name at the bottom of the sidebar and choose <strong>Settings</strong>.
 ${shot("chatgpt-dev-1.webp", 540, 521, "ChatGPT's account menu with Settings highlighted")}</li>
 <li>Open the <strong>Plugins</strong> tab and choose <strong>Developer mode</strong>.
@@ -605,7 +654,7 @@ confirm tool calls that change things unless you've turned that off.</li>
 <h2>Using it in ChatGPT</h2>
 <p>Start each message with <strong>@Camberstack</strong>. Without the mention, ChatGPT answers from what it already knows
 and never looks at your account. Some first questions:</p>
-<ul>
+<ul class="prompts">
 <li><em>"@Camberstack which campaign had the highest cost per conversion in the last 30 days?"</em></li>
 <li><em>"@Camberstack list the search terms that spent money without a conversion this month."</em></li>
 <li><em>"@Camberstack find keyword ideas for my landing page and tell me their monthly searches."</em></li>
@@ -633,8 +682,9 @@ ticked, read-only Search Console and Google Analytics (changed only when you app
 <h3>Does it need a paid Camberstack plan?</h3>
 <p>No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to 10. The paid ChatGPT plan
 in <a href="#before">Before you start</a> is OpenAI's requirement, not ours.</p>
-
-<p><a class="btn" href="/#setup">Connect Google Ads to ChatGPT</a></p>
+`)}
+${closer("Ask ChatGPT about your Google Ads.", "Free for one account, with unlimited changes and undo.",
+  `<a class="btn btn-lg" href="#setup">Back to the steps</a><a class="btn btn-lg btn-ghost" href="/google-ads-claude">Using Claude instead?</a>`)}
 `,
   });
 }
@@ -647,7 +697,7 @@ in <a href="#before">Before you start</a> is OpenAI's requirement, not ours.</p>
 export function searchConsolePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
   return layout({
-    baseUrl, path: "/google-search-console-mcp",
+    baseUrl, path: "/google-search-console-mcp", wide: true,
     title: "Google Search Console MCP server, hosted and read-only | Camberstack",
     description: "A hosted Google Search Console MCP server for Claude, ChatGPT and Cursor. Sign in with Google: no Cloud project, service account or API key. Queries, trends, indexing and sitemaps, read-only.",
     jsonLd: {
@@ -657,26 +707,42 @@ export function searchConsolePage(baseUrl: string): string {
       about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
     },
     body: `
-<h1>Google Search Console MCP server</h1>
-<p class="lede">Ask your AI assistant how your site is doing in Google Search, and it reads your Search Console data to answer:
+${guideHero({
+  kicker: "Free, read-only, no Google Ads account needed",
+  title: "Google Search Console MCP server",
+  lede: `Ask your AI assistant how your site is doing in Google Search, and it reads your Search Console data to answer:
 clicks, queries, pages, what's rising or falling, and why a page isn't indexed. Camberstack is hosted, so setup is a Google
-sign-in. It can't change anything in Search Console.</p>
-
+sign-in. It can't change anything in Search Console.`,
+  ctas: `<a class="btn btn-lg" href="#setup">Connect Search Console</a><a class="btn btn-lg btn-ghost" href="/tools#search_console_sites">See the tools</a>`,
+  aside: `<figure class="window" aria-label="An example answer, from the demo website">
+<div class="window-bar"><i></i><i></i><i></i><span>Demo website · northwind-plumbing.example</span></div>
+<div class="window-body">
+<p class="said you">Which searches am I on page 2 for?</p>
+<p class="ai">Four searches with real demand where you sit on page 2, over the last 180 days:</p>
+<table class="mini"><tr><th>Search</th><th>Position</th><th>Impressions</th></tr>
+<tr><td>tankless water heater</td><td>14.2</td><td>8,800</td></tr>
+<tr><td>water heater replacement</td><td>11.8</td><td>5,200</td></tr>
+<tr><td>slab leak repair</td><td>18.3</td><td>4,200</td></tr>
+<tr><td>hydro jetting</td><td>12.5</td><td>3,100</td></tr></table>
+<p class="ai">"Water heater replacement" is closest to page 1. Want me to check whether that page is indexed?</p>
+</div>
+</figure>`,
+})}
+${guideBody(`
 <h2>Questions it answers</h2>
-<table>
-<tr><th>Ask</th><th>What it reads</th></tr>
-<tr><td><em>"How did my site do in Google Search last month, against the month before?"</em></td><td>Site totals for both periods: clicks, impressions, CTR, average position</td></tr>
-<tr><td><em>"Which pages lost the most clicks in the last 28 days?"</em></td><td>Every query and page compared with the period before: rising, falling, new and lost</td></tr>
-<tr><td><em>"Which searches am I on page 2 for?"</em></td><td>Queries in positions 4 to 20, with the clicks a realistic climb would add, and top results whose CTR is low enough to point at the title</td></tr>
-<tr><td><em>"Is /pricing indexed? If not, why?"</em></td><td>Google's index record for the page: the coverage reason, last crawl, robots.txt, and the canonical Google chose</td></tr>
-<tr><td><em>"When did Google last read my sitemap?"</em></td><td>Each submitted sitemap's last download, URL count, errors and warnings</td></tr>
-<tr><td><em>"Which searches do I pay for that I already rank for?"</em></td><td>Your Google Ads search terms joined with your organic queries over the same days (needs a Google Ads account)</td></tr>
-</table>
+${pairList([
+  [`<em>"How did my site do in Google Search last month, against the month before?"</em>`, "Site totals for both periods: clicks, impressions, CTR, average position"],
+  [`<em>"Which pages lost the most clicks in the last 28 days?"</em>`, "Every query and page compared with the period before: rising, falling, new and lost"],
+  [`<em>"Which searches am I on page 2 for?"</em>`, "Queries in positions 4 to 20, with the clicks a realistic climb would add, and top results whose CTR is low enough to point at the title"],
+  [`<em>"Is /pricing indexed? If not, why?"</em>`, "Google's index record for the page: the coverage reason, last crawl, robots.txt, and the canonical Google chose"],
+  [`<em>"When did Google last read my sitemap?"</em>`, "Each submitted sitemap's last download, URL count, errors and warnings"],
+  [`<em>"Which searches do I pay for that I already rank for?"</em>`, "Your Google Ads search terms joined with your organic queries over the same days (needs a Google Ads account)"],
+], "Reads")}
 <p>Answers come from the Search Console API, so they match what Search Console shows, with its limits: data goes back 16 months,
 the last two or three days are still filling in, and Google leaves rare queries out of per-query rows for privacy. Site totals
 are the complete numbers, so your AI leads with those.</p>
 
-<h2>Set it up</h2>
+<h2 id="setup">Set it up</h2>
 <p>Connect Camberstack in your AI app (<a href="/google-ads-claude">Claude</a>, <a href="/google-ads-chatgpt">ChatGPT</a>, or any MCP
 client with <code>${mcpUrl}</code>). On Google's sign-in screen, leave the <strong>Search Console</strong> box ticked: it grants
 read-only access (<code>webmasters.readonly</code>), nothing more. Then ask <em>"List my Search Console sites"</em> and use a site
@@ -710,8 +776,9 @@ runs that part for you: one Google sign-in, and it works the same in Claude on t
 <p>Any user of the property can read its performance data. Only the sites your Google login can see in Search Console are listed.</p>
 <h3>Do you store my search data?</h3>
 <p>No. Camberstack fetches it when your AI asks and passes it on; reports and query results aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
-
-<p><a class="btn" href="/#setup">Connect Search Console</a> <a href="/tools#search_console_sites">See the Search Console tools</a></p>
+`)}
+${closer("Ask your AI how your site is doing in Google Search.", "Free and read-only. It doesn't count toward a plan.",
+  `<a class="btn btn-lg" href="/#setup">Connect Search Console</a><a class="btn btn-lg btn-ghost" href="/tools#search_console_sites">See the tools</a>`)}
 `,
   });
 }
@@ -731,7 +798,7 @@ runs that part for you: one Google sign-in, and it works the same in Claude on t
 export function geminiGuidePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
   return layout({
-    baseUrl, path: "/google-ads-gemini", noindex: true,
+    baseUrl, path: "/google-ads-gemini", noindex: true, wide: true,
     title: "Connect Google Ads to Gemini: custom app (MCP) setup | Camberstack",
     description: "Connect your Google Ads account to Google Gemini as a custom app. No developer token or Google Cloud project: add one URL, sign in with Google, then ask Gemini about your account.",
     jsonLd: {
@@ -741,17 +808,21 @@ export function geminiGuidePage(baseUrl: string): string {
       about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
     },
     body: `
-<h1>Connect Google Ads to Gemini</h1>
-<div class="card"><p><strong>Not working yet.</strong> Gemini accepts Camberstack and you can sign in, but Gemini then stops
-before finishing the connection, with "Cannot Complete Request". We've reported it to Google. Until it's fixed, use
-<a href="/google-ads-claude">Claude</a> or <a href="/google-ads-chatgpt">ChatGPT</a>. The steps below are kept for when it works.</p></div>
-<p class="lede">Gemini can read your Google Ads account, answer questions about it,
+${guideHero({
+  kicker: "Google AI Pro or Ultra, in the US",
+  title: "Connect Google Ads to Gemini",
+  lede: `Gemini can read your Google Ads account, answer questions about it,
 and make the changes you approve. You add Camberstack as a custom app with one URL, then sign in with Google.
-No developer token, no Google Cloud project.</p>
-
+No developer token, no Google Cloud project.`,
+  ctas: `<a class="btn btn-lg" href="/google-ads-claude">Use Claude instead</a><a class="btn btn-lg btn-ghost" href="/google-ads-chatgpt">Or ChatGPT</a>`,
+  note: `<div class="warn"><p><strong>Not working yet.</strong> Gemini accepts Camberstack and you can sign in, but Gemini then stops
+before finishing the connection, with "Cannot Complete Request". We've reported it to Google. Until it's fixed, use
+<a href="/google-ads-claude">Claude</a> or <a href="/google-ads-chatgpt">ChatGPT</a>. The steps below are kept for when it works.</p></div>`,
+})}
+${guideBody(`
 <h2>Before you start</h2>
 <p>Google only offers custom apps in Gemini when all of these are true. If the <strong>Custom apps</strong> option is missing, one of them is why.</p>
-<ul>
+<ul class="checks">
 <li><strong>A personal Google account.</strong> Work and school (Google Workspace) accounts don't get custom apps.</li>
 <li><strong>Google AI Pro or Ultra</strong>, the plans that include Gemini Spark.</li>
 <li><strong>18 or over, in the US,</strong> with Gemini set to English.</li>
@@ -759,7 +830,7 @@ No developer token, no Google Cloud project.</p>
 </ul>
 
 <h2>Set it up</h2>
-<ol>
+<ol class="steps">
 <li>In Gemini, open <strong>Settings</strong> and choose <strong>Personal Intelligence</strong>.
 ${shot("gemini-menu.webp", 540, 285, "Gemini's settings menu with Personal Intelligence highlighted")}</li>
 <li>Tap <strong>Connected Apps</strong>.
@@ -791,7 +862,7 @@ a specific proposal, every applied change can be undone, and nothing can be dele
 ${commonQuestions("Gemini")}
 
 <p class="muted">Also works in <a href="/google-ads-claude">Claude</a>, <a href="/google-ads-chatgpt">ChatGPT</a>, Cursor and other MCP apps: see <a href="/#setup">all setup options</a>.</p>
-<p><a class="btn" href="/#setup">Connect Google Ads to Gemini</a></p>
+`)}
 `,
   });
 }
