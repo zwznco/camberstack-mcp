@@ -29,6 +29,7 @@ import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chat
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
+import { teeToFile } from "./logfile.js";
 const DRAIN_FILE = "/tmp/drain";
 
 /** brand/ sits beside src/ and dist/ at the package root. */
@@ -414,6 +415,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  teeToFile(process.env.LOG_FILE);
   const cfg = loadConfig();
   initErrorReporting(cfg.gitSha);
   const { app, startJobs } = createApp(cfg, openDb(cfg.dataDir));
