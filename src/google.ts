@@ -151,6 +151,10 @@ const DURING_LITERALS = "TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS, LAST_30_DA
 /**
  * How to fix the GAQL and request errors AIs actually hit (tool_calls.error), appended to Google's message.
  * The rules are in run_gaql's description too, but a fix next to the error gets the retry right first time.
+ * A wrong field, resource, segment, metric or enum value gets no generic fix here: run_gaql adds what Google's field
+ * catalog says about the query (gaql.ts checkGaql), which names the real one. Only what the catalog can't know stays:
+ * fields that moved or were renamed, and which resource a thing lives on. A generic guess next to the catalog's finding
+ * contradicted it ("check the name" for FROM invoice, which has no such resource, 2026-10-20).
  */
 function adsErrorFix(code: string, message: string, field: string): string | null {
   switch (code) {
@@ -165,14 +169,13 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
     case "PROHIBITED_METRIC_IN_SELECT_OR_WHERE_CLAUSE":
       return /impression_share/.test(message)
         ? "budget- and rank-lost impression share exist only on campaign: run a separate query FROM campaign for them."
-        : "that metric isn't available on this FROM resource or with these segments: drop it, or get it in a separate query.";
+        : null;
     case "PROHIBITED_RESOURCE_TYPE_IN_SELECT_CLAUSE":
       if (/'CAMPAIGN_BUDGET'/.test(message)) {
         return "campaign_budget fields can only be selected FROM campaign or FROM campaign_budget: drop them here and get budgets in a "
           + "separate query, e.g. SELECT campaign.id, campaign_budget.amount_micros FROM campaign.";
       }
-      return "that resource can't be selected with this FROM: drop it and query it in its own query, FROM that resource "
-        + "(or FROM campaign if it's a campaign-level resource).";
+      return null;
     case "PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE":
       if (/segments\.geo_target_/.test(message)) {
         return "location segments come FROM geographic_view (or user_location_view), which can also select campaign and ad_group fields: "
@@ -180,14 +183,13 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
           + "They return geoTargetConstants/ID; get names with SELECT geo_target_constant.canonical_name FROM geo_target_constant "
           + "WHERE geo_target_constant.resource_name IN ('geoTargetConstants/ID', …).";
       }
-      return "that segment or resource can't be used with this FROM resource: drop it, or query FROM a resource that has it.";
+      return null;
     case "BAD_ENUM_CONSTANT":
       if (/'(AFFILIATE_)?LOCATION'/.test(message)) {
         return "location assets aren't a field_type: they're asset sets. SELECT campaign.name, asset_set.name, asset_set.type FROM campaign_asset_set "
           + "(asset_set.type LOCATION_SYNC is the Business Profile link; affiliate locations are asset_set.location_set.location_ownership_type AFFILIATE).";
       }
-      return "that value isn't one this field takes. Enum values are UPPER_CASE names; list a field's values with run_gaql: "
-        + "SELECT name, enum_values WHERE name = 'campaign.status' (with the field in question).";
+      return null;
     case "MUTATE_NOT_ALLOWED":
       return "Google doesn't allow this change through the API (some legacy or system-managed items are locked, and some campaign types "
         + "can't be created). Do it in Google Ads. For a locked shared bid strategy, set_bidding_strategy can still move campaigns off it.";
@@ -208,8 +210,7 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       if (/'recommendation\.impact\./.test(message)) {
         return "recommendation.impact is selected whole: SELECT recommendation.impact (its base_metrics and potential_metrics come back inside it).";
       }
-      return "check the name: fields are prefixed with their resource (campaign.name, ad_group.status, metrics.clicks). "
-        + "Some fields are objects that can only be selected whole, not by their subfields.";
+      return null;
     case "BAD_FIELD_NAME":
       return /'\('/.test(message)
         ? "GAQL has no parentheses or OR: WHERE conditions can only be joined with AND. Use field IN ('a', 'b') for alternatives, or separate queries."

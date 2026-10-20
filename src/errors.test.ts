@@ -28,7 +28,6 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized field in the query: 'campaign.url_expansion_opt_out'.", undefined, "FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION"],
     [{ queryError: "PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select or filter on the following segments: 'segments.geo_target_city'(could not support requested resources: 'CAMPAIGN'), since segment is incompatible with the resource in the FROM clause or other selected segmenting resources", undefined, "FROM geographic_view"],
     [{ queryError: "BAD_ENUM_CONSTANT" }, "Invalid enum values cannot be included in WHERE clause: 'LOCATION', 'AFFILIATE_LOCATION'.", undefined, "FROM campaign_asset_set"],
-    [{ queryError: "BAD_ENUM_CONSTANT" }, "Invalid enum value cannot be included in WHERE clause: 'ACTIVE'.", undefined, "UPPER_CASE"],
     [{ imageError: "ASPECT_RATIO_NOT_ALLOWED" }, "The aspect ratio of the image does not match the expected aspect ratios provided in the asset spec.", "logo_images", "1.91:1"],
   ])("%j → hint", (code, message, field, hint) => {
     const e = new AdsApiError(400, body(code, message, field));
@@ -45,6 +44,17 @@ describe("AdsApiError fix hints", () => {
     }] }] } }));
     expect(e.message).toContain('[policy Alcohol flagged "borrel", exemptible]');
     expect(e.message).toContain("→ ");
+  });
+
+  // run_gaql adds the field catalog's finding for these (gaql.ts checkGaql); a generic guess here only contradicted it.
+  it.each([
+    [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized fields in the query: 'invoice.id', 'invoice.type'."],
+    [{ queryError: "BAD_ENUM_CONSTANT" }, "Invalid enum value cannot be included in WHERE clause: 'ACTIVE'."],
+    [{ queryError: "PROHIBITED_METRIC_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select or filter on the following metrics: 'conversions'"],
+    [{ queryError: "PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select or filter on the following segments: 'segments.search_term'"],
+    [{ queryError: "PROHIBITED_RESOURCE_TYPE_IN_SELECT_CLAUSE" }, "Cannot select fields from the following resource: 'AD_GROUP'"],
+  ])("%j: no generic hint, the field catalog speaks", (code, message) => {
+    expect(new AdsApiError(400, body(code, message)).message).not.toContain("→");
   });
 
   it("adds nothing for errors it has no fix for", () => {
