@@ -18,20 +18,22 @@ const CSS = `
 @font-face{font-family:"IBM Plex Sans";font-weight:400;font-display:swap;src:url(/fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2")}
 @font-face{font-family:"IBM Plex Sans";font-weight:600;font-display:swap;src:url(/fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2")}
 @font-face{font-family:"IBM Plex Mono";font-weight:400;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-400-normal.woff2) format("woff2")}
-:root{--bg:#fff;--fg:#17181a;--muted:#5b5f66;--line:#e3e4e6;--card:#f8f8f9;--accent:#1f5f4a;--accent-fg:#fff;--code:#f1f2f3}
-@media (prefers-color-scheme:dark){:root{--bg:#111214;--fg:#e9eaec;--muted:#a0a4ab;--line:#2a2c30;--card:#17181b;--accent:#6fc4a4;--accent-fg:#0d1f19;--code:#1e2023}}
+:root{--bg:#fbfaf7;--fg:#151715;--muted:#585d58;--line:#e4e1d9;--card:#fff;--tint:#f3f1ec;--accent:#1f5f4a;--accent-fg:#fff;--accent-soft:#e3ede7;--code:#efede7}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1110;--fg:#ebeae5;--muted:#a3a7a1;--line:#272b28;--card:#161917;--tint:#131614;--accent:#6fc4a4;--accent-fg:#0d1f19;--accent-soft:#183129;--code:#1c1f1d}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.6 "IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 h1,h2,h3,strong,b,th{font-weight:600}
 .wrap{max-width:860px;margin:0 auto;padding:0 20px}
-header{border-bottom:1px solid var(--line)}header .wrap{display:flex;justify-content:space-between;align-items:center;height:60px}
+header{border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--bg) 88%,transparent);-webkit-backdrop-filter:saturate(1.4) blur(10px);backdrop-filter:saturate(1.4) blur(10px)}header .wrap{display:flex;justify-content:space-between;align-items:center;height:60px}
 .brand{white-space:nowrap;font-weight:600;letter-spacing:-.01em;color:var(--fg);text-decoration:none}
-nav a{color:var(--muted);text-decoration:none;margin-left:18px;font-size:15px}nav a:hover{color:var(--fg)}
+nav{display:flex;align-items:center}nav a{color:var(--muted);text-decoration:none;margin-left:20px;font-size:15px}nav a:hover{color:var(--fg)}
+nav a.nav-cta{color:var(--accent-fg);background:var(--accent);padding:7px 14px;border-radius:8px;font-weight:600}nav a.nav-cta:hover{color:var(--accent-fg);filter:brightness(1.08)}
 h1{font-size:clamp(30px,5vw,44px);line-height:1.15;text-wrap:balance;letter-spacing:-.02em;margin:56px 0 16px}
 h2{font-size:24px;letter-spacing:-.01em;margin:56px 0 12px}h3{font-size:18px;margin:24px 0 6px}
 p,li{color:var(--fg)}.lede{font-size:20px;color:var(--muted);max-width:680px}
 .muted{color:var(--muted)}a{color:var(--accent)}
-.btn{display:inline-block;background:var(--accent);color:var(--accent-fg);padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:600}
+.btn{display:inline-block;background:var(--accent);color:var(--accent-fg);padding:12px 18px;border-radius:9px;text-decoration:none;font-weight:600;box-shadow:0 1px 0 rgba(255,255,255,.12) inset,0 1px 2px rgba(0,0,0,.12);transition:filter .15s}.btn:hover{filter:brightness(1.08)}
+.btn-ghost{background:transparent;color:var(--fg);box-shadow:0 0 0 1px var(--line) inset}.btn-ghost:hover{background:var(--tint);filter:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-top:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px}
 .card h3{margin-top:0}
@@ -96,6 +98,68 @@ ol.steps>li{margin-bottom:28px}
 .fb .opt{display:flex;gap:10px;align-items:center;padding:6px 0;cursor:pointer}.fb .opt input{margin:0;width:18px;height:18px;accent-color:var(--accent)}
 .fb textarea{display:block;width:100%;box-sizing:border-box;min-height:180px;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:inherit;resize:vertical}
 .fb .hint{font-size:14px;color:var(--muted);margin:8px 0 20px}.fb .btn{border:0;cursor:pointer;font-size:16px}.fb .who{font-size:14px;color:var(--muted);margin:20px 0 0}
+.home .wrap{max-width:1120px}
+.home h2{font-size:clamp(26px,3.4vw,36px);line-height:1.15;letter-spacing:-.025em;margin:0 0 12px;text-wrap:balance}
+.hero{padding:72px 0 80px}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.02fr);gap:56px;align-items:center}
+.hero h1{font-size:clamp(38px,5.6vw,64px);line-height:1.02;letter-spacing:-.04em;margin:18px 0 20px}
+.hero .lede{font-size:19px;line-height:1.55;margin:0 0 28px;max-width:520px}
+.eyebrow{display:inline-flex;align-items:center;margin:0;font-size:14px;color:var(--muted);border:1px solid var(--line);background:var(--card);border-radius:99px;padding:5px 12px 5px 10px}
+.ctas{display:flex;flex-wrap:wrap;gap:12px}.btn-lg{padding:14px 22px;font-size:16px}
+.works{margin:28px 0 0;font-size:14px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.works span{font:13px/1 "IBM Plex Mono",ui-monospace,monospace;color:var(--fg)}
+.window{margin:0;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(20,24,20,.04),0 12px 32px -8px rgba(20,24,20,.12),0 32px 64px -24px rgba(31,95,74,.18);overflow:hidden}
+.window-bar{display:flex;align-items:center;gap:6px;padding:11px 14px;border-bottom:1px solid var(--line);background:var(--tint)}
+.window-bar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.window-bar span{margin-left:8px;font:12px/1 "IBM Plex Mono",ui-monospace,monospace;color:var(--muted)}
+.window-body{padding:20px 20px 22px;font-size:15px;line-height:1.55}
+.window-body p{margin:0 0 14px}.window-body p:last-child{margin:0}
+.said.you{margin-left:auto;width:fit-content;max-width:85%;background:var(--accent);color:var(--accent-fg);border-radius:14px 14px 4px 14px;padding:9px 14px}
+.window .change{background:var(--bg);margin:0 0 14px;border-left:3px solid #c78a12}
+.band{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--tint);padding:56px 0}
+.pillars{display:grid;grid-template-columns:repeat(3,1fr);gap:40px}
+.pillars h3{font-size:18px;margin:0 0 8px;padding-top:16px;border-top:2px solid var(--accent);width:100%}
+.pillars p{margin:0;color:var(--muted);font-size:16px}
+.also{list-style:none;padding:0;margin:40px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:10px 40px;font-size:15px;color:var(--muted)}
+.also li{position:relative;padding-left:20px}.also li::before{content:"";position:absolute;left:2px;top:.62em;width:7px;height:7px;border-radius:2px;background:var(--accent);opacity:.55}
+.sec{padding:88px 0}.sec-tint{background:var(--tint);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.sec-head{max-width:680px;margin-bottom:36px}.sec-head p{margin:0}
+.kicker{font:12px/1 "IBM Plex Mono",ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin:0 0 14px!important}
+.small{font-size:14px}
+.changes{list-style:none;padding:0;margin:0 0 24px;display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line)}
+.changes li{display:flex;flex-direction:column;gap:4px;padding:14px 24px 14px 0;border-bottom:1px solid var(--line);font-size:15px;line-height:1.5}
+.changes li:nth-child(even){padding-left:24px;padding-right:0;border-left:1px solid var(--line)}
+.changes .undo{color:var(--muted);font-size:14px}.changes .undo::before{content:"↺ ";color:var(--accent);font-weight:600}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:64px}
+.duo .changes{grid-template-columns:1fr}.duo .changes li:nth-child(even){padding-left:0;border-left:0}
+.defs{margin:16px 0 20px;display:grid;grid-template-columns:auto 1fr;gap:10px 18px;font-size:15px}
+.defs dt{font-weight:600;white-space:nowrap}.defs dd{margin:0;color:var(--muted)}
+.url-lg{max-width:620px;padding:10px 10px 10px 18px;border:1px solid var(--line);background:var(--card);margin:0 0 32px}.url-lg code{font-size:16px}
+.apps{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.app{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px}
+.app h3{margin:0 0 8px;font-size:17px}.app h3 .muted{font-weight:400;font-size:14px;margin-left:6px}.app p{margin:0 0 8px;font-size:15px}.app p:last-child{margin:0}.app .cmd{margin:4px 0 0}
+.demo{margin-top:32px;padding:22px 24px;border-radius:12px;background:var(--accent-soft);max-width:760px}.demo h3{margin:0 0 6px}.demo p{margin:0}
+.plans{display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:880px}
+.plan{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px;display:flex;flex-direction:column}
+.plan h3{margin:0;font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.price{font-size:40px;font-weight:600;letter-spacing:-.03em;margin:6px 0 12px}
+.plan>p{margin:0 0 12px}.plan-cta{margin-top:auto!important;padding-top:8px}
+.plan-pro{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.faq{display:grid;grid-template-columns:1fr 1fr;gap:8px 56px}.faq h3{font-size:17px;margin:20px 0 6px}.faq p{margin:0;color:var(--muted);font-size:16px}
+.closer{padding:96px 0;text-align:center;border-top:1px solid var(--line)}.closer h2{margin-bottom:10px}.closer p{margin:0 0 28px}.closer .ctas{justify-content:center}
+.home footer{margin-top:0}
+@media (max-width:900px){
+.hero{padding:40px 0 56px}.hero-grid,.duo{grid-template-columns:1fr;gap:40px}
+.pillars{grid-template-columns:1fr;gap:28px}.also,.changes,.apps,.plans,.faq{grid-template-columns:1fr}
+.changes li:nth-child(even){padding-left:0;border-left:0}.changes li{padding-right:0}
+.sec{padding:64px 0}.band{padding:44px 0}
+}
+@media (max-width:600px){
+.hero{padding:28px 0 44px}.hero h1{margin:14px 0 14px}.hero .lede{font-size:17px;margin-bottom:22px}
+.ctas .btn{flex:1 1 auto;text-align:center}.btn-lg{padding:12px 16px;font-size:15px}
+.window-body{padding:16px;font-size:14px}.defs{grid-template-columns:1fr;gap:2px}.defs dd{margin-bottom:10px}
+.url-lg code{font-size:13px}.nav-hide{display:none}
+}
 @media (max-width:600px){
 nav a{margin-left:12px}nav{white-space:nowrap}
 @media (max-width:400px){header .wrap{padding:0 16px}nav a{margin-left:10px;font-size:14px}}
@@ -111,7 +175,7 @@ nav a{margin-left:12px}nav{white-space:nowrap}
 
 const SOURCE_URL = "https://github.com/zwznco/camberstack-mcp";
 
-function layout(o: { title: string; description: string; path: string; body: string; baseUrl: string; jsonLd?: object; noindex?: boolean }): string {
+function layout(o: { title: string; description: string; path: string; body: string; baseUrl: string; jsonLd?: object; noindex?: boolean; wide?: boolean }): string {
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -125,10 +189,10 @@ function layout(o: { title: string; description: string; path: string; body: str
 <link rel="apple-touch-icon" href="/logo.png">
 <style>${CSS}</style>
 ${o.jsonLd ? `<script type="application/ld+json">${JSON.stringify(o.jsonLd)}</script>` : ""}
-</head><body>
+</head><body${o.wide ? ' class="home"' : ""}>
 <header><div class="wrap"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="24" height="24" style="vertical-align:-5px;margin-right:8px">Camberstack</a>
-<nav><a href="/#setup">Connect</a><a href="/docs">Docs</a><a href="/#pricing">Pricing</a><a href="/account">Account</a></nav></div></header>
-<main class="wrap">${o.body}</main>
+<nav><a href="/docs">Docs</a><a class="nav-hide" href="/#pricing">Pricing</a><a href="/account">Account</a><a class="nav-cta" href="/#setup">Connect</a></nav></div></header>
+<main${o.wide ? "" : ' class="wrap"'}>${o.body}</main>
 <footer><div class="wrap">
 <a href="/docs">Docs</a><a href="/tools">Tools</a><a href="/changelog">Changelog</a><a href="/about">About</a><a href="/feedback">Feedback</a><a href="${SOURCE_URL}">Source code (MIT)</a><a href="/privacy">Privacy policy</a><a href="/terms">Terms</a><a href="mailto:${CONTACT}">${CONTACT}</a>
 <p>Camberstack is independent and not affiliated with or endorsed by Google. Google Ads is a trademark of Google LLC.</p>
@@ -150,10 +214,32 @@ export function cmd(text: string): string {
 const shot = (file: string, w: number, h: number, alt: string) =>
   `<img class="shot" src="/shots/${file}" width="${w}" height="${h}" alt="${alt}" loading="lazy">`;
 
+const CHANGES: [string, string][] = [
+  ["Add negative keywords to a campaign", "Removes exactly the negatives it added"],
+  ["Pause or re-enable a campaign, ad group or keyword", "Restores the previous status"],
+  ["Change a campaign's daily budget (not shared budgets)", "Restores the previous amount"],
+  ["Set or remove the last day a campaign runs", "Restores the previous end date"],
+  ["Build a Search campaign: budget, bidding, locations, languages, ad groups, keywords, responsive search ads, negatives, sitelinks. Created paused", "Removes the campaign it built"],
+  ["Build a Display campaign: responsive display ads from your image URLs or existing image assets, budget, bidding, locations, languages. Created paused", "Removes the campaign it built"],
+  ["Build a Demand Gen campaign with YouTube video ads (the API's route onto YouTube; Google doesn't let it create Video campaigns). Created paused", "Removes the campaign it built"],
+  ["Build a Performance Max campaign: asset groups of headlines, descriptions, images and videos, business name and logo, conversion bidding, locations, languages (no shopping feed). Created paused", "Removes the campaign it built"],
+  ["Add an ad group, keywords, a responsive search ad or sitelinks to an existing campaign", "Removes exactly what it added"],
+  ["Make a campaign count and bid on one conversion category only (e.g. sign-ups)", "Restores the previous goals"],
+  ["Change a keyword's or ad group's max CPC", "Restores the previous bid"],
+  ["Pause or re-enable an ad (add the new ad and pause the old one to replace it)", "Restores the previous status"],
+  ["Add or remove a campaign's locations and languages; in-location-only or also interested", "Restores the previous targeting"],
+  ["Switch bid strategy: manual CPC, maximize clicks, maximize conversions", "Restores the previous strategy"],
+  ["Set a campaign's tracking URL suffix", "Restores the previous suffix"],
+  ["Create a conversion action, or set how many conversions a click can count", "Removes it / restores the previous setting"],
+];
+
+const changeList = (rows: [string, string][]) =>
+  `<ul class="changes">${rows.map(([c, u]) => `<li><span>${c}</span><span class="undo">${u}</span></li>`).join("")}</ul>`;
+
 export function homePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
   return layout({
-    baseUrl, path: "/",
+    baseUrl, path: "/", wide: true,
     title: "Camberstack: hosted Google Ads MCP for Claude and ChatGPT",
     description: "A hosted Google Ads MCP server for Claude, ChatGPT and Cursor. Your AI proposes changes, you approve each one, and any applied change can be undone in one step. Free for 1 account with unlimited changes; $15/month for 10.",
     jsonLd: {
@@ -168,135 +254,146 @@ export function homePage(baseUrl: string): string {
       ],
     },
     body: `
+<section class="hero"><div class="wrap hero-grid">
+<div class="hero-copy">
+<p class="eyebrow"><span class="dot ok"></span>Free for 1 Google Ads account. No card.</p>
 <h1>A hosted Google Ads MCP server</h1>
-<p class="lede">Your AI reads your Google Ads account and proposes changes. Nothing changes until you approve.</p>
-<ul>
-<li><strong>Undo on every plan.</strong> Ask your AI to undo a change, and it reverses exactly that change.</li>
-<li><strong>Warnings before you approve.</strong> Turning a campaign on, more than doubling a budget or bid, or switching bid strategy is flagged in the proposal.</li>
-<li><strong>Free for 1 Google Ads account, with unlimited changes.</strong> No card. Pro is $15/month for up to 10 accounts.</li>
-<li><strong>A <a href="#demo">demo account</a> to try first.</strong> Every tool works on it before you use your own.</li>
-<li>Changes range from negative keywords and budgets to bids, targeting and whole new Search, Performance Max, Display and YouTube campaigns.</li>
-<li>Connect Claude, ChatGPT, Cursor or any MCP app with one URL and a Google sign-in. Works with manager (MCC) accounts.</li>
-<li>Optional, read-only Search Console: see where you already rank, and which searches you may be paying for twice.</li>
-<li>Optional <a href="#analytics">Google Analytics 4</a>: see which landing pages turn ad clicks into conversions, and set up tracking with the same approve-and-undo.</li>
-</ul>
-<p><a class="btn" href="#setup">Connect</a></p>
-
-<h2 id="example">What a change looks like</h2>
-<p>From the demo account, a sample plumbing business:</p>
-<div class="convo">
-<p class="who">You</p><p class="said">Which search terms are wasting money in Emergency Plumbing?</p>
-<p class="who">Your AI</p><p><em>"plumber jobs near me"</em> cost $84.60 and <em>"plumber salary"</em> $41.20, with no conversions: people looking for work, not a plumber. I can add "jobs" and "salary" as negative keywords.</p>
+<p class="lede">Your AI reads your Google Ads account and proposes changes. Nothing changes until you approve, and every change can be undone.</p>
+<div class="ctas"><a class="btn btn-lg" href="#setup">Connect for free</a><a class="btn btn-lg btn-ghost" href="#demo">Try the demo account</a></div>
+<p class="works">Works with <span>Claude</span><span>ChatGPT</span><span>Cursor</span><span>Claude Code</span><span>any MCP app</span></p>
+</div>
+<figure class="window" id="example" aria-label="What a change looks like, from the demo account">
+<div class="window-bar"><i></i><i></i><i></i><span>Demo account · sample plumbing business</span></div>
+<div class="window-body">
+<p class="said you">Which search terms are wasting money in Emergency Plumbing?</p>
+<p class="ai"><em>"plumber jobs near me"</em> cost $84.60 and <em>"plumber salary"</em> $41.20, with no conversions: people looking for work, not a plumber. I can add "jobs" and "salary" as negative keywords.</p>
 <div class="change"><div class="change-top"><strong>Proposal</strong><span class="pill proposed">proposed</span></div>
 <ul><li>Add 2 negative keyword(s) to campaign "Emergency Plumbing – Search": "jobs", "salary"</li></ul>
 <div class="change-foot">Checked with Google, nothing changed yet</div></div>
-<p class="who">You</p><p class="said">Apply it.</p>
-<p class="who">Your AI</p><p><span class="pill applied">applied</span>&nbsp; Done. If it blocks searches you wanted, ask me to undo it: that removes exactly these two negatives.</p>
+<p class="said you">Apply it.</p>
+<p class="ai"><span class="pill applied">applied</span>&nbsp; Done. If it blocks searches you wanted, ask me to undo it: that removes exactly these two negatives.</p>
 </div>
-<p class="muted">Every applied change is listed with its undo on your <a href="/account">account page</a>.</p>
+</figure>
+</div></section>
 
-<h2 id="changes">What it can change</h2>
-<table>
-<tr><th>Change</th><th>Undo</th></tr>
-<tr><td>Add negative keywords to a campaign</td><td>Removes exactly the negatives it added</td></tr>
-<tr><td>Pause or re-enable a campaign, ad group or keyword</td><td>Restores the previous status</td></tr>
-<tr><td>Change a campaign's daily budget (not shared budgets)</td><td>Restores the previous amount</td></tr>
-<tr><td>Set or remove the last day a campaign runs</td><td>Restores the previous end date</td></tr>
-<tr><td>Build a Search campaign: budget, bidding, locations, languages, ad groups, keywords, responsive search ads, negatives, sitelinks. Created paused</td><td>Removes the campaign it built</td></tr>
-<tr><td>Build a Display campaign: responsive display ads from your image URLs or existing image assets, budget, bidding, locations, languages. Created paused</td><td>Removes the campaign it built</td></tr>
-<tr><td>Build a Demand Gen campaign with YouTube video ads (the API's route onto YouTube; Google doesn't let it create Video campaigns). Created paused</td><td>Removes the campaign it built</td></tr>
-<tr><td>Build a Performance Max campaign: asset groups of headlines, descriptions, images and videos, business name and logo, conversion bidding, locations, languages (no shopping feed). Created paused</td><td>Removes the campaign it built</td></tr>
-<tr><td>Add an ad group, keywords, a responsive search ad or sitelinks to an existing campaign</td><td>Removes exactly what it added</td></tr>
-<tr><td>Make a campaign count and bid on one conversion category only (e.g. sign-ups)</td><td>Restores the previous goals</td></tr>
-<tr><td>Change a keyword's or ad group's max CPC</td><td>Restores the previous bid</td></tr>
-<tr><td>Pause or re-enable an ad (add the new ad and pause the old one to replace it)</td><td>Restores the previous status</td></tr>
-<tr><td>Add or remove a campaign's locations and languages; in-location-only or also interested</td><td>Restores the previous targeting</td></tr>
-<tr><td>Switch bid strategy: manual CPC, maximize clicks, maximize conversions</td><td>Restores the previous strategy</td></tr>
-<tr><td>Set a campaign's tracking URL suffix</td><td>Restores the previous suffix</td></tr>
-<tr><td>Create a conversion action, or set how many conversions a click can count</td><td>Removes it / restores the previous setting</td></tr>
-</table>
-<p class="muted">A new campaign is always created paused, so building it and letting it spend are two separate approvals. Besides the warnings listed at the top, a proposal also warns before removing a campaign's last location.
+<section class="band"><div class="wrap">
+<div class="pillars">
+<div><h3>Undo on every plan</h3><p>Ask your AI to undo a change, and it reverses exactly that change. Every applied change is listed with its undo on your <a href="/account">account page</a>.</p></div>
+<div><h3>Warnings before you approve</h3><p>Turning a campaign on, more than doubling a budget or bid, or switching bid strategy is flagged in the proposal.</p></div>
+<div><h3>A demo account to try first</h3><p>Every tool works on a <a href="#demo">sample account</a> before you use your own. Changes there never reach Google.</p></div>
+</div>
+<ul class="also">
+<li>Negative keywords and budgets up to whole new Search, Performance Max, Display and YouTube campaigns</li>
+<li>One URL and a Google sign-in for Claude, ChatGPT, Cursor or any MCP app. Works with manager (MCC) accounts</li>
+<li>Optional, read-only <a href="#search-console">Search Console</a>: where you already rank, and which searches you may be paying for twice</li>
+<li>Optional <a href="#analytics">Google Analytics 4</a>: which landing pages turn ad clicks into conversions</li>
+</ul>
+</div></section>
+
+<section class="sec" id="changes"><div class="wrap">
+<div class="sec-head"><p class="kicker">Google Ads</p><h2>What it can change</h2>
+<p class="muted">Every change is a proposal you approve, and every one has an undo. A new campaign is always created paused, so building it and letting it spend are two separate approvals.</p></div>
+${changeList(CHANGES)}
+<p class="muted small">Besides the warnings above, a proposal also warns before removing a campaign's last location.
 It cannot delete anything you built, touch billing, or edit anything outside Google Ads and the <a href="#analytics">Google Analytics setup changes</a> below.
 Any question beyond these tools is answered with read-only queries. <a href="/tools">Every tool and what it can do</a>;
 the code is <a href="${SOURCE_URL}">open source</a>.</p>
+</div></section>
 
-<h2 id="search-console">Search Console (optional, read-only)</h2>
-<p>If you leave the Search Console box ticked when you connect, your AI can also read your website's Google Search clicks, impressions,
+<section class="sec sec-tint"><div class="wrap duo">
+<div id="search-console"><p class="kicker">Optional · read-only</p><h2>Search Console</h2>
+<p>Leave the Search Console box ticked when you connect, and your AI can read your site's Google Search clicks, impressions,
 queries and positions, and line them up against your ads:</p>
-<ul>
-<li><strong>Paid and already ranking:</strong> searches you pay for where your site is already in the top few organic results, with the ad spend on each.</li>
-<li><strong>Organic gaps:</strong> searches your site shows up for on page 2 or lower, with no ad covering them.</li>
-<li><strong>Site totals:</strong> clicks, impressions, CTR and position against the previous period.</li>
-<li><strong>Trends:</strong> which searches and pages are rising, falling, new or gone since the period before.</li>
-<li><strong>Opportunities:</strong> searches just off page 1, and top results with a click-through rate low enough to point at the title.</li>
-<li><strong>Indexing:</strong> whether Google has indexed a page and why not, when it last crawled it, and when it last read your sitemap.</li>
-</ul>
-<p class="muted">Camberstack can't change anything in Search Console. Google Ads, Search Console and Google Analytics are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it.
-The Search Console tools work without a Google Ads account too: <a href="/google-search-console-mcp">Search Console MCP</a>.</p>
-
-<h2 id="analytics">Google Analytics 4 (optional)</h2>
+<dl class="defs">
+<dt>Paid and already ranking</dt><dd>Searches you pay for where your site is already in the top few organic results, with the ad spend on each.</dd>
+<dt>Organic gaps</dt><dd>Searches your site shows up for on page 2 or lower, with no ad covering them.</dd>
+<dt>Site totals</dt><dd>Clicks, impressions, CTR and position against the previous period.</dd>
+<dt>Trends</dt><dd>Which searches and pages are rising, falling, new or gone since the period before.</dd>
+<dt>Opportunities</dt><dd>Searches just off page 1, and top results with a click-through rate low enough to point at the title.</dd>
+<dt>Indexing</dt><dd>Whether Google has indexed a page and why not, when it last crawled it, and when it last read your sitemap.</dd>
+</dl>
+<p class="muted small">Camberstack can't change anything in Search Console. The Search Console tools work without a Google Ads account too: <a href="/google-search-console-mcp">Search Console MCP</a>.</p>
+</div>
+<div id="analytics"><p class="kicker">Optional</p><h2>Google Analytics 4</h2>
 <p>Leave the Google Analytics box ticked when you connect, and your AI can read your GA4 properties next to your ads:</p>
-<ul>
-<li><strong>Landing pages:</strong> sessions, engagement and key events (GA4's conversions) per landing page, for all traffic or one channel, such as Paid Search.</li>
-<li><strong>Reports:</strong> any GA4 report by dimension and metric, for example paid against organic traffic last month.</li>
-<li><strong>Setup check:</strong> each property's web streams and measurement IDs, which events count as key events, and which Google Ads accounts it's linked to.</li>
-</ul>
+<dl class="defs">
+<dt>Landing pages</dt><dd>Sessions, engagement and key events (GA4's conversions) per landing page, for all traffic or one channel, such as Paid Search.</dd>
+<dt>Reports</dt><dd>Any GA4 report by dimension and metric, for example paid against organic traffic last month.</dd>
+<dt>Setup check</dt><dd>Each property's web streams and measurement IDs, which events count as key events, and which Google Ads accounts it's linked to.</dd>
+</dl>
 <p>It can also change that setup, with the same proposal, approval and undo as a Google Ads change:</p>
-<table>
-<tr><th>Change</th><th>Undo</th></tr>
-<tr><td>Create a GA4 property with a web stream (the result gives the measurement ID and the tag your site needs)</td><td>Moves the property it created to Google Analytics' trash (restorable there for 35 days)</td></tr>
-<tr><td>Mark or unmark an event as a key event</td><td>Restores the previous setting</td></tr>
-<tr><td>Link or unlink a Google Ads account</td><td>Restores the previous link</td></tr>
-</table>
-<p class="muted">Already connected? The first time you ask about Google Analytics, Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property.</p>
+${changeList([
+  ["Create a GA4 property with a web stream (the result gives the measurement ID and the tag your site needs)", "Moves the property it created to Google Analytics' trash (restorable there for 35 days)"],
+  ["Mark or unmark an event as a key event", "Restores the previous setting"],
+  ["Link or unlink a Google Ads account", "Restores the previous link"],
+])}
+<p class="muted small">Google Ads, Search Console and Google Analytics are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property.</p>
+</div>
+</div></section>
 
-<h2 id="setup">Connect</h2>
-<p>Add this server URL to your AI app, then sign in with Google.</p>
-<div class="url"><code>${mcpUrl}</code><button class="copy" type="button" data-copy="${mcpUrl}">Copy</button></div>
+<section class="sec" id="setup"><div class="wrap">
+<div class="sec-head"><p class="kicker">Two minutes</p><h2>Connect</h2>
+<p>Add this server URL to your AI app, then sign in with Google.</p></div>
+<div class="url url-lg"><code>${mcpUrl}</code><button class="copy" type="button" data-copy="${mcpUrl}">Copy</button></div>
 ${COPY_JS}
-<h3>Claude (web and desktop app)</h3>
-<p>Camberstack is in Claude's connector directory: <a href="https://claude.ai/directory/connectors/camberstack">open it there and click Connect</a>, then sign in with Google.
-<a href="/google-ads-claude">Setup guide</a></p>
-<h3>ChatGPT (Plus, Pro, Business, Enterprise)</h3>
-<p>Turn on developer mode, add it as an MCP app, then type <strong>@Camberstack</strong> in a chat.
-<a href="/google-ads-chatgpt">Step-by-step setup guide</a></p>
-<h3>Claude Code</h3>
-${cmd(`claude mcp add --transport http camberstack ${mcpUrl}`)}
-<h3>Cursor, VS Code, others</h3>
-${cmd(`{ "mcpServers": { "camberstack": { "url": "${mcpUrl}" } } }`)}
-<p class="muted">Your AI app handles sign-in. Google shows exactly what Camberstack asks for before anything is shared: your Google Ads, and (optional) read-only Search Console and Google Analytics, which changes nothing without your approval.</p>
-<h3 id="demo">Want to look first?</h3>
+<div class="apps">
+<div class="app"><h3>Claude <span class="muted">web and desktop</span></h3>
+<p>Camberstack is in Claude's connector directory: <a href="https://claude.ai/directory/connectors/camberstack">open it there and click Connect</a>, then sign in with Google.</p>
+<p><a href="/google-ads-claude">Setup guide →</a></p></div>
+<div class="app"><h3>ChatGPT <span class="muted">Plus, Pro, Business, Enterprise</span></h3>
+<p>Turn on developer mode, add it as an MCP app, then type <strong>@Camberstack</strong> in a chat.</p>
+<p><a href="/google-ads-chatgpt">Step-by-step setup guide →</a></p></div>
+<div class="app"><h3>Claude Code</h3>
+${cmd(`claude mcp add --transport http camberstack ${mcpUrl}`)}</div>
+<div class="app"><h3>Cursor, VS Code, others</h3>
+${cmd(`{ "mcpServers": { "camberstack": { "url": "${mcpUrl}" } } }`)}</div>
+</div>
+<p class="muted small">Your AI app handles sign-in. Google shows exactly what Camberstack asks for before anything is shared: your Google Ads, and (optional) read-only Search Console and Google Analytics, which changes nothing without your approval.</p>
+<div class="demo" id="demo"><h3>Want to look first?</h3>
 <p>Connect, then ask <em>"Show me Camberstack's demo account"</em>. It's a sample plumbing business with six months of
 campaigns and search terms, so you can try questions, proposals, applying and undo without touching a real account.
-Changes there never reach Google, and the demo doesn't count as one of your plan's accounts. A Google login with no Google Ads access gets the demo automatically.</p>
+Changes there never reach Google, and the demo doesn't count as one of your plan's accounts. A Google login with no Google Ads access gets the demo automatically.</p></div>
+</div></section>
 
-<h2 id="pricing">Pricing</h2>
-<div class="grid">
-<div class="card"><h3>Free</h3><p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong>. No card.</p>
-<p><a class="btn" href="#setup">Connect for free</a></p></div>
-<div class="card"><h3>Pro: ${PRO_PRICE_LABEL}</h3><p>Everything in Free, on <strong>up to 10 Google Ads accounts</strong>, for agencies and anyone managing clients through a manager (MCC) account. Cancel any time; you keep Pro until the end of the month you paid for.</p>
-<p><a class="btn" href="/account?upgrade=1">Upgrade to Pro</a></p><p class="muted" style="font-size:14px">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p></div>
+<section class="sec sec-tint" id="pricing"><div class="wrap">
+<div class="sec-head"><p class="kicker">Pricing</p><h2>Free for one account. ${PRO_PRICE_LABEL} for ten.</h2></div>
+<div class="plans">
+<div class="plan"><h3>Free</h3><p class="price">$0</p><p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong>. No card.</p>
+<p class="plan-cta"><a class="btn btn-ghost" href="#setup">Connect for free</a></p></div>
+<div class="plan plan-pro"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>Everything in Free, on <strong>up to 10 Google Ads accounts</strong>, for agencies and anyone managing clients through a manager (MCC) account. Cancel any time; you keep Pro until the end of the month you paid for.</p>
+<p class="plan-cta"><a class="btn" href="/account?upgrade=1">Upgrade to Pro</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p></div>
 </div>
+</div></section>
 
-<h2>Questions</h2>
-<h3>Can the AI change my account without asking?</h3>
+<section class="sec"><div class="wrap">
+<div class="sec-head"><h2>Questions</h2></div>
+<div class="faq">
+<div><h3>Can the AI change my account without asking?</h3>
 <p>Not without a proposal. Every change is first stored as a proposal and checked with Google; applying it is a separate
 tool call, and the server refuses anything that wasn't proposed first or belongs to someone else. If the account changed since the
 proposal, it isn't applied: you get an updated proposal to approve instead.
 Claude and ChatGPT normally ask you before running a tool that changes things, but if you've set that tool to "always allow",
-the AI could propose and apply in one go. Keep the confirmation on for <code>apply_changes</code>.</p>
-<h3>What data do you keep?</h3>
+the AI could propose and apply in one go. Keep the confirmation on for <code>apply_changes</code>.</p></div>
+<div><h3>What data do you keep?</h3>
 <p>Your Google email, an encrypted Google refresh token, and the proposals you make (with their results, so you can undo them).
-Reports and query results are not stored. Details in the <a href="/privacy">privacy policy</a>.</p>
-<h3>How do I disconnect?</h3>
+Reports and query results are not stored. Details in the <a href="/privacy">privacy policy</a>.</p></div>
+<div><h3>How do I disconnect?</h3>
 <p>Sign in at <a href="/account">camberstack.io/account</a> and choose <strong>Disconnect Google Ads</strong>, or remove Camberstack at
 <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. You can also ask your AI to use the <code>disconnect</code>
-tool, though some apps (ChatGPT, for one) block disconnect requests from chat.</p>
-<h3>What counts as an account?</h3>
+tool, though some apps (ChatGPT, for one) block disconnect requests from chat.</p></div>
+<div><h3>What counts as an account?</h3>
 <p>Each Google Ads account you actually use Camberstack on in the last ${ACCOUNT_WINDOW_DAYS} days, not every account your login can see.
 A manager (MCC) account and the demo account don't count. Free covers one account at a time, and you can switch to another once
 every ${ACCOUNT_WINDOW_DAYS} days: the new one becomes active and the old one is locked. Past that, a plan-limit error comes with a personal
-checkout link. Undo and change history always work.</p>
+checkout link. Undo and change history always work.</p></div>
+</div>
+</div></section>
+
+<section class="closer"><div class="wrap">
+<h2>Ask your Google Ads account a question.</h2>
+<p class="muted">Free for one account, with unlimited changes and undo.</p>
+<div class="ctas"><a class="btn btn-lg" href="#setup">Connect for free</a><a class="btn btn-lg btn-ghost" href="#demo">Try the demo account</a></div>
+</div></section>
 `,
   });
 }
