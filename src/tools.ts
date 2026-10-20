@@ -187,6 +187,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       + "Google rejects queries that break these rules: selecting or segmenting by segments.date needs a finite range in WHERE "
       + "(segments.date DURING LAST_30_DAYS, or BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'); click_view needs a single day (segments.date = 'YYYY-MM-DD'); "
       + "every field used in WHERE or ORDER BY must also be in SELECT. "
+      + "Maximize clicks is target_spend in the API: campaign.target_spend.cpc_bid_ceiling_micros (there is no campaign.maximize_clicks). "
       + "Unsure of a field's name or whether it fits this FROM? Look it up first with a query that has no FROM, which reads Google's field "
       + "catalog instead of the account (any customer_id): SELECT name, category, selectable WHERE name LIKE '%search_term%', or "
       + "SELECT attribute_resources, metrics, segments WHERE name = 'campaign' for what can be used FROM campaign.",
