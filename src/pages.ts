@@ -129,7 +129,7 @@ ol.steps>li{margin-bottom:28px}
 .changes{list-style:none;padding:0;margin:0 0 24px;display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line)}
 .changes li{display:flex;flex-direction:column;gap:4px;padding:14px 24px 14px 0;border-bottom:1px solid var(--line);font-size:15px;line-height:1.5}
 .changes li:nth-child(even){padding-left:24px;padding-right:0;border-left:1px solid var(--line)}
-.changes .undo{color:var(--muted);font-size:14px}.changes .undo::before{content:"↺ ";color:var(--accent);font-weight:600}
+.changes .undo{color:var(--muted);font-size:14px}.changes .undo b{color:var(--accent);font-weight:600}
 .duo{display:grid;grid-template-columns:1fr 1fr;gap:64px}
 .duo .changes{grid-template-columns:1fr}.duo .changes li:nth-child(even){padding-left:0;border-left:0}
 .defs{margin:16px 0 20px;display:grid;grid-template-columns:auto 1fr;gap:10px 18px;font-size:15px}
@@ -234,7 +234,7 @@ const CHANGES: [string, string][] = [
 ];
 
 const changeList = (rows: [string, string][]) =>
-  `<ul class="changes">${rows.map(([c, u]) => `<li><span>${c}</span><span class="undo">${u}</span></li>`).join("")}</ul>`;
+  `<ul class="changes">${rows.map(([c, u]) => `<li><span>${c}</span><span class="undo"><b>Undo:</b> ${u}</span></li>`).join("")}</ul>`;
 
 export function homePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
