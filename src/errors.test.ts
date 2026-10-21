@@ -28,6 +28,8 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized field in the query: 'campaign.url_expansion_opt_out'.", undefined, "FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION"],
     [{ queryError: "PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select or filter on the following segments: 'segments.geo_target_city'(could not support requested resources: 'CAMPAIGN'), since segment is incompatible with the resource in the FROM clause or other selected segmenting resources", undefined, "FROM geographic_view"],
     [{ queryError: "BAD_ENUM_CONSTANT" }, "Invalid enum values cannot be included in WHERE clause: 'LOCATION', 'AFFILIATE_LOCATION'.", undefined, "FROM campaign_asset_set"],
+    [{ changeEventError: "CHANGE_DATE_RANGE_INFINITE" }, "The change_event request is missing filters on change_event.change_date_time or is filtering on change_event.change_date_time with an infinite range.", undefined, "both ends of the window"],
+    [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized field in the query: 'metrics.video_views'.", undefined, "metrics.video_trueview_views"],
     [{ imageError: "ASPECT_RATIO_NOT_ALLOWED" }, "The aspect ratio of the image does not match the expected aspect ratios provided in the asset spec.", "logo_images", "1.91:1"],
   ])("%j → hint", (code, message, field, hint) => {
     const e = new AdsApiError(400, body(code, message, field));

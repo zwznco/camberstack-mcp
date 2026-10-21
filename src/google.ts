@@ -160,6 +160,9 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
   switch (code) {
     case "EXPECTED_FILTERS_ON_DATE_RANGE":
       return "add a finite range to WHERE: segments.date DURING LAST_30_DAYS, or segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'.";
+    case "CHANGE_DATE_RANGE_INFINITE":
+      return "change_event needs both ends of the window, within the last 30 days, plus a LIMIT (at most 10000): WHERE change_event.change_date_time "
+        + ">= 'YYYY-MM-DD' AND change_event.change_date_time <= 'YYYY-MM-DD' … LIMIT 1000. For changes made through Camberstack, use change_history.";
     case "EXPECTED_FILTER_ON_A_SINGLE_DAY":
       return "click_view needs one day: segments.date = 'YYYY-MM-DD'. Query each day separately.";
     case "EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE":
@@ -206,6 +209,9 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       if (/campaign\.url_expansion_opt_out/.test(message)) {
         return "Final URL expansion moved to SELECT campaign.asset_automation_settings (selected whole): it's the entry whose "
           + "asset_automation_type is FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION, with asset_automation_status OPTED_IN or OPTED_OUT.";
+      }
+      if (/'metrics\.video_view(s|_rate)'/.test(message)) {
+        return "metrics.video_views was renamed metrics.video_trueview_views (video_view_rate is now video_trueview_view_rate).";
       }
       if (/'recommendation\.impact\./.test(message)) {
         return "recommendation.impact is selected whole: SELECT recommendation.impact (its base_metrics and potential_metrics come back inside it).";
