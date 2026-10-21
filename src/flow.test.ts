@@ -2244,7 +2244,10 @@ describe("OAuth + MCP end to end", () => {
     expect(await (await fetch(`${base}/`)).text()).toContain('href="/google-ads-claude"');
     const c = await fetch(`${base}/google-ads-chatgpt`);
     expect(c.status).toBe(200);
-    expect(await c.text()).toContain("Create MCP App");
+    const chatgpt = await c.text();
+    // ChatGPT setup goes through the published plugin, not developer mode.
+    expect(chatgpt).toContain('href="https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866"');
+    expect(chatgpt).not.toContain("Developer mode");
     const claude = await (await fetch(`${base}/google-ads-claude`)).text() + await (await fetch(`${base}/google-ads-chatgpt`)).text()
       + await (await fetch(`${base}/google-ads-gemini`)).text();
     for (const m of claude.matchAll(/src="(\/shots\/[^"]+)"/g)) {

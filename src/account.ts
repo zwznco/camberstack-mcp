@@ -100,7 +100,8 @@ Your account is created when you connect it to your AI app. It takes about a min
 <div class="url"><code>${mcpUrl}</code><button class="copy" type="button" data-copy="${mcpUrl}">Copy</button></div>
 <p><strong>Claude:</strong> <a href="https://claude.ai/directory/connectors/camberstack">open Camberstack in the connector directory</a> and click Connect
 (<a href="/google-ads-claude">guide</a>).<br>
-<strong>ChatGPT:</strong> turn on developer mode and add it as an MCP app (<a href="/google-ads-chatgpt">guide</a>).<br>
+<strong>ChatGPT:</strong> <a href="https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866">open Camberstack in the plugin directory</a> and click Install plugin
+(<a href="/google-ads-chatgpt">guide</a>).<br>
 <strong>Claude Code:</strong></p>
 ${cmd(`claude mcp add --transport http camberstack ${mcpUrl}`)}
 <p>2. Sign in with Google when your AI app asks, using ${esc(who.email)}.</p>

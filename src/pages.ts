@@ -382,8 +382,8 @@ ${COPY_JS}
 <div class="app"><h3>Claude <span class="muted">web and desktop</span></h3>
 <p>Camberstack is in Claude's connector directory: <a href="https://claude.ai/directory/connectors/camberstack">open it there and click Connect</a>, then sign in with Google.</p>
 <p><a href="/google-ads-claude">Setup guide →</a></p></div>
-<div class="app"><h3>ChatGPT <span class="muted">Plus, Pro, Business, Enterprise</span></h3>
-<p>Turn on developer mode, add it as an MCP app, then type <strong>@Camberstack</strong> in a chat.</p>
+<div class="app"><h3>ChatGPT <span class="muted">web and phone app</span></h3>
+<p>Camberstack is in ChatGPT's plugin directory: <a href="https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866">open it there and click Install plugin</a>, sign in with Google, then type <strong>@Camberstack</strong> in a chat.</p>
 <p><a href="/google-ads-chatgpt">Step-by-step setup guide →</a></p></div>
 <div class="app"><h3>Claude Code</h3>
 ${cmd(`claude mcp add --transport http camberstack ${mcpUrl}`)}</div>
@@ -582,68 +582,44 @@ ${closer("Ask Claude about your Google Ads.", "Free for one account, with unlimi
 }
 
 /**
- * Use-case page for "chatgpt google ads". ChatGPT only takes plugins outside its directory through developer
- * mode, which is several menus deep and warns that "custom MCP servers introduce risk", so this page walks through both.
- * Menu labels, the OAuth option, @-mention use and mobile confirmed by the operator in a live account, 2026-10-01; the Plugins path
- * (+, Create custom MCP server, Create MCP App) re-confirmed with screenshots 2026-10-02. Developer mode IS required: with it off,
- * Create custom MCP server is not offered (operator, 2026-10-02). They move, so re-check when editing.
+ * Use-case page for "chatgpt google ads". Camberstack is published in ChatGPT's plugin directory (2026-10-21), so setup is
+ * the plugin page and a Google sign-in; developer mode and the custom-MCP-server path are no longer needed.
  */
 export function chatgptGuidePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
   return layout({
     baseUrl, path: "/google-ads-chatgpt", wide: true,
     title: "Connect Google Ads to ChatGPT: MCP setup, step by step | Camberstack",
-    description: "Connect your Google Ads account to ChatGPT with a plugin. No developer token or Google Cloud project: turn on developer mode, add one URL, sign in with Google, then ask about your account.",
+    description: "Connect your Google Ads account to ChatGPT with a plugin. No developer token or Google Cloud project: add Camberstack from ChatGPT's plugin directory, sign in with Google, then ask about your account.",
     jsonLd: {
       "@context": "https://schema.org", "@type": "TechArticle",
-      headline: "Connect Google Ads to ChatGPT", url: `${baseUrl}/google-ads-chatgpt`, dateModified: "2026-10-13",
+      headline: "Connect Google Ads to ChatGPT", url: `${baseUrl}/google-ads-chatgpt`, dateModified: "2026-10-21",
       author: { "@type": "Organization", name: "Camberstack", url: baseUrl },
       about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
     },
     body: `
 ${guideHero({
-  kicker: "Plus, Pro, Business, Enterprise and Edu",
+  kicker: "In ChatGPT's plugin directory",
   title: "Connect Google Ads to ChatGPT",
   lede: `ChatGPT can read your Google Ads account, answer questions about it,
-and make the changes you approve. Setup takes a few menus in ChatGPT's settings and a Google sign-in. No developer token,
+and make the changes you approve. Setup is one click in ChatGPT's plugin directory and a Google sign-in. No developer token,
 no Google Cloud project.`,
-  ctas: `<a class="btn btn-lg" href="#setup">Set it up: 9 steps</a><a class="btn btn-lg btn-ghost" href="#before">Before you start</a>`,
+  ctas: `<a class="btn btn-lg" href="https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866">Open in ChatGPT's directory</a><a class="btn btn-lg btn-ghost" href="#setup">See the steps</a>`,
   aside: demoWindow("@Camberstack "),
 })}
 ${guideBody(`
-<h2 id="before">Before you start</h2>
-<ul class="checks">
-<li><strong>A paid ChatGPT plan:</strong> Plus, Pro, Business, Enterprise or Edu. The free plan can't add plugins like this one.</li>
-<li><strong>ChatGPT on the web</strong> (chatgpt.com) for setup. Once it's added, it works in the ChatGPT phone app too.</li>
-<li><strong>On Business or Enterprise,</strong> a workspace admin may need to allow developer mode first, under
-<strong>Workspace settings</strong>, under <strong>Permissions &amp; roles</strong>.</li>
-</ul>
-
 <h2 id="setup">Set it up</h2>
 <ol class="steps">
-<li>In ChatGPT, click your name at the bottom of the sidebar and choose <strong>Settings</strong>.
-${shot("chatgpt-dev-1.webp", 540, 521, "ChatGPT's account menu with Settings highlighted")}</li>
-<li>Open the <strong>Plugins</strong> tab and choose <strong>Developer mode</strong>.
-${shot("chatgpt-dev-2.webp", 540, 809, "ChatGPT's Settings on the Plugins tab, with Developer mode highlighted")}</li>
-<li>Turn on the <strong>Developer mode</strong> switch.
-${shot("chatgpt-dev-3.webp", 540, 612, "The Developer mode switch, marked Elevated risk")}</li>
-<li>Open <strong>Plugins</strong> from the sidebar.
-${shot("chatgpt-1.webp", 540, 497, "ChatGPT's sidebar with Plugins highlighted")}</li>
-<li>Click <strong>+</strong> next to the search box and choose <strong>Create custom MCP server</strong>.
-${shot("chatgpt-2.webp", 540, 503, "ChatGPT's Plugins page with the + button and Create custom MCP server highlighted")}</li>
-<li>Click <strong>Create MCP App</strong>.
-${shot("chatgpt-3.webp", 540, 582, "The New Plugin dialog with Create MCP App highlighted")}</li>
-<li>Name it Camberstack, paste the server URL <code>${mcpUrl}</code> under <strong>Connection</strong>, leave
-<strong>Authentication</strong> on <strong>OAuth</strong>, and tick <strong>I understand and want to continue</strong>.
-${shot("chatgpt-4.webp", 540, 994, "ChatGPT's New Plugin form with the Name, server URL, Authentication and I understand checkbox highlighted")}</li>
+<li>Open <a href="https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866">Camberstack in ChatGPT's plugin directory</a>, and click <strong>Install plugin</strong>. It's listed as
+<strong>Camberstack: Google Ads</strong>.
+On Business or Enterprise, a workspace admin may need to allow it first.
+${shot("chatgpt-plugin.webp", 540, 842, "Camberstack: Google Ads in ChatGPT's plugin directory, with the Install plugin button")}</li>
 <li>Sign in with the Google account that has access to your Google Ads. Google shows exactly what's being shared before you agree.</li>
-<li>In a chat, type <strong>@</strong> and the name you gave it, then your question:
-<em>"@Camberstack how did my campaigns do last month?"</em></li>
+<li>In a chat, type <strong>@Camberstack</strong> and pick <strong>Camberstack: Google Ads</strong>, then your question:
+<em>"@Camberstack how did my campaigns do last month?"</em> Once it's added, it works in the ChatGPT phone app too.</li>
 </ol>
 
-<h2>About the "Custom MCP servers introduce risk" warning</h2>
-<p>ChatGPT shows that warning for every custom MCP server, which is the only way to add one that isn't in
-ChatGPT's plugin directory yet. It isn't specific to Camberstack. What protects your account here:</p>
+<h2>What protects your account</h2>
 <ul>
 <li>Changes are stored as a proposal and checked with Google first; applying is a separate tool call. ChatGPT asks you to
 confirm tool calls that change things unless you've turned that off.</li>
@@ -666,13 +642,10 @@ It can change negatives, budgets, bids, targeting and conversion goals, and buil
 and <a href="/tools">every tool</a>. In the phone app, the same @-mention works once you've set it up on the web.</p>
 
 ${guideTroubleshooting("ChatGPT",
-  "ChatGPT uses a custom plugin only when you mention it. Start the message with <strong>@</strong> and its name: <em>\"@Camberstack how did my campaigns do last month?\"</em>",
-  "delete Camberstack under <strong>Plugins</strong> and create it again with the same URL, as in the steps above.")}
+  "ChatGPT uses a plugin only when you mention it. Start the message with <strong>@</strong> and its name: <em>\"@Camberstack how did my campaigns do last month?\"</em>",
+  "remove Camberstack under <strong>Plugins</strong> and add it again from <a href=\"https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866\">the directory</a>.")}
 
 <h2>Questions</h2>
-<h3>Why does it take so many steps?</h3>
-<p>Until Camberstack is listed in ChatGPT's plugin directory, developer mode is how ChatGPT lets you add it. You only do it once.
-If you use Claude too, setup there is shorter: see <a href="/google-ads-claude">the Claude guide</a>.</p>
 <h3>How do I disconnect?</h3>
 <p>ChatGPT blocks disconnect requests from chat, so sign in at <a href="/account">camberstack.io/account</a> and choose
 <strong>Disconnect Google Ads</strong>, or remove Camberstack at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
@@ -680,11 +653,12 @@ If you use Claude too, setup there is shorter: see <a href="/google-ads-claude">
 <p>No. The Google sign-in is Camberstack's, not ChatGPT's, and it shares only Google Ads, your email address and, if you leave them
 ticked, read-only Search Console and Google Analytics (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
 <h3>Does it need a paid Camberstack plan?</h3>
-<p>No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to 10. The paid ChatGPT plan
-in <a href="#before">Before you start</a> is OpenAI's requirement, not ours.</p>
+<p>No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to 10.</p>
+<h3>Using Claude too?</h3>
+<p>Camberstack is in Claude's connector directory as well: see <a href="/google-ads-claude">the Claude guide</a>.</p>
 `)}
 ${closer("Ask ChatGPT about your Google Ads.", "Free for one account, with unlimited changes and undo.",
-  `<a class="btn btn-lg" href="#setup">Back to the steps</a><a class="btn btn-lg btn-ghost" href="/google-ads-claude">Using Claude instead?</a>`)}
+  `<a class="btn btn-lg" href="https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866">Open in ChatGPT's directory</a><a class="btn btn-lg btn-ghost" href="/google-ads-claude">Using Claude instead?</a>`)}
 `,
   });
 }
@@ -903,7 +877,8 @@ and choose what to share. No Google Ads developer token or API key is needed.</p
 <p>Connect from <a href="https://claude.ai/directory/connectors/camberstack">Camberstack's page in Claude's connector directory</a>, or browse the directory in <strong>Settings</strong>, under <strong>Connectors</strong>.
 You don't need the URL above. <a href="/google-ads-claude">Setup guide</a>.</p>
 <h3>ChatGPT</h3>
-<p>Turn on developer mode, add the URL as an MCP app, then type <strong>@Camberstack</strong> in a chat. <a href="/google-ads-chatgpt">Step-by-step guide</a>.</p>
+<p>Add it from <a href="https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866">Camberstack's page in ChatGPT's plugin directory</a>, then type <strong>@Camberstack</strong> in a chat.
+You don't need the URL above. <a href="/google-ads-chatgpt">Setup guide</a>.</p>
 <h3>Claude Code</h3>
 ${cmd(`claude mcp add --transport http camberstack ${mcpUrl}`)}
 <h3>Cursor, VS Code and other MCP clients</h3>
