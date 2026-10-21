@@ -357,7 +357,7 @@ beforeAll(async () => {
   const cfg: Config = {
     baseUrl: "http://localhost", port: 0, dataDir: ":memory:", encryptionKey: key,
     google: { clientId: "gid", clientSecret: "gsecret" },
-    freeAccounts: 1, proAccounts: 10, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
+    freeAccounts: 1, proAccounts: 10, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), merchantPublic: false, allowedEmails, gitSha: "test", gitCommitDate: "",
   };
   // Bind first so baseUrl (the OAuth issuer) is the real test origin.
   server = await new Promise<Server>((resolve) => { const s = createApp(cfg, db).app.listen(0, () => resolve(s)); });
@@ -365,7 +365,9 @@ beforeAll(async () => {
   server.close();
   server = await new Promise<Server>((resolve) => {
     ({ app, billing, grants } = createApp({ ...cfg, baseUrl: base, adminUrl: base.replace("localhost", "127.0.0.1"), openaiAppsChallenge: "tok_test_123",
-      conversions: { opsUrl: "http://operations.test/v1/conversions", opsKey: "crk_ours", actionId: "555" } }, db, { fetch: googleFetch, stripeFetch, adsConversionFetch, adsFactory: () => ads as any, scFactory: () => sc, gaFactory: (u) => ({ summaries: () => ga.summaries(u.id), runReport: () => ga.runReport(), admin: (m, p, b) => ga.admin(m, p, b) }) }));
+      conversions: { opsUrl: "http://operations.test/v1/conversions", opsKey: "crk_ours", actionId: "555" } }, db, { fetch: googleFetch, stripeFetch, adsConversionFetch, adsFactory: () => ads as any, scFactory: () => sc, gaFactory: (u) => ({ summaries: () => ga.summaries(u.id), runReport: () => ga.runReport(), admin: (m, p, b) => ga.admin(m, p, b) }),
+      merchantFactory: (u) => ({ accounts: async () => { throw new NotGrantedError("merchant-center", grants.link("merchant-center", u.id)); },
+        accountIssues: async () => [], search: async () => ({ rows: [], truncated: false }) }) }));
     const s = app.listen(Number(new URL(base).port), () => resolve(s));
   });
 });
@@ -2185,11 +2187,13 @@ describe("OAuth + MCP end to end", () => {
     for (const t of listed) for (const [k, v] of Object.entries<any>(t.inputSchema.properties ?? {})) expect(v.description, `${t.name}.${k}`).toBeTruthy();
     const page = await (await fetch(`${base}/tools`)).text();
     const llms = await (await fetch(`${base}/llms.txt`)).text();
-    for (const n of names) {
+    // Merchant Center tools reach internal users (this one) before MERCHANT_PUBLIC lists them publicly.
+    const shown = names.filter((n) => !n.startsWith("merchant_"));
+    for (const n of shown) {
       expect(page, n).toContain(`id="${n}"`);
       expect(llms, n).toContain(n);
     }
-    expect(page).toContain(`${names.length} tools`);
+    expect(page).toContain(`${shown.length} tools`);
     // Parameters come from the schemas: defaults and descriptions, not hand-written copy.
     expect(page).toContain("<code>location_ids</code>");
     expect(page).toContain("Default [&quot;2840&quot;].");
@@ -2325,5 +2329,27 @@ describe("crypto", () => {
     const a = encrypt(key, "secret"), b = encrypt(key, "secret");
     expect(a).not.toBe(b);
     expect(decrypt(key, a)).toBe("secret");
+  });
+});
+
+describe("Merchant Center rollout", () => {
+  const listTools = async (token: string) => ((await (await fetch(`${base}/mcp`, { method: "POST",
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/list" }),
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } })).json())
+    .result.tools as { name: string }[]).map((t) => t.name).filter((n) => n.startsWith("merchant_"));
+
+  it("lists the tools for internal users only, and adds Merchant Center by link with just its scope", async () => {
+    const owner = await connect();
+    expect(await listTools(owner)).toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report"]);
+    const out = (await call(owner, "merchant_accounts")).json;
+    expect(out.accounts[0].account_id).toBe("000000001");
+    expect(out.grant_url).toContain("/connect/merchant-center?t=");
+    const go = await fetch(out.grant_url, { redirect: "manual" });
+    expect(new URL(go.headers.get("location")!).searchParams.get("scope")).toBe("openid email https://www.googleapis.com/auth/content");
+
+    googleUser.sub = "google-sub-outsider"; googleUser.email = "outsider@example.com";
+    let outsider = "";
+    try { outsider = await connect(); } finally { googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com"; }
+    expect(await listTools(outsider)).toEqual([]);
   });
 });

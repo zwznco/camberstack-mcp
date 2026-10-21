@@ -37,6 +37,9 @@ Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time wit
 | `propose_analytics_changes` | no | like `propose_changes`, for GA4 setup: `create_ga4_property` (with a web stream; the applied result gives the tag), `mark_key_event`/`unmark_key_event`, `link_google_ads`/`unlink_google_ads`. Applied and undone with `apply_changes`/`undo_changes` |
 | `analytics_landing_pages` | no | sessions, users, engagement rate, key events and key event rate per landing page, optionally for one channel (e.g. Paid Search) |
 | `analytics_report` | no | any GA4 Data API report by dimension and metric names, with a contains filter |
+| `merchant_accounts` | no | the Merchant Center accounts the login can read (sub-accounts included); if Merchant Center isn't granted yet, a personal link that adds it |
+| `merchant_product_issues` | no | account issues, product status counts, and each product issue with how many products it hits and examples; or one product's issues in full |
+| `merchant_report` | no | any read-only Merchant Center Query Language (MCQL) query, e.g. Shopping clicks per product from `product_performance_view` |
 | `propose_changes` | no | resolves changes against the live account, dry-runs them with Google (`validateOnly`), stores a proposal with a plain-English summary |
 | `apply_changes` | **yes** | applies a stored proposal (the user's own, un-applied, still matching the account; if the account moved, returns an updated proposal to approve instead); records each change's inverse |
 | `undo_changes` | no | builds the reversing proposal for an applied one |
@@ -54,6 +57,15 @@ The Google Analytics tools need `analytics.readonly` and `analytics.edit` (Googl
 asks for them alongside Ads and Search Console; a connection made before they were added gets a personal
 `/connect/analytics` link on its first Analytics call, which adds both to the same Google account. The Cloud project
 needs the Google Analytics Data API and Admin API enabled.
+
+The Merchant Center tools are read-only and need `content`, which isn't part of connecting: the first call without it
+returns a personal `/connect/merchant-center` link that adds it. Until Google verifies that scope they're listed only for
+`ADMIN_EMAILS`/`PRO_EMAILS`; `MERCHANT_PUBLIC=1` lists them for everyone. Before any call works, the Cloud project needs
+the Merchant API enabled and **registered once** with a production Merchant Center account the operator administers
+(`POST https://merchantapi.googleapis.com/accounts/v1/accounts/{ID}/developerRegistration:registerGcp`); merchants
+don't register. Unregistered, calls answer 401 "not registered", which the tools report as Camberstack's to fix.
+Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Account `000000001` is the
+demo (sample data: two best sellers disapproved for a price mismatch 9 days ago).
 
 What a proposal can do:
 
@@ -111,6 +123,7 @@ BASE_URL=https://your.host npm run dev
 | `DATA_DIR` | SQLite location (default `./data`) |
 | `FREE_ACCOUNTS` / `PRO_ACCOUNTS` / `PRO_EMAILS` | Google Ads accounts each plan covers at a time, counted as distinct accounts used in the last 30 days plus one switch per 30 days, manager and demo accounts excluded (defaults 1 / 10) / emails treated as Pro |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
+| `MERCHANT_PUBLIC` | `1` lists the Merchant Center tools for everyone; unset = internal users only (while the scope awaits Google's verification) |
 
 The hosted HTTP server is `npm run start:http` (the Docker image runs `node dist/server.js`).
 `npm start` is a stdio mode that needs no env, database or Google login: it lists every tool for

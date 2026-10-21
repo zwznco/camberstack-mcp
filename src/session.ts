@@ -12,6 +12,7 @@ import {
 } from "./google.js";
 import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, accountsLabel } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
+import { DemoMerchant, MerchantClient, routedMerchant, type Merchant } from "./merchant.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields } from "./gaql.js";
@@ -88,6 +89,7 @@ export interface SessionDeps {
   adsFactory?: (user: UserRow) => AdsClient;
   scFactory?: (user: UserRow) => SearchConsole;
   gaFactory?: (user: UserRow) => Analytics;
+  merchantFactory?: (user: UserRow) => Merchant;
   /** The personal link that adds one Google service to this user's connection (grant.ts). */
   grantLink?: (kind: GrantKind, userId: string) => string | null;
 }
@@ -143,6 +145,7 @@ export class UserSession {
   readonly ads: Ads;
   readonly sc: SearchConsole;
   readonly ga: Analytics;
+  readonly merchant: Merchant;
   /** Accounts the login can see but Google refused to read, from the last accounts() call. */
   lastUnreadable: Unreadable[] = [];
 
@@ -160,6 +163,8 @@ export class UserSession {
     this.sc = routedSc(deps.scFactory?.(user) ?? new SearchConsoleClient(() => this.googleAccessToken(), link("search-console")), new DemoSearchConsole());
     this.ga = routedAnalytics(deps.gaFactory?.(user)
       ?? new AnalyticsClient(() => this.googleAccessToken(), link("analytics")), new DemoAnalytics(deps.db, user.id));
+    this.merchant = routedMerchant(deps.merchantFactory?.(user)
+      ?? new MerchantClient(() => this.googleAccessToken(), link("merchant-center")), new DemoMerchant());
   }
 
   /** `seen: false` leaves last_seen_at alone: an admin viewing the user's /account through "Log in as user". */

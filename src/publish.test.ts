@@ -11,7 +11,7 @@ describe("published metadata", () => {
   });
 
   it("sets all three hints on every tool (ChatGPT's review rejects an unset one)", () => {
-    for (const t of toolCatalog())
+    for (const t of toolCatalog({ merchant: true }))
       for (const h of ["readOnlyHint", "destructiveHint", "openWorldHint"] as const) expect(typeof t.annotations[h], `${t.name}.${h}`).toBe("boolean");
   });
 });

@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ListToolsResult, ToolAnnotations } from "@modelcontextprotocol/server";
 import { MAX_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
+import { listMerchantAccounts, merchantReport, productIssues } from "./merchant.js";
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
 import { ACCOUNT_WINDOW_DAYS, PlanLimitError } from "./plans.js";
@@ -58,6 +59,7 @@ const scWindowShape = (defaultDays: number, maxDays: number) => ({
   end_date: ymd.optional().describe("Exact last day, YYYY-MM-DD"),
   fresh: z.boolean().default(false).describe("Include the last 2-3 days, which Google is still filling in (they read low). Use to check something from the last few days"),
 });
+const merchantId = z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID, digits only (from merchant_accounts)");
 const propertyId = z.string().regex(/^\d+$/, "digits only").describe("GA4 property id, digits only (from analytics_properties)");
 /** Window options shared by the Google Analytics tools: a day count ending yesterday, or exact dates. */
 const gaWindowShape = {
@@ -96,7 +98,7 @@ export interface ToolCall {
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { chatgpt?: boolean } = {}): McpServer {
+  o: { chatgpt?: boolean; merchant?: boolean } = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
@@ -383,6 +385,52 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   }, ({ property_id, ...o }: GaWindow & { property_id: string; dimensions: string[]; metrics: string[];
     filter?: { dimension: string; contains: string }; order_by?: string; limit: number }) => report(session().ga, property_id, o));
 
+  // Merchant Center: listed only where o.merchant (server.ts: MERCHANT_PUBLIC, or internal users until Google verifies the scope).
+  if (o.merchant) {
+    tool("merchant_accounts", {
+      title: "List Merchant Center accounts",
+      description: "Lists the Google Merchant Center accounts this Google login can read, including sub-accounts of an advanced (multi-client) account. "
+        + "Use an account_id from here in the other Merchant Center tools. If Merchant Center isn't part of the connection yet, says so and returns grant_url, "
+        + "a personal link the user opens to add it.",
+      annotations: read,
+    }, () => listMerchantAccounts(session().merchant));
+
+    tool("merchant_product_issues", {
+      title: "Merchant Center product issues",
+      description: "Why products aren't showing on Google (Shopping ads and free listings): the account's own issues, how many products are eligible, "
+        + "limited, pending or disapproved, and every product issue (such as a price mismatch or a missing GTIN) with how many products it affects, "
+        + "worst first, and a few example products. With offer_id, that one product's issues in full. Use it when Shopping or Performance Max "
+        + "spend or clicks drop, or products are missing. Changes nothing.",
+      inputSchema: {
+        account_id: merchantId,
+        offer_id: z.string().min(1).max(150).regex(/^[^'\\]+$/, "no quotes or backslashes").optional()
+          .describe("One product's ID as in the feed (offer_id), to see its issues in full"),
+        examples: z.number().int().min(0).max(20).default(5).describe("Example products listed per issue"),
+      },
+      annotations: read,
+    }, ({ account_id, ...o }: { account_id: string; offer_id?: string; examples: number }) => productIssues(session().merchant, account_id, o));
+
+    tool("merchant_report", {
+      title: "Run a Merchant Center report",
+      description: "Runs a read-only Merchant Center Query Language (MCQL) query on one account and returns up to `limit` rows. One view per query. "
+        + "product_performance_view: segments date, week, offer_id, title, brand, marketing_method (ADS or ORGANIC), customer_country_code, "
+        + "category_l1…l5, product_type_l1…l5, custom_label0…4; metrics clicks, impressions, click_through_rate (conversions, conversion_value and "
+        + "conversion_rate count free listings only). It needs a date range and at least one metric, e.g. SELECT offer_id, title, clicks, impressions "
+        + "FROM product_performance_view WHERE date DURING LAST_30_DAYS AND marketing_method = 'ADS' ORDER BY clicks DESC LIMIT 50. "
+        + "product_view (current status): id, offer_id, title, brand, price, availability, gtin, feed_label, aggregated_reporting_context_status "
+        + "(ELIGIBLE, ELIGIBLE_LIMITED, PENDING, NOT_ELIGIBLE_OR_DISAPPROVED), item_issues, click_potential (LOW, MEDIUM, HIGH); id must be selected. "
+        + "Also price_competitiveness_product_view, price_insights_product_view and best_sellers_product_cluster_view. "
+        + "WHERE joins conditions with AND only (no OR); dates as date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' or date DURING LAST_7_DAYS / LAST_30_DAYS. "
+        + "Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Changes nothing.",
+      inputSchema: {
+        account_id: merchantId,
+        query: z.string().min(1).max(5000).describe("An MCQL SELECT statement"),
+        limit: z.number().int().min(1).max(1000).default(500).describe("Most rows to return"),
+      },
+      annotations: read,
+    }, ({ account_id, query, limit }: { account_id: string; query: string; limit: number }) => merchantReport(session().merchant, account_id, query, limit));
+  }
+
   if (!o.chatgpt) tool("propose_changes", {
     title: "Propose Google Ads changes (applies nothing)",
     description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, create_conversion_action, set_conversion_counting, import_ga4_key_event. Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
@@ -502,8 +550,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 }
 
 /** Every tool in registration (workflow) order, without a session: nothing is ever called. */
-export function toolCatalog(): ToolDoc[] {
+export function toolCatalog(o: { merchant?: boolean } = {}): ToolDoc[] {
   const catalog: ToolDoc[] = [];
-  buildServer(() => { throw new Error("catalog only"); }, undefined, catalog);
+  buildServer(() => { throw new Error("catalog only"); }, undefined, catalog, o);
   return catalog;
 }

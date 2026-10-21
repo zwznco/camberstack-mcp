@@ -244,9 +244,11 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const clientId = auth?.clientId ?? null;
     const chatgpt = isChatGpt(clientId);
     let session: UserSession | undefined;
+    const email = (db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string } | undefined)?.email.toLowerCase();
+    const merchant = cfg.merchantPublic || (!!email && internalEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null);
-    }, [], { chatgpt });
+    }, [], { chatgpt, merchant });
   };
   // 2026-07-28 traffic (server/discover, per-request _meta envelope). The SDK's own legacy leg would
   // answer 2025-era requests over SSE, so it is off and those keep the JSON-response wiring below.
@@ -326,7 +328,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     firstTouch.capture(req, res);          // keeps the first tagged landing (utm_*, rdt_cid); same
     res.type("html").send(html);
   };
-  const tools = toolCatalog();
+  const tools = toolCatalog({ merchant: cfg.merchantPublic });
   const pages: Record<string, string> = {
     "/": homePage(cfg.baseUrl),
     "/google-ads-claude": claudeGuidePage(cfg.baseUrl),

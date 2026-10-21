@@ -12,6 +12,8 @@ export const SEARCH_CONSOLE_SCOPE = "https://www.googleapis.com/auth/webmasters.
  *  for together, separately, when a GA4 tool first needs them (ga4.ts). */
 export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
+/** Google Merchant Center (Merchant API), read through merchant.ts. Not in the main consent: asked for separately, by link. */
+export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
 export const ADS_API = "https://googleads.googleapis.com/v23";
 
@@ -52,6 +54,7 @@ export const GRANTS = {
   "google-ads": { label: "Google Ads", scopes: [ADS_SCOPE] },
   "search-console": { label: "Search Console", scopes: [SEARCH_CONSOLE_SCOPE] },
   "analytics": { label: "Google Analytics", scopes: [ANALYTICS_SCOPE, ANALYTICS_EDIT_SCOPE] },
+  "merchant-center": { label: "Google Merchant Center", scopes: [MERCHANT_SCOPE] },
 } as const;
 export type GrantKind = keyof typeof GRANTS;
 
