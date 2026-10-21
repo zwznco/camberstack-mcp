@@ -15,6 +15,7 @@ import { decrypt, encrypt } from "./crypto.js";
 import { AdsApiError, NotGrantedError } from "./google.js";
 import { io, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
+import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION } from "./tools.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { buildReport } from "./report.js";
@@ -1020,7 +1021,7 @@ describe("OAuth + MCP end to end", () => {
       expect(names).not.toContain("undo_changes");
       for (const n of ["propose_pause_campaign", "propose_create_performance_max_campaign", "propose_set_conversion_counting",
         "propose_link_google_ads", "propose_create_ga4_property", "propose_undo", "apply_changes"]) expect(names).toContain(n);
-      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + PUBLIC_GA_CHANGES.length + 1);
+      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_MC_CHANGES.length + 1);  // this user is internal, so Merchant Center's too
       for (const t of tools.filter((t) => t.name.startsWith("propose_"))) {
         expect(t.description, t.name).not.toMatch(/undefined|propose_changes|undo_changes/);
         expect(t.inputSchema.properties, t.name).not.toHaveProperty("type");
@@ -2188,7 +2189,7 @@ describe("OAuth + MCP end to end", () => {
     const page = await (await fetch(`${base}/tools`)).text();
     const llms = await (await fetch(`${base}/llms.txt`)).text();
     // Merchant Center tools reach internal users (this one) before MERCHANT_PUBLIC lists them publicly.
-    const shown = names.filter((n) => !n.startsWith("merchant_"));
+    const shown = names.filter((n) => !/^(merchant_|propose_merchant_)/.test(n));
     for (const n of shown) {
       expect(page, n).toContain(`id="${n}"`);
       expect(llms, n).toContain(n);
@@ -2351,5 +2352,48 @@ describe("Merchant Center rollout", () => {
     let outsider = "";
     try { outsider = await connect(); } finally { googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com"; }
     expect(await listTools(outsider)).toEqual([]);
+  });
+});
+
+describe("Merchant Center changes on the demo account", () => {
+  it("proposes an override, applies it, and undo puts the feed's value back", async () => {
+    const owner = await connect();
+    const priceIssue = async () => ((await call(owner, "merchant_product_issues", { account_id: "000000001" })).json.issues as { code: string; products: number }[])
+      .find((i) => i.code === "price_mismatch")?.products ?? 0;
+    expect(await priceIssue()).toBe(2);
+
+    const p = await call(owner, "propose_merchant_changes", { account_id: "000000001", changes: [
+      { type: "set_product_attributes", offer_id: "NW-TWH-50", attributes: { price: 1099 } }] });
+    expect(p.json.summary).toContain("price 1,149.00 USD → 1,099.00 USD");
+    expect(p.json.summary).toContain("ahead of feed");  // the one-time link is part of what's approved
+    expect(await priceIssue()).toBe(2);  // proposing writes nothing
+
+    const applied = await call(owner, "apply_changes", { proposal_id: p.json.proposal_id });
+    expect(applied.json.status).toBe("applied");
+    expect(await priceIssue()).toBe(1);
+
+    const again = await call(owner, "propose_merchant_changes", { account_id: "000000001", changes: [
+      { type: "set_product_attributes", offer_id: "NW-TWH-50", attributes: { price: 1099 } }] });
+    expect(again.text).toContain("already in place");
+
+    const undo = await call(owner, "undo_changes", { proposal_id: p.json.proposal_id });
+    expect(undo.json.summary).toContain("NW-TWH-50 (none: the feed's values)");
+    expect((await call(owner, "apply_changes", { proposal_id: undo.json.proposal_id })).json.status).toBe("applied");
+    expect(await priceIssue()).toBe(2);
+  });
+
+  it("excludes products from Shopping ads, and refuses a product that isn't there", async () => {
+    const owner = await connect();
+    const p = await call(owner, "propose_merchant_changes", { account_id: "000000001", changes: [
+      { type: "exclude_products", offer_ids: ["NW-SP-12", "NW-GD-34"] }] });
+    expect(p.json.summary).toMatch(/Exclude 2 products from shopping ads: NW-SP-12, NW-GD-34 ⚠/);
+    expect((await call(owner, "apply_changes", { proposal_id: p.json.proposal_id })).json.status).toBe("applied");
+    const clicks = (await call(owner, "merchant_report", { account_id: "000000001",
+      query: "SELECT offer_id, clicks FROM product_performance_view WHERE date DURING LAST_7_DAYS AND marketing_method = 'ADS' AND offer_id = 'NW-SP-12'" })).json;
+    expect(clicks.rows[0].clicks).toBe(0);
+    const missing = await call(owner, "propose_merchant_changes", { account_id: "000000001", changes: [
+      { type: "set_product_attributes", offer_id: "NOPE", attributes: { brand: "X" } }] });
+    expect(missing.text).toContain("No product with offer_id NOPE");
+    await call(owner, "apply_changes", { proposal_id: (await call(owner, "undo_changes", { proposal_id: p.json.proposal_id })).json.proposal_id });
   });
 });

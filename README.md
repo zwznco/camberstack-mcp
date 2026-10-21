@@ -40,6 +40,7 @@ Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time wit
 | `merchant_accounts` | no | the Merchant Center accounts the login can read (sub-accounts included); if Merchant Center isn't granted yet, a personal link that adds it |
 | `merchant_product_issues` | no | account issues, product status counts, and each product issue with how many products it hits and examples; or one product's issues in full |
 | `merchant_report` | no | any read-only Merchant Center Query Language (MCQL) query, e.g. Shopping clicks per product from `product_performance_view` |
+| `propose_merchant_changes` | no | like `propose_changes`, for Merchant Center products: `set_product_attributes` (price, GTIN, title, …), `exclude_products`/`include_products`, `clear_product_overrides`. Applied and undone with `apply_changes`/`undo_changes` |
 | `propose_changes` | no | resolves changes against the live account, dry-runs them with Google (`validateOnly`), stores a proposal with a plain-English summary |
 | `apply_changes` | **yes** | applies a stored proposal (the user's own, un-applied, still matching the account; if the account moved, returns an updated proposal to approve instead); records each change's inverse |
 | `undo_changes` | no | builds the reversing proposal for an applied one |
@@ -58,14 +59,23 @@ asks for them alongside Ads and Search Console; a connection made before they we
 `/connect/analytics` link on its first Analytics call, which adds both to the same Google account. The Cloud project
 needs the Google Analytics Data API and Admin API enabled.
 
-The Merchant Center tools are read-only and need `content`, which isn't part of connecting: the first call without it
+The Merchant Center tools need `content`, which isn't part of connecting: the first call without it
 returns a personal `/connect/merchant-center` link that adds it. Until Google verifies that scope they're listed only for
 `ADMIN_EMAILS`/`PRO_EMAILS`; `MERCHANT_PUBLIC=1` lists them for everyone. Before any call works, the Cloud project needs
 the Merchant API enabled and **registered once** with a production Merchant Center account the operator administers
 (`POST https://merchantapi.googleapis.com/accounts/v1/accounts/{ID}/developerRegistration:registerGcp`); merchants
 don't register. Unregistered, calls answer 401 "not registered", which the tools report as Camberstack's to fix.
 Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Account `000000001` is the
-demo (sample data: two best sellers disapproved for a price mismatch 9 days ago).
+demo (sample data: two best sellers disapproved for a price mismatch 9 days ago; overrides there fix the issue).
+
+Merchant Center changes never edit the merchant's feed. Each is an override in Camberstack's own supplemental data source
+("Camberstack overrides"), created on the first write. Google applies a supplemental source only once it's in a primary
+source's rules, so the first override on a feed's products also patches that feed's `defaultRule` to put ours first
+(every source already there is kept): the summary shows it as a ⚠ line. Feeds made in the Merchant Center UI or by
+autofeed can't be patched, and the proposal says so. Google can't read overrides back, so `merchant_overrides` keeps
+Camberstack's copy per product; undo restores exactly that (removing the input when there was none). The Merchant API
+has no dry run: re-resolving at apply is the check, as with GA4. Untested against a live account until the project is
+registered: try a Shopify-managed feed's rule patch on dev before opening it up.
 
 What a proposal can do:
 

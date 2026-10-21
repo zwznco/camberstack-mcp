@@ -4,6 +4,7 @@ import type { ListToolsResult, ToolAnnotations } from "@modelcontextprotocol/ser
 import { MAX_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
 import { listMerchantAccounts, merchantReport, productIssues } from "./merchant.js";
+import { PUBLIC_MC_CHANGES, PublicMcChangeSchema, mcTarget } from "./merchant-changes.js";
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
 import { ACCOUNT_WINDOW_DAYS, PlanLimitError } from "./plans.js";
@@ -429,6 +430,19 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       },
       annotations: read,
     }, ({ account_id, query, limit }: { account_id: string; query: string; limit: number }) => merchantReport(session().merchant, account_id, query, limit));
+
+    if (!o.chatgpt) tool("propose_merchant_changes", {
+      title: "Propose Merchant Center changes (applies nothing)",
+      description: "Checks Merchant Center product changes against the live account and stores them as a proposal with a plain-English summary; "
+        + "nothing is changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). "
+        + "Supported: set_product_attributes (override a product's price, sale price, GTIN, brand, title, availability, …, e.g. to fix a price "
+        + "mismatch or a missing GTIN), exclude_products / include_products (from Shopping ads or free listings), clear_product_overrides. "
+        + "Every change is an override in Camberstack's own supplemental data source, layered on top of the feed: the feed itself is never edited. "
+        + "Point out any ⚠ line before they approve. A fix in the feed or the store (Shopify, …) lasts longer: suggest it too.",
+      inputSchema: { account_id: merchantId,
+        changes: z.array(PublicMcChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, ({ account_id, changes }: { account_id: string; changes: unknown[] }) => session().propose(mcTarget(account_id), changes));
   }
 
   if (!o.chatgpt) tool("propose_changes", {
@@ -465,6 +479,16 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         annotations: proposes,
       }, ({ ads_customer_id, ...rest }: { ads_customer_id?: string } & Record<string, unknown>) =>
         session().propose(GA_TARGET, [{ type: op, ...rest, ...(ads_customer_id ? { customer_id: ads_customer_id } : {}) }]));
+    }
+    if (o.merchant) for (const c of PUBLIC_MC_CHANGES) {
+      const { type, ...shape } = c.shape;
+      const op = type.value;
+      tool(`propose_${op}`, {
+        title: `Propose: ${op.replace(/_/g, " ")}`,
+        description: `${c.description}. Merchant Center. ${proposeNote}`,
+        inputSchema: { account_id: merchantId, ...shape },
+        annotations: proposes,
+      }, ({ account_id, ...rest }: { account_id: string } & Record<string, unknown>) => session().propose(mcTarget(account_id), [{ type: op, ...rest }]));
     }
     tool("propose_undo", {
       title: "Propose reversing an applied proposal",

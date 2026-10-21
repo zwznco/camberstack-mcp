@@ -1,6 +1,7 @@
 /**
- * Google Merchant Center (Merchant API v1), read-only: which accounts the login can read, why products are disapproved
- * or demoted, and any Merchant Center report (MCQL), such as Shopping clicks and impressions per product. Its scope
+ * Google Merchant Center (Merchant API v1): which accounts the login can read, why products are disapproved or demoted,
+ * any Merchant Center report (MCQL), such as Shopping clicks and impressions per product, and the product overrides
+ * merchant-changes.ts proposes (written to Camberstack's own supplemental data source, never the feed). Its scope
  * (`content`) isn't in the main Google consent: the first call without it returns a personal /connect/merchant-center
  * link (grant.ts) that adds it to the user's existing connection.
  *
@@ -10,6 +11,8 @@
  *
  * The demo account (DEMO_MERCHANT) answers the same calls with sample data, like the demo Ads account and property.
  */
+import type { DB } from "./db.js";
+import { now } from "./db.js";
 import { NotGrantedError, scopeMissing } from "./google.js";
 
 const API = "https://merchantapi.googleapis.com";
@@ -21,6 +24,45 @@ const MAX_SCAN = 20_000;
 
 export interface MerchantAccount { account_id: string; name: string; test_account?: boolean }
 export interface SearchResult { rows: Record<string, unknown>[]; truncated: boolean }
+/** What names a product across Merchant Center's data sources. */
+export interface ProductKey { offerId: string; contentLanguage: string; feedLabel: string }
+/** productAttributes fields Camberstack overrides for one product, in the API's names. */
+export type Overrides = Record<string, unknown>;
+/**
+ * Whether a product's primary data source takes Camberstack's overrides: already linked, linked by the first write (a
+ * one-time change to that source's rules), or impossible (sources made in the Merchant Center UI, or autofeed).
+ */
+export interface LinkState { state: "linked" | "will_link" | "cannot"; label: string; why?: string }
+/** Camberstack's supplemental data source, found by this name. */
+export const SOURCE_NAME = "Camberstack overrides";
+
+/** The API's product id: unpadded base64url of contentLanguage~feedLabel~offerId, which any offer id survives. */
+export const encodeKey = (k: ProductKey) => Buffer.from(`${k.contentLanguage}~${k.feedLabel}~${k.offerId}`).toString("base64url");
+const keyId = (k: ProductKey) => `${k.contentLanguage}~${k.feedLabel}~${k.offerId}`;
+
+/**
+ * Camberstack's copy of the overrides it holds per product: Merchant Center applies them but can't read them back, and
+ * undo has to restore exactly what was there. Keyed by account, not user, since it mirrors the account's source.
+ */
+export class OverrideStore {
+  private mem = new Map<string, Overrides>();
+  constructor(private db?: DB) {}
+  get(account: string, k: ProductKey): Overrides | null {
+    if (!this.db) return this.mem.get(`${account}\u0000${keyId(k)}`) ?? null;
+    const r = this.db.prepare("SELECT attrs FROM merchant_overrides WHERE account_id = ? AND product = ?").get(account, keyId(k)) as { attrs: string } | undefined;
+    return r ? JSON.parse(r.attrs) as Overrides : null;
+  }
+  set(account: string, k: ProductKey, o: Overrides | null): void {
+    if (!this.db) { if (o) this.mem.set(`${account}\u0000${keyId(k)}`, o); else this.mem.delete(`${account}\u0000${keyId(k)}`); return; }
+    if (!o) { this.db.prepare("DELETE FROM merchant_overrides WHERE account_id = ? AND product = ?").run(account, keyId(k)); return; }
+    this.db.prepare(`INSERT INTO merchant_overrides (account_id, product, attrs, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(account_id, product) DO UPDATE SET attrs = excluded.attrs, updated_at = excluded.updated_at`).run(account, keyId(k), JSON.stringify(o), now());
+  }
+  any(account: string): boolean {
+    if (!this.db) return [...this.mem.keys()].some((k) => k.startsWith(`${account}\u0000`));
+    return !!this.db.prepare("SELECT 1 FROM merchant_overrides WHERE account_id = ? LIMIT 1").get(account);
+  }
+}
 
 /** The Merchant API calls the tools make; the demo account answers the same ones. */
 export type Merchant = {
@@ -29,6 +71,15 @@ export type Merchant = {
   accountIssues(accountId: string): Promise<any[]>;
   /** An MCQL query's rows (the queried view's object), up to maxRows. */
   search(accountId: string, query: string, maxRows: number): Promise<SearchResult>;
+  /** The products with this offer_id (one per feed language and label). */
+  productKeys(accountId: string, offerId: string): Promise<ProductKey[]>;
+  /** A product's final attributes (feed plus overrides, after processing) and its primary data source. */
+  product(accountId: string, key: ProductKey): Promise<{ attributes: Record<string, unknown>; dataSource: string }>;
+  /** The overrides Camberstack holds for the product (null: none). */
+  overrides(accountId: string, key: ProductKey): Promise<Overrides | null>;
+  linkState(accountId: string, primary: string): Promise<LinkState>;
+  /** Replace the product's overrides (null removes them), linking the primary source first if it isn't yet. */
+  setOverrides(accountId: string, key: ProductKey, primary: string, overrides: Overrides | null): Promise<void>;
 };
 
 /** What to do about the Merchant API errors AIs and users actually hit, appended to Google's message. */
@@ -41,11 +92,12 @@ function merchantFix(status: number, msg: string): string {
 
 /** One user's view of the Merchant API (read-only). */
 export class MerchantClient implements Merchant {
-  constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null, private f: typeof fetch = fetch) {}
+  constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null, private f: typeof fetch = fetch,
+    private store = new OverrideStore()) {}
 
-  private async call(path: string, body?: object): Promise<any> {
+  private async call(path: string, body?: object, method = body ? "POST" : "GET"): Promise<any> {
     const res = await this.f(`${API}/${path}`, {
-      method: body ? "POST" : "GET",
+      method,
       headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -97,6 +149,72 @@ export class MerchantClient implements Merchant {
     } while (page && rows.length < maxRows);
     return { rows: rows.slice(0, maxRows), truncated: !!page || rows.length > maxRows };
   }
+
+  async productKeys(accountId: string, offerId: string): Promise<ProductKey[]> {
+    const { rows } = await this.search(accountId, `SELECT id, offer_id, language_code, feed_label FROM product_view WHERE offer_id = '${offerId}'`, 50);
+    const keys = new Map<string, ProductKey>();
+    // product_view has a row per channel (online, local); the API's product is the same for both.
+    for (const r of rows as { offerId: string; languageCode: string; feedLabel: string }[]) {
+      const k = { offerId: r.offerId, contentLanguage: r.languageCode, feedLabel: r.feedLabel };
+      keys.set(keyId(k), k);
+    }
+    return [...keys.values()];
+  }
+
+  async product(accountId: string, key: ProductKey) {
+    const r = await this.call(`products/v1/accounts/${accountId}/products/${encodeKey(key)}`);
+    return { attributes: (r.productAttributes ?? {}) as Record<string, unknown>, dataSource: String(r.dataSource ?? "") };
+  }
+
+  async overrides(accountId: string, key: ProductKey) { return this.store.get(accountId, key); }
+
+  /** Camberstack's supplemental source in the account, if it has one. */
+  private async source(accountId: string): Promise<string | null> {
+    let page = "";
+    do {
+      const r = await this.call(`datasources/v1/accounts/${accountId}/dataSources?pageSize=1000${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
+      const s = (r.dataSources ?? []).find((d: any) => d.displayName === SOURCE_NAME && d.supplementalProductDataSource);
+      if (s) return s.name as string;
+      page = r.nextPageToken ?? "";
+    } while (page);
+    return null;
+  }
+
+  async linkState(accountId: string, primary: string): Promise<LinkState> {
+    const p = await this.call(`datasources/v1/${primary}`);
+    const label = String(p.displayName ?? primary);
+    if (!p.primaryProductDataSource) return { state: "cannot", label, why: "it isn't a primary product data source" };
+    // The API can't change the rules of sources made in the Merchant Center UI, or of autofeed.
+    if (p.input === "UI" || p.input === "AUTOFEED") {
+      return { state: "cannot", label, why: `it was made ${p.input === "UI" ? "in the Merchant Center interface" : "by autofeed"}, whose rules the API can't change` };
+    }
+    const ours = await this.source(accountId);
+    const take = (p.primaryProductDataSource.defaultRule?.takeFromDataSources ?? []) as { self?: boolean; supplementalDataSourceName?: string }[];
+    return { state: ours && take.some((t) => t.supplementalDataSourceName === ours) ? "linked" : "will_link", label };
+  }
+
+  async setOverrides(accountId: string, key: ProductKey, primary: string, overrides: Overrides | null): Promise<void> {
+    let src = await this.source(accountId);
+    if (overrides) {
+      src ??= (await this.call(`datasources/v1/accounts/${accountId}/dataSources`, { displayName: SOURCE_NAME, supplementalProductDataSource: {} })).name as string;
+      const p = await this.call(`datasources/v1/${primary}`);
+      const take = (p.primaryProductDataSource?.defaultRule?.takeFromDataSources ?? [{ self: true }]) as { self?: boolean; supplementalDataSourceName?: string }[];
+      if (!take.some((t) => t.supplementalDataSourceName === src)) {
+        // A patch replaces the whole rule, so keep every source already in it (the feed itself included), with ours first: first wins.
+        await this.call(`datasources/v1/${primary}?updateMask=primaryProductDataSource.defaultRule`,
+          { name: primary, primaryProductDataSource: { defaultRule: { takeFromDataSources: [{ supplementalDataSourceName: src }, ...take] } } }, "PATCH");
+      }
+      await this.call(`products/v1/accounts/${accountId}/productInputs:insert?dataSource=${encodeURIComponent(src)}`,
+        { offerId: key.offerId, contentLanguage: key.contentLanguage, feedLabel: key.feedLabel, productAttributes: overrides });
+    } else if (src) {
+      try {
+        await this.call(`products/v1/accounts/${accountId}/productInputs/${encodeKey(key)}?dataSource=${encodeURIComponent(src)}`, undefined, "DELETE");
+      } catch (e) {
+        if (!/Merchant API 404/.test((e as Error).message)) throw e;  // already gone: the goal
+      }
+    }
+    this.store.set(accountId, key, overrides);
+  }
 }
 
 /** Sends the demo account's calls to the demo, everything else to Google. */
@@ -105,6 +223,11 @@ export function routedMerchant(google: Merchant, demo: Merchant): Merchant {
     accounts: () => google.accounts(),
     accountIssues: (id) => (id === DEMO_MERCHANT ? demo.accountIssues(id) : google.accountIssues(id)),
     search: (id, q, n) => (id === DEMO_MERCHANT ? demo.search(id, q, n) : google.search(id, q, n)),
+    productKeys: (id, o) => (id === DEMO_MERCHANT ? demo.productKeys(id, o) : google.productKeys(id, o)),
+    product: (id, k) => (id === DEMO_MERCHANT ? demo.product(id, k) : google.product(id, k)),
+    overrides: (id, k) => (id === DEMO_MERCHANT ? demo.overrides(id, k) : google.overrides(id, k)),
+    linkState: (id, p) => (id === DEMO_MERCHANT ? demo.linkState(id, p) : google.linkState(id, p)),
+    setOverrides: (id, k, p, o) => (id === DEMO_MERCHANT ? demo.setOverrides(id, k, p, o) : google.setOverrides(id, k, p, o)),
   };
 }
 
@@ -220,9 +343,45 @@ const demoStatus = (p: DemoProduct) => {
   return sev.includes("DISAPPROVED") ? "NOT_ELIGIBLE_OR_DISAPPROVED" : sev.includes("PENDING") ? "PENDING" : sev.includes("DEMOTED") ? "ELIGIBLE_LIMITED" : "ELIGIBLE";
 };
 
+/** An override on the attribute an issue names fixes it, in the demo. */
+const FIXED_BY: Record<string, string> = { price: "price", image_link: "imageLink", gtin: "gtins" };
+const DEMO_SOURCE = `accounts/${DEMO_MERCHANT}/dataSources/1`;
+
 export class DemoMerchant implements Merchant {
+  private store: OverrideStore;
+  /** Each user's overrides on the demo are their own (Camberstack's table, under a per-user account key). */
+  private acct: string;
+  constructor(db?: DB, userId?: string) { this.store = new OverrideStore(db); this.acct = `demo:${userId ?? "anon"}`; }
+
   async accounts() { return []; }
   async accountIssues() { return DEMO_ACCOUNT_ISSUES; }
+
+  private key = (offerId: string): ProductKey => ({ offerId, contentLanguage: "en", feedLabel: "US" });
+  /** The demo's products with this user's overrides applied. */
+  private live(): (DemoProduct & { excluded: string[] })[] {
+    return DEMO_PRODUCTS.map((p) => {
+      const o = this.store.get(this.acct, this.key(p.offerId)) ?? {};
+      const price = (o.price as { amountMicros?: string } | undefined)?.amountMicros;
+      return { ...p, title: String(o.title ?? p.title), brand: String(o.brand ?? p.brand), price: price ? Number(price) / 1e6 : p.price,
+        issues: p.issues.filter((i) => !(FIXED_BY[i.attribute] && FIXED_BY[i.attribute]! in o)),
+        excluded: (o.excludedDestinations as string[] | undefined) ?? [] };
+    });
+  }
+
+  async productKeys(_id: string, offerId: string) { return DEMO_PRODUCTS.some((p) => p.offerId === offerId) ? [this.key(offerId)] : []; }
+  async product(_id: string, key: ProductKey) {
+    const p = this.live().find((x) => x.offerId === key.offerId);
+    if (!p) throw new Error(`Merchant API 404: product ${key.offerId} not found.`);
+    const o = this.store.get(this.acct, key) ?? {};
+    return { dataSource: DEMO_SOURCE, attributes: { title: p.title, brand: p.brand, availability: "IN_STOCK", condition: "NEW",
+      price: { amountMicros: String(Math.round(p.price * 1e6)), currencyCode: "USD" }, link: `https://northwind-plumbing.example/p/${p.offerId.toLowerCase()}`,
+      ...o, ...(p.excluded.length ? { excludedDestinations: p.excluded } : {}) } };
+  }
+  async overrides(_id: string, key: ProductKey) { return this.store.get(this.acct, key); }
+  async linkState(): Promise<LinkState> {
+    return { state: this.store.any(this.acct) ? "linked" : "will_link", label: "Northwind store feed" };
+  }
+  async setOverrides(_id: string, key: ProductKey, _primary: string, overrides: Overrides | null) { this.store.set(this.acct, key, overrides); }
 
   async search(_id: string, query: string, maxRows: number): Promise<SearchResult> {
     const m = /^\s*SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?\s*$/is.exec(query);
@@ -243,7 +402,7 @@ export class DemoMerchant implements Merchant {
     if (view === "product_view") {
       const bad = fields.filter((f) => !PRODUCT_FIELDS.includes(f));
       if (bad.length) throw new Error(`The demo account's product_view has ${PRODUCT_FIELDS.join(", ")}; not ${bad.join(", ")}.`);
-      rows = DEMO_PRODUCTS.map((p) => {
+      rows = this.live().map((p) => {
         const all: Record<string, unknown> = {
           id: `online~en~US~${p.offerId}`, offer_id: p.offerId, title: p.title, brand: p.brand, price: { amountMicros: String(p.price * 1_000_000), currencyCode: "USD" },
           availability: "IN_STOCK", channel: "ONLINE", feed_label: "US", language_code: "en", aggregated_reporting_context_status: demoStatus(p),
@@ -263,9 +422,10 @@ export class DemoMerchant implements Merchant {
       const groups = new Map<string, { seg: Record<string, unknown>; clicks: number; impressions: number }>();
       for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += DAY) {
         const daysAgo = Math.round((Date.now() - t) / DAY);
-        for (const p of DEMO_PRODUCTS) for (const method of ["ADS", "ORGANIC"]) {
+        for (const p of this.live()) for (const method of ["ADS", "ORGANIC"]) {
           // A disapproved product stops serving from the day its issue started; a demoted one serves at half strength.
-          const off = p.issues.some((i) => i.severity === "DISAPPROVED" && daysAgo <= i.since) || p.issues.some((i) => i.severity === "PENDING");
+          const off = p.issues.some((i) => i.severity === "DISAPPROVED" && daysAgo <= i.since) || p.issues.some((i) => i.severity === "PENDING")
+            || (method === "ADS" && p.excluded.includes("SHOPPING_ADS"));
           const demoted = p.issues.some((i) => i.severity === "DEMOTED");
           const clicks = off ? 0 : Math.round(p.clicks * (method === "ADS" ? 1 : 0.35) * (demoted ? 0.5 : 1) * (1 + ((daysAgo * 7 + p.price) % 5) / 10));
           const impressions = off ? 0 : clicks * (method === "ADS" ? 42 : 65) + (p.price % 13);

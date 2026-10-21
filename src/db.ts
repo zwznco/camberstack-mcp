@@ -148,6 +148,16 @@ CREATE TABLE IF NOT EXISTS demo_ga_state (
   updated_at  INTEGER NOT NULL
 );
 
+-- What Camberstack's supplemental Merchant Center source holds per product (merchant.ts OverrideStore): Google applies
+-- overrides but can't return them, and undo restores exactly these. Keyed by account; demo:<user id> for the demo's.
+CREATE TABLE IF NOT EXISTS merchant_overrides (
+  account_id  TEXT NOT NULL,
+  product     TEXT NOT NULL,
+  attrs       TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (account_id, product)
+);
+
 -- Public pages' content hashes, so the sitemap's lastmod moves only when a page really changes (lastmod.ts).
 CREATE TABLE IF NOT EXISTS page_versions (
   path     TEXT PRIMARY KEY,

@@ -12,7 +12,8 @@ import {
 } from "./google.js";
 import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, accountsLabel } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
-import { DemoMerchant, MerchantClient, routedMerchant, type Merchant } from "./merchant.js";
+import { DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
+import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields } from "./gaql.js";
@@ -133,8 +134,8 @@ export const isDemo = (customerId: string | null | undefined) => bareCid(custome
 /** Spread into any result about an account, so the AI can't mistake demo data for the user's. */
 const demoNote = (customerId: string) => (isDemo(customerId) ? { note: DEMO_NOTE } : {});
 
-type AnyChange = Change | GaChange;
-type AnyResolved = ResolvedChange | GaResolved;
+type AnyChange = Change | GaChange | McChange;
+type AnyResolved = ResolvedChange | GaResolved | McResolved;
 /** `note`: something the user must do next, e.g. a new GA4 property's tag. */
 type Outcome = { describe: string; ok: boolean; error?: string; note?: string; inverse?: AnyChange };
 /** What the AI (and the account page) sees of an applied proposal's outcomes. */
@@ -164,7 +165,7 @@ export class UserSession {
     this.ga = routedAnalytics(deps.gaFactory?.(user)
       ?? new AnalyticsClient(() => this.googleAccessToken(), link("analytics")), new DemoAnalytics(deps.db, user.id));
     this.merchant = routedMerchant(deps.merchantFactory?.(user)
-      ?? new MerchantClient(() => this.googleAccessToken(), link("merchant-center")), new DemoMerchant());
+      ?? new MerchantClient(() => this.googleAccessToken(), link("merchant-center"), fetch, new OverrideStore(deps.db)), new DemoMerchant(deps.db, user.id));
   }
 
   /** `seen: false` leaves last_seen_at alone: an admin viewing the user's /account through "Log in as user". */
@@ -873,9 +874,9 @@ export class UserSession {
   // ---------------------------------------------------------------- write
 
   async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<{ proposal_id: string; summary: string; changes: number; skipped: string[] }> {
-    const ga = customerId === GA_TARGET;
-    const a = ga ? { customerId: GA_TARGET, loginCustomerId: null } : await this.account(customerId);
-    const changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : ChangeSchema).parse(c));
+    const ga = customerId === GA_TARGET, mc = isMcTarget(customerId);
+    const a = ga || mc ? { customerId, loginCustomerId: null } : await this.account(customerId);
+    const changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : ChangeSchema).parse(c));
     // GA4 has no dry run, so a Google Ads id this login can't reach would only fail at apply: check it now.
     for (const c of changes) {
       if (c.type !== "link_google_ads") continue;
@@ -1011,10 +1012,11 @@ export class UserSession {
         + `Show the user this updated summary and call apply_changes with ${fresh.proposal_id} only after they approve it.` };
   }
 
-  /** Read what a change would do against the live account (Google Ads) or property (Google Analytics). */
+  /** Read what a change would do against the live account (Google Ads, Merchant Center) or property (Google Analytics). */
   private resolve(target: string, login: string | null, c: AnyChange, pending: ReturnType<typeof pendingOf>): Promise<AnyResolved> {
     // Only reads, so a brief Google outage is retried once.
     return retryTransient<AnyResolved>(() => (target === GA_TARGET ? resolveGaChange(this.ga, c as GaChange)
+      : isMcTarget(target) ? resolveMcChange(this.merchant, target.slice(3), c as McChange)
       : resolveChange(this.ads, target, login, c as Change, pending)), true);
   }
 
@@ -1023,6 +1025,12 @@ export class UserSession {
     // A write that creates nothing (a status change, a delete) is safe to repeat after a brief outage; a create isn't,
     // since Google may have made it before failing to answer.
     const repeatable = !JSON.stringify(r.operations).includes('"create"') && !(r.service === "ga4" && r.operations.some((o) => o.method === "POST"));
+    if (r.service === "merchant") {
+      // No dry run in the Merchant API: re-resolving at apply is the check. Each write replaces a product's whole override set, so repeating is safe.
+      if (validateOnly) return {};
+      await retryTransient(() => writeMc(this.merchant, target.slice(3), r.operations as McOp[]), true);
+      return { inverse: r.inverse };
+    }
     if (r.service === "ga4") {
       if (validateOnly) return {};
       const res = await retryTransient(() => writeGa(this.ga, r.operations as GaOp[]), repeatable);
