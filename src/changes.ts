@@ -1366,8 +1366,10 @@ function fmtKw(text: string, matchType: string): string {
 }
 
 export function summarize(resolved: { operations: unknown[]; describe: string }[]): string {
+  // A "; ⚠ …" note shared by several changes (Merchant Center's one-time feed link) is said once, on the first.
+  const said = new Set<string>();
   return resolved.filter((r) => r.operations.length)
-    .map((r, i) => `${i + 1}. ${r.describe}`).join("\n");
+    .map((r, i) => `${i + 1}. ${r.describe.split("; ⚠ ").filter((part, j) => j === 0 || !said.has(part) && !!said.add(part)).join("; ⚠ ")}`).join("\n");
 }
 
 /**

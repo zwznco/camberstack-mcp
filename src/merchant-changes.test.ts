@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, SOURCE_NAME, encodeKey, type Merchant } from "./merchant.js";
 import { McChangeSchema, resolveMcChange, writeMc } from "./merchant-changes.js";
+import { summarize } from "./changes.js";
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 const KEY = { offerId: "sku/1", contentLanguage: "en", feedLabel: "US" };
@@ -98,6 +99,13 @@ describe("Merchant Center changes (demo)", () => {
     const inc = await resolve(m, { type: "include_products", offer_ids: ["NW-SP-12", "NW-FV-01"], destinations: ["SHOPPING_ADS"] });
     expect(inc.describe).toContain("Include again 1 product in shopping ads: NW-SP-12 (1 already not excluded by Camberstack: NW-FV-01)");
     expect(inc.operations[0]!.overrides).toEqual({ brand: "Zoeller Co", excludedDestinations: ["FREE_LISTINGS"] });
+  });
+
+  it("says the one-time feed link once per proposal, not once per product", async () => {
+    const m = fresh();
+    const rs = [await resolve(m, { type: "set_product_attributes", offer_id: "NW-TWH-50", attributes: { price: 1099 } }),
+      await resolve(m, { type: "set_product_attributes", offer_id: "NW-TWH-38", attributes: { price: 499 } })];
+    expect(summarize(rs).match(/ahead of feed/g)).toHaveLength(1);
   });
 
   it("clears every override, and says when there's nothing to clear", async () => {
