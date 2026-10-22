@@ -359,11 +359,11 @@ function callsChart(v: View): string {
 function usersPage(v: View): string {
   const r = v.report;
   const shown = r.users.length < r.funnel.all.connected ? `${r.users.length} of ${r.funnel.all.connected} users` : `${r.users.length} users`;
-  return card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
+  return sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     r.users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
-    `<small>all time, by last seen</small>`) + sharingCard(v, true);
+    `<small>all time, by last seen</small>`);
 }
 
 /** Accounts shared across logins (report.ts sharing): how Free could be multiplied. On the overview only when there is one. */
