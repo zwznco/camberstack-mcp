@@ -10,7 +10,7 @@ import type { ToolDoc } from "./tools.js";
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
-const PRIVACY_UPDATED = "2026-10-17";
+const PRIVACY_UPDATED = "2026-10-22";
 const TERMS_UPDATED = "2026-10-22";
 
 const CSS = `
@@ -992,17 +992,20 @@ Humans at Camberstack do not read your Google Ads data unless you ask us to for 
 <h2>What we store</h2>
 <table>
 <tr><th>Data</th><th>Why</th><th>Kept until</th></tr>
-<tr><td>Google email and account ID</td><td>Identify you across connections</td><td>You ask us to delete it</td></tr>
-<tr><td>Google refresh token, encrypted (AES-256-GCM)</td><td>Call Google's APIs (Google Ads, and Search Console or Google Analytics if you granted them) when you use a tool</td><td>You disconnect or revoke access</td></tr>
+<tr><td>Google email and account ID</td><td>Identify you across connections</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
+<tr><td>Google refresh token, encrypted (AES-256-GCM)</td><td>Call Google's APIs (Google Ads, and Search Console or Google Analytics if you granted them) when you use a tool</td><td>You disconnect or revoke access, or six months without use</td></tr>
 <tr><td>A sign-in session for the account page (a cookie; we store only its hash)</td><td>Keep you signed in to camberstack.io/account</td><td>7 days, or until you sign out</td></tr>
 <tr><td>A random value in a cookie while you connect an AI app</td><td>Check that the browser finishing the Google sign-in is the one that approved the connection</td><td>The sign-in finishes, or 1 hour</td></tr>
 <tr><td>A random value in a cookie while you add a Google service (Google Ads, Search Console or Google Analytics) to your connection</td><td>Check that the browser finishing Google's consent is the one that opened your link</td><td>The consent finishes, or 10 minutes</td></tr>
 <tr><td>Tokens we issue to your AI app (stored as hashes)</td><td>Authenticate your AI app</td><td>Expiry (1 hour access, 90 days refresh) or disconnect</td></tr>
-<tr><td>Proposals: the changes requested, their summary and results</td><td>Show what changed and let you undo it</td><td>You ask us to delete them</td></tr>
+<tr><td>Proposals: the changes requested, their summary and results</td><td>Show what changed and let you undo it</td><td>You ask us to delete them, or two years without use (not while on a paid plan)</td></tr>
 <tr><td>Feedback you send from camberstack.io/feedback: your message, what it's about, and the Google email you signed in with</td><td>Read it and reply to you</td><td>You ask us to delete it</td></tr>
 <tr><td>A sign-in session for the feedback page (a cookie; we store only its hash)</td><td>Know who a message is from, so we can reply and keep spam out</td><td>1 day, or until you sign out</td></tr>
-<tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it</td></tr>
+<tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
 </table>
+<p>"Without use" means no tool call from your AI app and no new connection. After six months of it we revoke and delete your
+Google token (Google stops honoring an unused one after six months anyway); connect again to carry on. After two years we delete your account,
+proposals and usage log.</p>
 <p>Reports, search-term lists, query results and Google Analytics reports are computed on request and returned to your AI assistant. We do not store them.
 When a proposed ad uses an image URL, we download that image only to upload it to your Google Ads account as an image asset; we do not keep the file.
 Standard web server logs (IP address, time, path) are kept for a limited period for security and then deleted.

@@ -1617,7 +1617,7 @@ describe("OAuth + MCP end to end", () => {
     db.prepare("UPDATE users SET last_seen_at = ?, created_at = ? WHERE id = ?").run(Math.floor(Date.now() / 1000) - 100 * 86400, 1, id);
     const idle = await (await fetch(`${admin}/users?days=90`, { headers: { cookie } })).text();
     expect(idle).not.toContain(`href="/users/${id}`);
-    expect(idle).toContain('href="?days=90&all=1">all users</a>');
+    expect(idle).toContain('href="?days=90&all=1">all</a>');
     expect(await (await fetch(`${admin}/users?days=90&all=1`, { headers: { cookie } })).text()).toContain(`href="/users/${id}`);
     db.prepare("UPDATE users SET last_seen_at = ?, created_at = ? WHERE id = ?").run(seen.last_seen_at, seen.created_at, id);
     const one = await fetch(`${admin}/users/${id}`, { headers: { cookie } });

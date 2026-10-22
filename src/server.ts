@@ -22,6 +22,7 @@ import { mountFeedback } from "./feedback.js";
 import { Billing } from "./billing.js";
 import { AdConversions } from "./adconversions.js";
 import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
+import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
 import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
@@ -401,6 +402,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     every(HOUR, "lifecycle", () => lifecycle.run());
     every(60_000, "transactional mail", () => lifecycle.transactional());
     every(HOUR, "ad conversions", () => adConversions.flush());
+    every(HOUR, "retention", () => retain({ db, encryptionKey: cfg.encryptionKey, internalEmails }));
     // Pages new or changed since the last boot. Production only: a dev or test origin isn't ours to submit.
     if (cfg.baseUrl.startsWith("https://") && !cfg.noindex) {
       pingIndexNow(cfg.baseUrl, inKey, changedPages, overrides.indexNowFetch)

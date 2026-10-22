@@ -354,14 +354,13 @@ function usersPage(v: View): string {
   const r = v.report, since = windowStart(v.days);
   // Users seen in the window (last seen, else signed up); ?all=1 keeps everyone, so users idle past 90d stay reachable.
   const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
-  const shown = v.all ? (users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`)
-    : `${users.length} users seen ${inW(v.days)}`;
-  const toggle = v.all ? `<a href="${qs(v)}">only seen ${inW(v.days)}</a>` : `<a href="${qs(v)}&all=1">all users</a>`;
+  const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
+  const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
   return sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
-    `<small>by last seen · calls, errors and applied all time · ${toggle}</small>`);
+    `<small>${toggle}</small>`);
 }
 
 /** Accounts shared across logins (report.ts sharing): how Free could be multiplied. On the overview only when there is one. */
