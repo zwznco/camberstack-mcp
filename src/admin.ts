@@ -60,11 +60,11 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
   });
   site.post("/logout", (req, res) => { auth.close(req, res); res.redirect(303, d.baseUrl); });
   // Every page takes the same filter: ?days=1|7|30|90 (whole UTC days; 1 is today). The operator's and testers' accounts
-  // (ADMIN_EMAILS, PRO_EMAILS) are always left out.
+  // (ADMIN_EMAILS, PRO_EMAILS) are always left out. ?all=1 lists every user on /users, whenever last seen.
   const view = (req: Request) => {
     const days = [1, 7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
     const report = buildReport(d.db, { days, exclude: [...d.internalEmails] });
-    return { days, report, feedback: feedbackCount(d.db, windowStart(days)) };
+    return { days, all: req.query.all === "1", report, feedback: feedbackCount(d.db, windowStart(days)) };
   };
   const pages: Record<string, (v: ReturnType<typeof view>) => string> = {
     "/": overviewPage, "/users": usersPage, "/activity": activityPage, "/revenue": revenuePage,
@@ -143,7 +143,7 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
 
 // ---------------------------------------------------------------- views
 
-type View = { days: number; report: Report; feedback: number };
+type View = { days: number; all: boolean; report: Report; feedback: number };
 
 /** Pro's monthly price in dollars, from the label the site shows, so the two can't drift. */
 const MRR_PER_PRO = Number(PRO_PRICE_LABEL.match(/\d+/)?.[0] ?? 0);
@@ -351,13 +351,17 @@ function callsChart(v: View): string {
 }
 
 function usersPage(v: View): string {
-  const r = v.report;
-  const shown = r.users.length < r.funnel.all.connected ? `${r.users.length} of ${r.funnel.all.connected} users` : `${r.users.length} users`;
+  const r = v.report, since = windowStart(v.days);
+  // Users seen in the window (last seen, else signed up); ?all=1 keeps everyone, so users idle past 90d stay reachable.
+  const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
+  const shown = v.all ? (users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`)
+    : `${users.length} users seen ${inW(v.days)}`;
+  const toggle = v.all ? `<a href="${qs(v)}">only seen ${inW(v.days)}</a>` : `<a href="${qs(v)}&all=1">all users</a>`;
   return sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
-    r.users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
+    users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
-    `<small>all time, by last seen</small>`);
+    `<small>by last seen · calls, errors and applied all time · ${toggle}</small>`);
 }
 
 /** Accounts shared across logins (report.ts sharing): how Free could be multiplied. On the overview only when there is one. */

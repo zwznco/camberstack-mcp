@@ -1612,6 +1612,14 @@ describe("OAuth + MCP end to end", () => {
     expect(users).toContain("customer@example.com");
     expect(users).not.toContain("owner@example.com</a>");
     const id = users.match(/href="\/users\/([^"?]+)/)![1]!;
+    // The list follows the window, by last seen; ?all=1 keeps users idle past 90d reachable.
+    const seen = db.prepare("SELECT last_seen_at, created_at FROM users WHERE id = ?").get(id) as { last_seen_at: number | null; created_at: number };
+    db.prepare("UPDATE users SET last_seen_at = ?, created_at = ? WHERE id = ?").run(Math.floor(Date.now() / 1000) - 100 * 86400, 1, id);
+    const idle = await (await fetch(`${admin}/users?days=90`, { headers: { cookie } })).text();
+    expect(idle).not.toContain(`href="/users/${id}`);
+    expect(idle).toContain('href="?days=90&all=1">all users</a>');
+    expect(await (await fetch(`${admin}/users?days=90&all=1`, { headers: { cookie } })).text()).toContain(`href="/users/${id}`);
+    db.prepare("UPDATE users SET last_seen_at = ?, created_at = ? WHERE id = ?").run(seen.last_seen_at, seen.created_at, id);
     const one = await fetch(`${admin}/users/${id}`, { headers: { cookie } });
     expect(one.status).toBe(200);
     const detail = await one.text();
