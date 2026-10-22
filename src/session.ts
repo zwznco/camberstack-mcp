@@ -840,6 +840,63 @@ export class UserSession {
    * Ads search terms joined with the same site's organic queries over the same days: searches the account pays for
    * where the site already ranks near the top, and searches the site ranks on page 2+ for with no ads at all.
    */
+  /**
+   * Merchant Center product issues ranked by what the products earned in Shopping and Performance Max ads: which
+   * problems cost money. Joins the Ads account's shopping_performance_view (item ids come back lowercased) with the
+   * Merchant Center account's product statuses. A disapproved product stops spending, so a window that reaches back
+   * before the disapproval shows what it was earning; last-7-day spend tells which have already stopped.
+   */
+  async merchantAdSpend(customerId: string, merchantId: string, o: { days: number; limit: number }) {
+    const a = await this.account(customerId);
+    const ymd = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+    const q = (from: number) => `SELECT segments.product_item_id, segments.product_title, metrics.cost_micros, metrics.clicks, metrics.impressions,
+        metrics.conversions, metrics.conversions_value FROM shopping_performance_view
+      WHERE segments.date BETWEEN '${ymd(from)}' AND '${ymd(1)}' AND segments.product_merchant_id = ${merchantId}`;
+    const [rows, recent, products] = await Promise.all([
+      this.ads.search(a.customerId, q(o.days), a.loginCustomerId),
+      this.ads.search(a.customerId, q(Math.min(7, o.days)), a.loginCustomerId),
+      this.merchant.search(merchantId, "SELECT id, offer_id, title, aggregated_reporting_context_status, item_issues FROM product_view", 20_000),
+    ]);
+    const spend = new Map<string, { title: string; cost: number; clicks: number; conversions: number; value: number }>();
+    for (const r of rows) {
+      const id = String(r.segments?.productItemId ?? "").toLowerCase();
+      const e = spend.get(id) ?? { title: String(r.segments?.productTitle ?? ""), cost: 0, clicks: 0, conversions: 0, value: 0 };
+      e.cost += micros(r.metrics?.costMicros); e.clicks += Number(r.metrics?.clicks ?? 0);
+      e.conversions += Number(r.metrics?.conversions ?? 0); e.value += Number(r.metrics?.conversionsValue ?? 0);
+      spend.set(id, e);
+    }
+    const recentCost = new Map<string, number>();
+    for (const r of recent) {
+      const id = String(r.segments?.productItemId ?? "").toLowerCase();
+      recentCost.set(id, (recentCost.get(id) ?? 0) + micros(r.metrics?.costMicros));
+    }
+    const problems = (products.rows as any[]).filter((p) => p.aggregatedReportingContextStatus !== "ELIGIBLE" || (p.itemIssues ?? []).length);
+    const ranked = problems.map((p) => {
+      const s = spend.get(String(p.offerId).toLowerCase());
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      return { offer_id: p.offerId, title: p.title, status: p.aggregatedReportingContextStatus,
+        issues: (p.itemIssues ?? []).map((i: any) => ({ code: i.type?.code, ...(i.type?.canonicalAttribute ? { attribute: i.type.canonicalAttribute } : {}),
+          severity: i.severity?.aggregatedSeverity })),
+        ad_cost: r2(s?.cost ?? 0), ad_clicks: s?.clicks ?? 0, ad_conversions: r2(s?.conversions ?? 0), ad_conversion_value: r2(s?.value ?? 0),
+        ...(s && s.cost > 0 ? { stopped_spending: !(recentCost.get(String(p.offerId).toLowerCase()) ?? 0) } : {}) };
+    }).sort((x, y) => y.ad_conversion_value - x.ad_conversion_value || y.ad_cost - x.ad_cost);
+    const total = [...spend.values()].reduce((t, e) => t + e.cost, 0);
+    const earning = ranked.filter((r) => r.ad_cost > 0 || r.ad_conversion_value > 0);
+    return {
+      ...demoNote(customerId), ads_account: a.customerId, merchant_account: merchantId, window: { start: ymd(o.days), end: ymd(1) },
+      shopping_ad_cost: Math.round(total * 100) / 100,
+      problem_products: problems.length, problem_products_that_had_ad_spend: earning.length,
+      ad_value_on_problem_products: Math.round(earning.reduce((t, r) => t + r.ad_conversion_value, 0) * 100) / 100,
+      products: earning.slice(0, o.limit),
+      ...(products.truncated ? { partial: "Only the first 20,000 Merchant Center products were checked." } : {}),
+      ...(!rows.length ? { note_no_spend: "No Shopping or Performance Max spend for this Merchant Center account in the window: check the accounts are linked "
+        + "(Google Ads, Tools, Linked accounts) and that a Shopping or Performance Max campaign uses this feed." } : {}),
+      how_to_use: "products: Merchant Center problems that were earning in ads, most ad conversion value first. stopped_spending: no ad cost in the "
+        + "last 7 days, which for a disapproved product usually means it stopped serving. Fix the feed or store first; for a quick fix, "
+        + "propose_merchant_changes (set_product_attributes) overrides the attribute an issue names.",
+    };
+  }
+
   async paidOrganicOverlap(customerId: string, site: string, o: { days: number; max_position: number; min_impressions: number; limit: number }) {
     const a = await this.account(customerId);
     const w = searchConsoleWindow(o.days);

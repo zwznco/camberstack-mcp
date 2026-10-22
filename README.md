@@ -40,6 +40,7 @@ Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time wit
 | `merchant_accounts` | no | the Merchant Center accounts the login can read (sub-accounts included); if Merchant Center isn't granted yet, a personal link that adds it |
 | `merchant_product_issues` | no | account issues, product status counts, and each product issue with how many products it hits and examples; or one product's issues in full |
 | `merchant_report` | no | any read-only Merchant Center Query Language (MCQL) query, e.g. Shopping clicks per product from `product_performance_view` |
+| `merchant_ad_spend` | no | Merchant Center problems (disapproved, limited, pending) joined with what each product earned in Shopping and Performance Max ads, most value first, and whether it stopped spending in the last 7 days |
 | `propose_merchant_changes` | no | like `propose_changes`, for Merchant Center products: `set_product_attributes` (price, GTIN, title, …), `exclude_products`/`include_products`, `clear_product_overrides`, and `add_product`/`update_product`/`delete_product` for products in Camberstack's own "Camberstack products" source. Applied and undone with `apply_changes`/`undo_changes` |
 | `propose_changes` | no | resolves changes against the live account, dry-runs them with Google (`validateOnly`), stores a proposal with a plain-English summary |
 | `apply_changes` | **yes** | applies a stored proposal (the user's own, un-applied, still matching the account; if the account moved, returns an updated proposal to approve instead); records each change's inverse |
@@ -58,6 +59,9 @@ The Google Analytics tools need `analytics.readonly` and `analytics.edit` (Googl
 asks for them alongside Ads and Search Console; a connection made before they were added gets a personal
 `/connect/analytics` link on its first Analytics call, which adds both to the same Google account. The Cloud project
 needs the Google Analytics Data API and Admin API enabled.
+
+Merchant Center accounts are their own plan allowance, the same size as Google Ads' (Free 1, Pro 10), counted as
+`mc:<id>` in `tool_calls` with their own switch (`switch_account` takes `mc:<id>`).
 
 The Merchant Center tools need `content`, which isn't part of connecting: the first call without it
 returns a personal `/connect/merchant-center` link that adds it. Until Google verifies that scope they're listed only for

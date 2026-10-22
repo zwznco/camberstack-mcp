@@ -28,7 +28,7 @@ const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
   .replace("reversed with undo_changes", "reversed with propose_undo (a proposal like any other: approve, then apply_changes)");
 
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
-const GATED = new Set(["account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
+const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
   ...PUBLIC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
 
 /** Tools that read or change one Merchant Center account (account_id): their own allowance, logged as mc:<id>. */
@@ -435,6 +435,21 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       },
       annotations: read,
     }, ({ account_id, query, limit }: { account_id: string; query: string; limit: number }) => merchantReport(session().merchant, account_id, query, limit));
+
+    tool("merchant_ad_spend", {
+      title: "Merchant Center issues by ad spend",
+      description: "Which Merchant Center problems cost money: products that are disapproved, limited or pending, joined with what they earned in "
+        + "Shopping and Performance Max ads (cost, clicks, conversions, conversion value) over the window, most value first, and whether each "
+        + "has stopped spending in the last 7 days. Use it when Shopping or Performance Max results drop, before fixing issues one by one. Changes nothing.",
+      inputSchema: { customer_id: customerId, account_id: merchantId,
+        days: z.number().int().min(7).max(90).default(30).describe("Look-back window in days, ending yesterday; reach back before a drop"),
+        limit: z.number().int().min(1).max(200).default(25).describe("Most products to return") },
+      annotations: read,
+    }, async ({ customer_id, account_id, ...o }: { customer_id: string; account_id: string; days: number; limit: number }) => {
+      // The Ads account is gated (and logged) by wrap; the Merchant Center one here.
+      const release = await session().checkAccount(mcTarget(account_id));
+      try { return await session().merchantAdSpend(customer_id, account_id, o); } finally { release(); }
+    });
 
     if (!o.chatgpt) tool("propose_merchant_changes", {
       title: "Propose Merchant Center changes (applies nothing)",

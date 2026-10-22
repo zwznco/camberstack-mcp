@@ -2341,7 +2341,7 @@ describe("Merchant Center rollout", () => {
 
   it("lists the tools for internal users only, and adds Merchant Center by link with just its scope", async () => {
     const owner = await connect();
-    expect(await listTools(owner)).toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report"]);
+    expect(await listTools(owner)).toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report", "merchant_ad_spend"]);
     const out = (await call(owner, "merchant_accounts")).json;
     expect(out.accounts[0].account_id).toBe("000000001");
     expect(out.grant_url).toContain("/connect/merchant-center?t=");
@@ -2423,5 +2423,24 @@ describe("Merchant Center plan allowance", () => {
     } finally {
       db.prepare("UPDATE users SET plan = ?, stripe_customer = ?, stripe_sub = ? WHERE email = 'owner@example.com'").run(was.plan, was.stripe_customer, was.stripe_sub);
     }
+  });
+});
+
+describe("Merchant Center issues by ad spend (demo)", () => {
+  it("ranks the problems by what they earned in Shopping ads, and flags the ones that stopped", async () => {
+    const owner = await merchantOwner();
+    const r = (await call(owner, "merchant_ad_spend", { customer_id: "000-000-0001", account_id: "000000001", days: 30 })).json;
+    expect(r.note).toMatch(/demo/i);
+    expect(r.shopping_ad_cost).toBeGreaterThan(0);
+    // The two disapproved best sellers come first: they earned the most, and stopped 9 days ago.
+    expect(r.products.slice(0, 2).map((p: any) => [p.offer_id, p.status, p.stopped_spending]))
+      .toEqual([["NW-TWH-50", "NOT_ELIGIBLE_OR_DISAPPROVED", true], ["NW-TWH-38", "NOT_ELIGIBLE_OR_DISAPPROVED", true]]);
+    expect(r.products[0].ad_conversion_value).toBeGreaterThan(0);
+    // A demoted product still spends, at half strength.
+    expect(r.products.find((p: any) => p.offer_id === "NW-GD-34")).toMatchObject({ status: "ELIGIBLE_LIMITED", stopped_spending: false });
+    // Healthy products aren't listed; a product that never spent (pending review) isn't either.
+    expect(r.products.map((p: any) => p.offer_id)).not.toContain("NW-SP-12");
+    expect(r.products.map((p: any) => p.offer_id)).not.toContain("NW-TWH-27");
+    expect(r.problem_products).toBe(8);
   });
 });

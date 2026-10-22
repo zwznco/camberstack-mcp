@@ -11,6 +11,7 @@
  * the resources below, WHERE conditions joined by AND (=, !=, <, >, <=, >=, IN, LIKE), ORDER BY, LIMIT.
  * Rows come back whole (camelCase, like the API); metrics scale with the segments.date window.
  */
+import { demoShopping } from "./merchant.js";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import type { SearchAnalyticsRequest, Sitemap, UrlInspection } from "./google.js";
@@ -177,6 +178,9 @@ export class DemoAds {
     const campOfGroup = (gid: string) => AD_GROUPS.find((g) => g.id === gid)!.campaign;
 
     switch (resource) {
+      // The demo store's products (merchant.ts), as a Performance Max campaign's Shopping ads report them; the window ends yesterday.
+      case "shopping_performance_view":
+        return demoShopping(days, 1);
       case "customer":
         return [{ customer: { id: DEMO_CID, descriptiveName: DEMO_NAME, currencyCode: "USD", timeZone: "America/Chicago", manager: false } }];
       case "customer_client":

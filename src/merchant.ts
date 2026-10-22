@@ -383,6 +383,31 @@ const PRODUCT_FIELDS = ["id", "offer_id", "title", "brand", "price", "availabili
 const PERF_SEGMENTS = ["date", "offer_id", "title", "brand", "marketing_method"];
 const PERF_METRICS = ["clicks", "impressions", "click_through_rate"];
 
+/** One demo product's clicks and impressions on a day: the same numbers the demo Ads account's Shopping report uses (demoShopping). */
+function demoDay(p: DemoProduct & { excluded?: string[] }, daysAgo: number, method: "ADS" | "ORGANIC") {
+  // A disapproved product stops serving from the day its issue started; a demoted one serves at half strength.
+  const off = p.issues.some((i) => i.severity === "DISAPPROVED" && daysAgo <= i.since) || p.issues.some((i) => i.severity === "PENDING")
+    || (method === "ADS" && !!p.excluded?.includes("SHOPPING_ADS"));
+  const demoted = p.issues.some((i) => i.severity === "DEMOTED");
+  const clicks = off ? 0 : Math.round(p.clicks * (method === "ADS" ? 1 : 0.35) * (demoted ? 0.5 : 1) * (1 + ((daysAgo * 7 + p.price) % 5) / 10));
+  return { clicks, impressions: off ? 0 : clicks * (method === "ADS" ? 42 : 65) + (p.price % 13) };
+}
+
+/**
+ * The demo Ads account's shopping_performance_view (demo.ts): the demo store's products, as Google Ads reports them
+ * (item ids lowercased), over the days ago given. Cost tracks price, and conversions 3% of clicks.
+ */
+export function demoShopping(fromDaysAgo: number, toDaysAgo: number) {
+  return DEMO_PRODUCTS.map((p) => {
+    let clicks = 0, impressions = 0;
+    for (let d = toDaysAgo; d <= fromDaysAgo; d++) { const x = demoDay(p, d, "ADS"); clicks += x.clicks; impressions += x.impressions; }
+    const cpc = 0.6 + Math.min(p.price, 1200) / 800, conversions = Math.round(clicks * 0.03 * 10) / 10;
+    return { segments: { productItemId: p.offerId.toLowerCase(), productMerchantId: DEMO_MERCHANT, productTitle: p.title },
+      metrics: { costMicros: String(Math.round(clicks * cpc * 1e6)), clicks: String(clicks), impressions: String(impressions),
+        conversions, conversionsValue: Math.round(conversions * p.price * 100) / 100 } };
+  }).filter((r) => Number(r.metrics.impressions) > 0);
+}
+
 /** A product's status: its worst issue decides, as in Merchant Center. */
 const demoStatus = (p: DemoProduct) => {
   const sev = p.issues.map((i) => i.severity);
@@ -477,13 +502,8 @@ export class DemoMerchant implements Merchant {
       const groups = new Map<string, { seg: Record<string, unknown>; clicks: number; impressions: number }>();
       for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += DAY) {
         const daysAgo = Math.round((Date.now() - t) / DAY);
-        for (const p of this.live()) for (const method of ["ADS", "ORGANIC"]) {
-          // A disapproved product stops serving from the day its issue started; a demoted one serves at half strength.
-          const off = p.issues.some((i) => i.severity === "DISAPPROVED" && daysAgo <= i.since) || p.issues.some((i) => i.severity === "PENDING")
-            || (method === "ADS" && p.excluded.includes("SHOPPING_ADS"));
-          const demoted = p.issues.some((i) => i.severity === "DEMOTED");
-          const clicks = off ? 0 : Math.round(p.clicks * (method === "ADS" ? 1 : 0.35) * (demoted ? 0.5 : 1) * (1 + ((daysAgo * 7 + p.price) % 5) / 10));
-          const impressions = off ? 0 : clicks * (method === "ADS" ? 42 : 65) + (p.price % 13);
+        for (const p of this.live()) for (const method of ["ADS", "ORGANIC"] as const) {
+          const { clicks, impressions } = demoDay(p, daysAgo, method);
           const r: Record<string, unknown> = { date: ymd(t), offer_id: p.offerId, title: p.title, brand: p.brand, marketing_method: method };
           if (!conds.every((c) => (String(r[c.field] ?? "") === c.value) !== c.neg)) continue;
           const key = segs.map((s) => r[s]).join("\u0000");
