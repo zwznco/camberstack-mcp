@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDb, now } from "./db.js";
 import { buildReport, userDetail, windowStart } from "./report.js";
 
 describe("buildReport", () => {
+  // The seeds sit 25-30 min back; between 00:00 and 00:30 UTC that is yesterday, outside a "today" window. Pin to noon.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date().setUTCHours(12, 0, 0, 0)); });
+  afterEach(() => { vi.useRealTimers(); });
   const seed = () => {
     const db = openDb(":memory:");
     const user = db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES (?, ?, ?, ?, ?, ?)");
