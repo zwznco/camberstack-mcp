@@ -1584,23 +1584,31 @@ describe("OAuth + MCP end to end", () => {
     expect((await fetch(`${admin}/callback?code=gcode&state=${otherState}`, { redirect: "manual" })).status).toBe(400);
     const cookie = await signIn(g, stateCookie(login));
     expect(cookie).toMatch(/^cs_admin=/);
-    const page = await fetch(`${admin}/?days=30&internal=1`, { headers: { cookie } });
+    // The operator (ADMIN_EMAILS) is always left out of the numbers; a customer with the owner's scopes and a call shows.
+    const owner = db.prepare("SELECT google_scopes FROM users WHERE email = 'owner@example.com'").get() as { google_scopes: string };
+    db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, google_scopes, enc_refresh) VALUES ('u_cust', 'sub-cust', 'customer@example.com', 'free', unixepoch(), ?, 'x')")
+      .run(owner.google_scopes);
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes) VALUES (unixepoch(), 'u_cust', 'account_overview', '1112223333', 1, 5, 10)").run();
+    const page = await fetch(`${admin}/?days=30`, { headers: { cookie } });
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain("Top tools");   // which tools make its top 6 depends on the whole run; /activity (below) lists them all
-    expect(html).toContain("owner@example.com");
+    expect(html).toContain("customer@example.com");
+    expect(html).not.toContain("owner@example.com</a>");   // only as the signed-in admin, never as a user
+    expect(html).not.toContain("internal=1");
     // The other pages, and a user's own page with their Google permissions.
-    const users = await (await fetch(`${admin}/users?days=30&internal=1`, { headers: { cookie } })).text();
-    expect(users).toContain("owner@example.com");
+    const users = await (await fetch(`${admin}/users?days=30`, { headers: { cookie } })).text();
+    expect(users).toContain("customer@example.com");
+    expect(users).not.toContain("owner@example.com</a>");
     const id = users.match(/href="\/users\/([^"?]+)/)![1]!;
-    const one = await fetch(`${admin}/users/${id}?internal=1`, { headers: { cookie } });
+    const one = await fetch(`${admin}/users/${id}`, { headers: { cookie } });
     expect(one.status).toBe(200);
     const detail = await one.text();
     expect(detail).toContain("Google permissions");
     expect(detail).toContain(`<span class="chip on">Google Ads</span>`);  // recorded from the scopes Google granted at sign-in
     expect(detail).toContain("account_overview");
     expect((await fetch(`${admin}/users/nope`, { headers: { cookie } })).status).toBe(404);
-    expect(await (await fetch(`${admin}/activity?days=30&internal=1`, { headers: { cookie } })).text()).toContain("account_overview");
+    expect(await (await fetch(`${admin}/activity?days=30`, { headers: { cookie } })).text()).toContain("account_overview");
     expect((await fetch(`${admin}/revenue`, { headers: { cookie } })).status).toBe(200);
     expect((await fetch(`${admin}/users`, { redirect: "manual" })).status).toBe(302);  // every page is behind sign-in
     // Announcements: preset cards; a preset's page previews it and has the Send button; a POST from another site is refused;
@@ -1615,9 +1623,9 @@ describe("OAuth + MCP end to end", () => {
     expect((await postForm("/announcements/ga4-open/send", { count: "0" }, "https://evil.test")).status).toBe(403);
     expect((await postForm("/announcements/ga4-open/send", { count: "999" })).status).toBe(400);   // not the list the page showed
     expect((await fetch(`${admin}/announcements/nope`, { headers: { cookie } })).status).toBe(404);
-    // The operator's own account is internal: hidden unless asked for.
+    // The operator's own account is internal: always hidden, so only the customer counts.
     const json = await (await fetch(`${admin}/?format=json`, { headers: { cookie } })).json();  // still served, just not linked
-    expect(json.funnel.all.connected).toBe(0);
+    expect(json.funnel.all.connected).toBe(1);
     // The admin host serves nothing else from the public site.
     expect((await fetch(`${admin}/privacy`)).status).toBe(404);
     expect((await fetch(`${admin}/.well-known/oauth-authorization-server`)).status).toBe(404);

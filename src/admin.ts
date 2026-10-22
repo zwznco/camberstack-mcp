@@ -23,9 +23,7 @@ export interface AdminDeps {
   /** The admin site's origin. */
   adminUrl?: string;
   adminEmails: Set<string>;
-  /** PRO_EMAILS: Pro without a plan row (session.ts isPro), so the users table alone reads them as free. */
-  proEmails?: Set<string>;
-  /** Hidden from the numbers by default (operator + testers); the page can include them. */
+  /** Always left out of the numbers (operator + testers: ADMIN_EMAILS, PRO_EMAILS). */
   internalEmails: Set<string>;
   /** Announcement emails (announce.ts); unset = no Announcements page. */
   announcements?: Announcements;
@@ -61,14 +59,12 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
     res.redirect(302, "/");
   });
   site.post("/logout", (req, res) => { auth.close(req, res); res.redirect(303, d.baseUrl); });
-  // Every page takes the same filters: ?days=1|7|30|90 (whole UTC days; 1 is today) and ?internal=1 (include the operator's and testers' accounts).
+  // Every page takes the same filter: ?days=1|7|30|90 (whole UTC days; 1 is today). The operator's and testers' accounts
+  // (ADMIN_EMAILS, PRO_EMAILS) are always left out.
   const view = (req: Request) => {
     const days = [1, 7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
-    const all = req.query.internal === "1";
-    const report = buildReport(d.db, { days, exclude: all ? [] : [...d.internalEmails] });
-    for (const u of report.users) if (u.plan === "free" && d.proEmails?.has(u.email.toLowerCase())) u.plan = "pro";
-    return { days, all, internal: d.internalEmails.size, report,
-      feedback: feedbackCount(d.db, windowStart(days)) };
+    const report = buildReport(d.db, { days, exclude: [...d.internalEmails] });
+    return { days, report, feedback: feedbackCount(d.db, windowStart(days)) };
   };
   const pages: Record<string, (v: ReturnType<typeof view>) => string> = {
     "/": overviewPage, "/users": usersPage, "/activity": activityPage, "/revenue": revenuePage,
@@ -147,7 +143,7 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
 
 // ---------------------------------------------------------------- views
 
-type View = { days: number; all: boolean; internal: number; report: Report; feedback: number };
+type View = { days: number; report: Report; feedback: number };
 
 /** Pro's monthly price in dollars, from the label the site shows, so the two can't drift. */
 const MRR_PER_PRO = Number(PRO_PRICE_LABEL.match(/\d+/)?.[0] ?? 0);
@@ -161,9 +157,8 @@ const date = (t: number) => new Date(t * 1000).toISOString().slice(0, 16).replac
 const when = (t: number | null) => (t ? `<span title="${date(t)} UTC">${ago(t)}</span>` : `<span class="dim">—</span>`);
 const num = (n: number | null | undefined) => `<span class="n">${(n ?? 0).toLocaleString("en-US")}</span>`;
 const bad = (n: number) => (n ? `<span class="n bad">${n}</span>` : `<span class="n dim">0</span>`);
-const qs = (v: Pick<View, "days" | "all">, p: Partial<{ days: number; all: boolean }> = {}) => {
-  const days = p.days ?? v.days, all = p.all ?? v.all;
-  return `?days=${days}${all ? "&internal=1" : ""}`;
+const qs = (v: Pick<View, "days">, p: Partial<{ days: number }> = {}) => {
+  return `?days=${p.days ?? v.days}`;
 };
 /** The window in words: "today", or "7d" counting today. `lastW` and `inW` read as a phrase ("last 7d", "in 7d"). */
 const range = (days: number) => (days === 1 ? "today" : `${days}d`);
@@ -245,7 +240,7 @@ h1{font-size:18px;font-weight:600;margin:0;letter-spacing:-.2px}h2{font-size:13p
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
 .seg a{padding:4px 10px;color:var(--muted);font:12px ui-monospace,Menlo,monospace;border-left:1px solid var(--line)}.seg a:first-child{border-left:0}
 .seg a.on{background:var(--fg);color:var(--bg)}.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.toggle{font-size:12px;color:var(--dim)}.toggle:hover{color:var(--fg)}.toggle.on{color:var(--fg)}
+
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:16px;overflow:hidden}
 .stat{padding:14px 16px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);margin:0 -1px -1px 0}
 .stat span{display:block;color:var(--muted);font-size:12px}.stat b{display:block;font:500 22px/1.3 ui-monospace,Menlo,monospace;letter-spacing:-.5px;margin-top:4px}
@@ -285,8 +280,7 @@ table.users td:nth-child(5){margin-left:auto;color:var(--dim);font-size:12px}}
 <div class="ext"><span>Links</span>${EXTERNAL.map(([l, href]) => `<a href="${href}" target="_blank" rel="noopener">${l} <i>↗</i></a>`).join("")}</div>
 <div class="who"><span title="${esc(who)}">${esc(who)}</span><form method="post" action="/logout"><button>Sign out</button></form></div></aside>
 <main><div class="top"><h1>${heading ?? title}</h1><div class="tools"${path === "/announcements" ? ' style="display:none"' : ""}>
-<span class="seg" title="Whole days in UTC, counting today">${[1, 7, 30, 90].map((d) => `<a class="${d === v.days ? "on" : ""}" href="?${qs(v, { days: d }).slice(1)}">${d === 1 ? "Today" : `${d}d`}</a>`).join("")}</span>
-<a class="toggle ${v.all ? "on" : ""}" href="${qs(v, { all: !v.all })}" title="Include the operator's and testers' accounts (ADMIN_EMAILS, PRO_EMAILS)">${v.all ? "showing" : "hiding"} internal</a></div></div>
+<span class="seg" title="Whole days in UTC, counting today">${[1, 7, 30, 90].map((d) => `<a class="${d === v.days ? "on" : ""}" href="?${qs(v, { days: d }).slice(1)}">${d === 1 ? "Today" : `${d}d`}</a>`).join("")}</span></div></div>
 ${body}
 <footer class="mfoot">${EXTERNAL.map(([l, href]) => `<a href="${href}" target="_blank" rel="noopener">${l} ↗</a>`).join("")}
 <span>${esc(who)} · <form method="post" action="/logout" style="display:inline"><button>Sign out</button></form></span></footer>
@@ -459,7 +453,6 @@ function revenuePage(v: View): string {
   return `<div class="stats">
 ${stat("Paying", num(paying), "live Stripe subscriptions")}
 ${stat("MRR", `$${paying * MRR_PER_PRO}`, `$${MRR_PER_PRO}/mo each`)}
-${stat("Comped Pro", num(pros.filter((u) => !u.paying).length), v.all ? "PRO_EMAILS" : "PRO_EMAILS are internal: show internal")}
 ${stat("Ad connects uploaded", num(r.adConversions?.uploaded), `${r.adConversions?.recorded ?? 0} recorded`)}
 </div>
 ${card("Pro users", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
