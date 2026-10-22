@@ -308,6 +308,7 @@ ${stat("Paying", num(paying), `$${paying * MRR_PER_PRO} MRR`)}
 ${stat(`Tool errors · ${w}`, errs ? `<span class="n bad">${errs}</span>` : num(0), callsInWindow ? `${((100 * errs) / callsInWindow).toFixed(1)}% of calls` : "")}
 </div>
 ${callsChart(v)}
+${sharingCard(v)}
 <div class="grid2">
 ${card("Funnel", table(["stage", ["all time", "r"], "", [`new · ${w}`, "r"]], stages.map((k) => [k.replace(/_/g, " "), num(r.funnel.all[k]),
     `<div class="bar"><i style="width:${Math.round((100 * r.funnel.all[k]) / top)}%"></i></div>`, num(r.funnel.window[k])])))}
@@ -362,7 +363,18 @@ function usersPage(v: View): string {
     r.users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
-    `<small>all time, by last seen</small>`);
+    `<small>all time, by last seen</small>`) + sharingCard(v, true);
+}
+
+/** Accounts shared across logins (report.ts sharing): how Free could be multiplied. On the overview only when there is one. */
+function sharingCard(v: View, always = false): string {
+  const rows = v.report.sharing;
+  if (!rows.length && !always) return "";
+  return card("Shared across logins", table(["", "account", "users", ["last", "r"]], rows.map((s) => {
+    const users = JSON.parse(s.users) as { id: string; email: string; plan: string }[];
+    return [s.kind, cid(s.customer_id), users.map((u) => `${userLink(v, u.id, u.email)} ${planBadge(u.plan, true)}`).join("<br>"),
+      `<span class="r">${when(s.last)}</span>`];
+  }), "No ad or manager account is shared by two logins."), `<small>ad account: tools run by 2+ users · manager: reachable by 2+</small>`);
 }
 
 /** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls

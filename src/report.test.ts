@@ -39,6 +39,30 @@ describe("buildReport", () => {
   });
 });
 
+describe("sharing", () => {
+  it("flags an ad account run by two users and a manager two logins reach, not the demo or one user's own", () => {
+    const db = openDb(":memory:");
+    const user = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, ads_manager_ids, ads_accounts_at) VALUES (?, ?, ?, 'free', 0, ?, ?)");
+    user.run("a", "ga", "a@agency.com", '["9990001111"]', now() - 60);
+    user.run("b", "gb", "b@agency.com", '["9990001111","8880002222"]', now() - 30);
+    user.run("me", "gm", "me@op.com", '["8880002222"]', now());
+    const call = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes) VALUES (?, ?, 'account_overview', ?, ?, 1, 1)");
+    call.run(now() - 10, "a", "1112223333", 1);
+    call.run(now() - 5, "b", "1112223333", 1);
+    call.run(now(), "a", "4445556666", 1);
+    call.run(now(), "b", "4445556666", 0);              // a refused call isn't use
+    call.run(now(), "a", "0000000001", 1);              // the demo is everyone's
+    call.run(now(), "b", "0000000001", 1);
+    call.run(now(), "me", "1112223333", 1);             // the operator's own login is excluded
+
+    const s = buildReport(db, { days: 7, exclude: ["me@op.com"] }).sharing;
+    expect(s.map((x) => [x.kind, x.customer_id, JSON.parse(x.users).map((u: { id: string }) => u.id).sort()])).toEqual([
+      ["ad account", "1112223333", ["a", "b"]],
+      ["manager", "9990001111", ["a", "b"]],
+    ]);
+  });
+});
+
 describe("came from", () => {
   it("splits connects by the app of the first call, else of a live token", () => {
     const db = openDb(":memory:");

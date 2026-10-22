@@ -462,8 +462,11 @@ export class UserSession {
     }
     const list = [...out.values()].sort((a, b) => Number(a.manager) - Number(b.manager) || a.name.localeCompare(b.name));
     // Only when something was readable or nothing failed: a refusal would otherwise overwrite a real count with 0.
-    if (out.size || !unreadable.length) this.deps.db.prepare("UPDATE users SET ads_accounts = ?, ads_managers = ?, ads_accounts_at = ? WHERE id = ?")
-      .run(list.filter((a) => !a.manager).length, list.filter((a) => a.manager).length, now(), this.user.id);
+    if (out.size || !unreadable.length) {
+      const managers = list.filter((a) => a.manager).map((a) => a.customerId);
+      this.deps.db.prepare("UPDATE users SET ads_accounts = ?, ads_managers = ?, ads_manager_ids = ?, ads_accounts_at = ? WHERE id = ?")
+        .run(list.length - managers.length, managers.length, JSON.stringify(managers), now(), this.user.id);
+    }
     // Nothing readable (no Ads access, or blocked e.g. by 2-Step Verification): offer the demo account,
     // and keep the reason in lastUnreadable so list_accounts still says why the real ones are missing.
     if (!list.some((a) => !a.manager)) list.push(DEMO_ACCOUNT);

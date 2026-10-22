@@ -647,8 +647,8 @@ describe("OAuth + MCP end to end", () => {
 
   it("records how many accounts the login can reach, for the admin's used-of-visible", async () => {
     await call(token, "list_accounts");
-    expect(db.prepare("SELECT DISTINCT ads_accounts a, ads_managers m FROM users WHERE enc_refresh IS NOT NULL AND ads_accounts_at IS NOT NULL").all())
-      .toEqual([{ a: 1, m: 0 }]);
+    expect(db.prepare("SELECT DISTINCT ads_accounts a, ads_managers m, ads_manager_ids ids FROM users WHERE enc_refresh IS NOT NULL AND ads_accounts_at IS NOT NULL").all())
+      .toEqual([{ a: 1, m: 0, ids: "[]" }]);
   });
 
   it("lists accounts once across requests, not once per tool call", async () => {

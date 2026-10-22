@@ -5,6 +5,7 @@
  */
 import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
+import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
 
@@ -112,6 +113,21 @@ export function buildReport(db: DB, o: ReportOptions) {
     permissions: Object.fromEntries(Object.entries(SCOPE_LABELS).map(([scope, label]) => [label,
       n("SELECT count(*) n FROM {U} u WHERE enc_refresh IS NOT NULL AND (' ' || google_scopes || ' ') LIKE ?", `% ${scope} %`)])) as Record<string, number>,
     permissionsUnknown: n("SELECT count(*) n FROM {U} u WHERE enc_refresh IS NOT NULL AND google_scopes IS NULL"),
+    /**
+     * Free is one ad account per Google login, so several logins could multiply it. Flags an ad account more than one
+     * user has run tools on, and a manager account more than one login can reach (an agency's staff, or one person's spare
+     * logins). Both are often innocent: a colleague taking over, an owner and their agency. `users` is a JSON array.
+     */
+    sharing: q<{ kind: "ad account" | "manager"; customer_id: string; users: string; last: number | null }>(
+      `SELECT 'ad account' kind, c.customer_id, json_group_array(DISTINCT json_object('id', u.id, 'email', u.email, 'plan', u.plan)) users, max(c.at) last
+         FROM tool_calls c JOIN {U} u ON u.id = c.user_id
+         WHERE c.ok = 1 AND c.customer_id IS NOT NULL AND c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}')
+         GROUP BY c.customer_id HAVING count(DISTINCT c.user_id) > 1
+       UNION ALL
+       SELECT 'manager', m.value, json_group_array(DISTINCT json_object('id', u.id, 'email', u.email, 'plan', u.plan)), max(u.ads_accounts_at)
+         FROM {U} u, json_each(u.ads_manager_ids) m
+         GROUP BY m.value HAVING count(DISTINCT u.id) > 1
+       ORDER BY last DESC`),
     recent: q<{ at: number; email: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
       `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id
