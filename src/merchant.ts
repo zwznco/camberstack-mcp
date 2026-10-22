@@ -245,7 +245,9 @@ export class MerchantClient implements Merchant {
     let src = await this.source(accountId, true);
     if (attributes) {
       // No feed label or language on the source: an API source then takes products of any.
-      src ??= (await this.call(`datasources/v1/accounts/${accountId}/dataSources`, { displayName: PRODUCTS_SOURCE_NAME, primaryProductDataSource: {} })).name as string;
+      // Without destinations Google enables free listings only (seen live, 2026-10-22): ask for Shopping ads too.
+      src ??= (await this.call(`datasources/v1/accounts/${accountId}/dataSources`, { displayName: PRODUCTS_SOURCE_NAME, primaryProductDataSource: {
+        destinations: [{ destination: "SHOPPING_ADS", state: "ENABLED" }, { destination: "FREE_LISTINGS", state: "ENABLED" }] } })).name as string;
       await this.call(`products/v1/accounts/${accountId}/productInputs:insert?dataSource=${encodeURIComponent(src)}`,
         { offerId: key.offerId, contentLanguage: key.contentLanguage, feedLabel: key.feedLabel, productAttributes: attributes });
     } else if (src) {

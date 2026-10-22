@@ -64,7 +64,8 @@ describe("MerchantClient writes", () => {
     const g = fakeGoogle();
     await g.m.setOwnProduct("5", KEY, { title: "New" });
     expect(g.calls.find((c) => c.method === "POST" && c.url === "datasources/v1/accounts/5/dataSources")!.body)
-      .toEqual({ displayName: "Camberstack products", primaryProductDataSource: {} });
+      .toEqual({ displayName: "Camberstack products", primaryProductDataSource: {
+        destinations: [{ destination: "SHOPPING_ADS", state: "ENABLED" }, { destination: "FREE_LISTINGS", state: "ENABLED" }] } });
     expect(g.calls.find((c) => c.url.includes("productInputs:insert"))!.url).toContain(encodeURIComponent("accounts/5/dataSources/99"));
     expect(await g.m.ownProducts("5")).toEqual([{ key: KEY, attrs: { title: "New" } }]);
     g.calls.length = 0;
@@ -144,6 +145,10 @@ describe("Merchant Center changes (demo)", () => {
     const upd = await resolve(m, { type: "update_product", offer_id: "NW-NEW-1", attributes: { price: 11 } });
     expect(upd.describe).toContain("price 12.50 USD → 11.00 USD");
     await writeMc(m, DEMO_MERCHANT, upd.operations);
+    // Undoing an update puts the product back (seen live: a key-order mismatch read it as missing, so undoing that undo would have deleted it).
+    const putBack = await resolve(m, upd.inverse!);
+    expect(putBack.describe).toBe('Put back product NW-NEW-1 ("Shutoff Valve") as it was: price');
+    expect(putBack.inverse).toMatchObject({ products: [{ attributes: { price: { amountMicros: "11000000" } } }] });
     const del = await resolve(m, { type: "delete_product", offer_id: "NW-NEW-1" });
     await writeMc(m, DEMO_MERCHANT, del.operations);
     expect(await m.ownProducts(DEMO_MERCHANT)).toEqual([]);

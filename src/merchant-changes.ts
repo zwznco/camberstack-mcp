@@ -169,6 +169,8 @@ async function linkLines(m: Merchant, accountId: string, ops: McOp[]): Promise<s
 }
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+/** Field by field: keys come back from storage with their fields in another order than a proposal's snapshot. */
+const sameKey = (a: ProductKey, b: ProductKey) => a.offerId === b.offerId && a.contentLanguage === b.contentLanguage && a.feedLabel === b.feedLabel;
 const cleaned = (o: Overrides) => (Object.keys(o).length ? o : null);
 
 /** One of Camberstack's own products by offer_id, or null. */
@@ -227,7 +229,7 @@ export async function resolveMcChange(m: Merchant, accountId: string, change: Mc
       const mine = await m.ownProducts(accountId);
       const ops: McOp[] = [];
       for (const x of change.products) {
-        const current = mine.find((y) => JSON.stringify(y.key) === JSON.stringify(x.key))?.attrs ?? null;
+        const current = mine.find((y) => sameKey(y.key, x.key))?.attrs ?? null;
         if (sameJson(current, x.attributes)) continue;
         ops.push({ key: x.key, primary: "", overrides: x.attributes as Overrides | null, before: current, own: true });
       }
