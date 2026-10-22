@@ -102,6 +102,8 @@ What a proposal can do:
 - **Tune:** keyword and ad group bids, bid strategy, location and language targeting, presence-only location
   mode, final URL suffix.
 - **Measure:** create a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
+- **Connect:** link or unlink a Merchant Center account (`productLinks:create`/`:remove`; create has no dry run, so
+  propose checks the account is reachable and not a test account, which Google won't link).
 
 Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, more than doubling a budget or a
 bid, switching bid strategy, removing the last location, a new primary conversion action. Undo removes only

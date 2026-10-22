@@ -351,6 +351,22 @@ export class AdsClient {
   }
 
   /**
+   * ProductLinkService has create and remove instead of a mutate. Create has no validateOnly: the dry run is skipped
+   * (session.ts checks the Merchant Center account is reachable and not a test account before proposing); remove has one.
+   */
+  private async productLink(customerId: string, op: { create?: object; remove?: string },
+    opts: { validateOnly?: boolean; loginCustomerId?: string | null }): Promise<{ results: { resourceName?: string }[] }> {
+    if (op.create && opts.validateOnly) return { results: [] };
+    const res = await this.f(`${ADS_API}/customers/${customerId}/productLinks:${op.create ? "create" : "remove"}`, {
+      method: "POST", headers: await this.headers(opts.loginCustomerId),
+      body: JSON.stringify(op.create ? { productLink: op.create } : { resourceName: op.remove, validateOnly: !!opts.validateOnly }),
+    });
+    const body = await this.body(res);
+    const r = body ? JSON.parse(body) : {};
+    return { results: r.resourceName ? [{ resourceName: r.resourceName }] : [] };
+  }
+
+  /**
    * `service` is the REST collection, e.g. "campaignCriteria". Atomic unless partialFailure.
    * "googleAds" is the cross-service mutate: `operations` are MutateOperations (which may reference
    * each other by temporary negative ids), and its per-service results are flattened to the same
@@ -360,6 +376,7 @@ export class AdsClient {
     customerId: string, service: string, operations: object[],
     opts: { validateOnly?: boolean; loginCustomerId?: string | null } = {},
   ): Promise<{ results: { resourceName?: string }[] }> {
+    if (service === "productLinks") return this.productLink(customerId, operations[0] as { create?: object; remove?: string }, opts);
     const cross = service === "googleAds";
     const res = await this.f(`${ADS_API}/customers/${customerId}/${service}:mutate`, {
       method: "POST",

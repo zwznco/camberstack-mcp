@@ -112,6 +112,8 @@ const DEFAULT_BID = "2000000";
 
 interface State {
   campaignStatus: Record<string, string>;
+  /** Merchant Center links this user made on the demo (link_merchant_center); optional: older saved states have none. */
+  productLinks?: { resourceName: string; merchantCenterId: string }[];
   budget: Record<string, number>;
   /** Optional: states saved before end dates existed have none. */
   endDateTime?: Record<string, string>;
@@ -181,6 +183,8 @@ export class DemoAds {
       // The demo store's products (merchant.ts), as a Performance Max campaign's Shopping ads report them; the window ends yesterday.
       case "shopping_performance_view":
         return demoShopping(days, 1);
+      case "product_link":
+        return (s.productLinks ?? []).map((l) => ({ productLink: { resourceName: l.resourceName, type: "MERCHANT_CENTER", merchantCenter: { merchantCenterId: l.merchantCenterId } } }));
       case "customer":
         return [{ customer: { id: DEMO_CID, descriptiveName: DEMO_NAME, currencyCode: "USD", timeZone: "America/Chicago", manager: false } }];
       case "customer_client":
@@ -265,6 +269,20 @@ export class DemoAds {
   async mutate(_cid: string, service: string, operations: any[], opts: { validateOnly?: boolean } = {}): Promise<{ results: { resourceName?: string }[] }> {
     const s = this.load();
     const id = (rn: string) => rn.split("/").pop()!;
+    if (service === "productLinks") {
+      const op = operations[0] as { create?: { merchantCenter: { merchantCenterId: string } }; remove?: string };
+      if (opts.validateOnly) return { results: [] };
+      s.productLinks ??= [];
+      if (op.create) {
+        const resourceName = `customers/${DEMO_CID}/productLinks/${s.nextId++}`;
+        s.productLinks.push({ resourceName, merchantCenterId: op.create.merchantCenter.merchantCenterId });
+        this.save(s);
+        return { results: [{ resourceName }] };
+      }
+      s.productLinks = s.productLinks.filter((l) => l.resourceName !== op.remove);
+      this.save(s);
+      return { results: [{ resourceName: op.remove! }] };
+    }
     // Building (campaigns, ad groups, keywords, ads, sitelinks) is simulated: it validates and returns
     // resource names, so propose → apply → undo all work, but the sample account's reports don't change.
     if (service === "googleAds" || service === "adGroupAds" || (service === "adGroupCriteria" && (op0(operations).create || op0(operations).remove))

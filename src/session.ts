@@ -947,6 +947,18 @@ export class UserSession {
     const ga = customerId === GA_TARGET, mc = isMcTarget(customerId);
     const a = ga || mc ? { customerId, loginCustomerId: null } : await this.account(customerId);
     const changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : ChangeSchema).parse(c));
+    // Linking has no dry run either: a Merchant Center account this login can't reach, or a test account (Google won't
+    // link those), would only fail at apply. The demo Ads account links only the demo Merchant Center account.
+    for (const c of changes) {
+      if (c.type !== "link_merchant_center") continue;
+      if (isDemo(a.customerId)) {
+        if (c.merchant_center_id !== DEMO_MERCHANT) throw new Error(`The demo Google Ads account links only the demo Merchant Center account, ${DEMO_MERCHANT}.`);
+        continue;
+      }
+      const m = (await this.merchant.accounts()).find((x) => x.account_id === c.merchant_center_id);
+      if (!m) throw new Error(`Merchant Center account ${c.merchant_center_id} isn't one this login can reach (merchant_accounts shows them), so it can't be linked.`);
+      if (m.test_account) throw new Error(`Merchant Center account ${c.merchant_center_id} is a test account, and Google doesn't link test accounts to Google Ads.`);
+    }
     // GA4 has no dry run, so a Google Ads id this login can't reach would only fail at apply: check it now.
     for (const c of changes) {
       if (c.type !== "link_google_ads") continue;

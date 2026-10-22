@@ -2444,3 +2444,24 @@ describe("Merchant Center issues by ad spend (demo)", () => {
     expect(r.problem_products).toBe(8);
   });
 });
+
+describe("Merchant Center ↔ Google Ads link (demo)", () => {
+  it("links, shows the link, and undo unlinks; only the demo store links to the demo Ads account", async () => {
+    const owner = await merchantOwner();
+    const links = async () => (await call(owner, "run_gaql", { customer_id: "000-000-0001",
+      query: "SELECT product_link.resource_name, product_link.merchant_center.merchant_center_id FROM product_link" })).json.rows ?? [];
+    expect((await call(owner, "propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center", merchant_center_id: "5878651753" }] })).text)
+      .toContain("links only the demo Merchant Center account");
+    const p = await call(owner, "propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center", merchant_center_id: "000000001" }] });
+    expect(p.json.summary).toContain("Link Merchant Center account 000000001 to this Google Ads account");
+    expect(await links()).toHaveLength(0);
+    expect((await call(owner, "apply_changes", { proposal_id: p.json.proposal_id })).json.status).toBe("applied");
+    expect(JSON.stringify(await links())).toContain("000000001");
+    const again = await call(owner, "propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center", merchant_center_id: "000000001" }] });
+    expect(again.text).toContain("already in place");
+    const undo = await call(owner, "undo_changes", { proposal_id: p.json.proposal_id });
+    expect(undo.json.summary).toContain("Unlink Merchant Center account 000000001 from this Google Ads account ⚠");
+    expect((await call(owner, "apply_changes", { proposal_id: undo.json.proposal_id })).json.status).toBe("applied");
+    expect(await links()).toHaveLength(0);
+  });
+});

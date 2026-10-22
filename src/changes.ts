@@ -262,6 +262,10 @@ export const PUBLIC_CHANGES = [
     event_name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/).describe("The GA4 key event, e.g. generate_lead, purchase, sign_up"),
     primary: z.boolean().default(true).describe("Primary actions count in Conversions and can steer bidding") })
     .describe("Import a GA4 key event into Google Ads as a conversion action, so campaigns can count and bid on it. The GA4 property must be linked to this account"),
+  z.object({ type: z.literal("link_merchant_center"), merchant_center_id: z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID (from merchant_accounts)") })
+    .describe("Link a Merchant Center account to this Google Ads account, so Shopping and Performance Max campaigns can use its products (the user must be an admin of both)"),
+  z.object({ type: z.literal("unlink_merchant_center"), merchant_center_id: z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID (from merchant_accounts)") })
+    .describe("Remove the link between a Merchant Center account and this Google Ads account; Shopping and Performance Max campaigns using its products stop serving"),
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
@@ -294,7 +298,9 @@ export interface ResolvedChange {
   change: Change;
   /** "googleAds" = the cross-service atomic mutate, whose operations are MutateOperations. */
   service: "campaignCriteria" | "adGroupCriteria" | "adGroups" | "campaignBudgets" | "campaigns" | "adGroupAds"
-    | "campaignConversionGoals" | "conversionActions" | "biddingStrategies" | "googleAds";
+    | "campaignConversionGoals" | "conversionActions" | "biddingStrategies" | "googleAds"
+    /** Not a mutate: one { create: ProductLink } or { remove: resourceName } (AdsClient.mutate sends it to :create / :remove). */
+    | "productLinks";
   operations: object[];
   describe: string;
   /** Filled at resolve time when the inverse is knowable up front (pause/enable/budget). */
@@ -346,6 +352,21 @@ export async function resolveChange(
 ): Promise<ResolvedChange> {
   const q = (query: string) => ads.search(customerId, query, login);
   switch (change.type) {
+    case "link_merchant_center":
+    case "unlink_merchant_center": {
+      const links = (await q(`SELECT product_link.resource_name, product_link.merchant_center.merchant_center_id FROM product_link
+        WHERE product_link.type = 'MERCHANT_CENTER'`)).filter((r) => String(r.productLink?.merchantCenter?.merchantCenterId) === change.merchant_center_id);
+      const have = links[0]?.productLink?.resourceName as string | undefined;
+      if (change.type === "link_merchant_center") {
+        return { change, service: "productLinks", operations: have ? [] : [{ create: { merchantCenter: { merchantCenterId: change.merchant_center_id } } }],
+          describe: `Link Merchant Center account ${change.merchant_center_id} to this Google Ads account` + (have ? " (already linked)" : "")
+            + (have ? "" : ", so Shopping and Performance Max campaigns can use its products") };
+      }
+      return { change, service: "productLinks", operations: have ? [{ remove: have }] : [],
+        describe: `Unlink Merchant Center account ${change.merchant_center_id} from this Google Ads account` + (have ? "" : " (not linked)")
+          + (have ? " ⚠ Shopping and Performance Max campaigns using its products stop serving" : ""),
+        inverse: have ? { type: "link_merchant_center", merchant_center_id: change.merchant_center_id } : undefined };
+    }
     case "add_negative_keywords": {
       const [c] = await q(`SELECT campaign.id, campaign.name, campaign.advertising_channel_type, campaign.status
         FROM campaign WHERE campaign.id = ${change.campaign_id}`);
@@ -1335,6 +1356,7 @@ function toggle<P extends Change["type"], E extends Change["type"]>(
 /** Inverse of an applied change, given the resource names the API returned. */
 export function inverseAfterApply(r: ResolvedChange, resourceNames: string[]): Change | undefined {
   const c = r.change;
+  if (c.type === "link_merchant_center" && resourceNames.length) return { type: "unlink_merchant_center", merchant_center_id: c.merchant_center_id };
   const of = (collection: string) => resourceNames.filter((n) => n.includes(`/${collection}/`));
   if (c.type === "add_negative_keywords" && resourceNames.length) {
     return { type: "remove_negative_keywords", campaign_id: c.campaign_id, resource_names: resourceNames };

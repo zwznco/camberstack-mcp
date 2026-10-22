@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, SOURCE_NAME, encodeKey, type Merchant } from "./merchant.js";
 import { McChangeSchema, resolveMcChange, writeMc } from "./merchant-changes.js";
 import { summarize } from "./changes.js";
+import { AdsClient } from "./google.js";
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 const KEY = { offerId: "sku/1", contentLanguage: "en", feedLabel: "US" };
@@ -160,5 +161,27 @@ describe("Merchant Center changes (demo)", () => {
     expect((await m.search(DEMO_MERCHANT, "SELECT id, offer_id FROM product_view WHERE offer_id = 'NW-NEW-1'", 5)).rows).toHaveLength(1);
 
     await expect(resolve(m, { type: "delete_product", offer_id: "NW-SP-12" })).rejects.toThrow(/isn't a product Camberstack created/);
+  });
+});
+
+describe("Merchant Center ↔ Google Ads link (AdsClient)", () => {
+  const ads = (calls: { url: string; body: any }[]) => new AdsClient(async () => "t", "dev", (async (u: string, i?: RequestInit) => {
+    calls.push({ url: String(u), body: JSON.parse(String(i!.body)) });
+    return json({ resourceName: "customers/1/productLinks/9" });
+  }) as typeof fetch);
+
+  it("creates through productLinks:create, skipping the dry run Google doesn't offer", async () => {
+    const calls: { url: string; body: any }[] = [];
+    expect(await ads(calls).mutate("1", "productLinks", [{ create: { merchantCenter: { merchantCenterId: "5" } } }], { validateOnly: true })).toEqual({ results: [] });
+    expect(calls).toEqual([]);
+    expect(await ads(calls).mutate("1", "productLinks", [{ create: { merchantCenter: { merchantCenterId: "5" } } }]))
+      .toEqual({ results: [{ resourceName: "customers/1/productLinks/9" }] });
+    expect(calls[0]).toEqual({ url: "https://googleads.googleapis.com/v23/customers/1/productLinks:create", body: { productLink: { merchantCenter: { merchantCenterId: "5" } } } });
+  });
+
+  it("removes through productLinks:remove, with its dry run", async () => {
+    const calls: { url: string; body: any }[] = [];
+    await ads(calls).mutate("1", "productLinks", [{ remove: "customers/1/productLinks/9" }], { validateOnly: true });
+    expect(calls[0]).toEqual({ url: "https://googleads.googleapis.com/v23/customers/1/productLinks:remove", body: { resourceName: "customers/1/productLinks/9", validateOnly: true } });
   });
 });
