@@ -72,7 +72,7 @@ describe("lifecycle emails", () => {
     expect(sent[0].to).toEqual(["capped@example.com"]);
     expect(sent[0].subject).toBe("Using Camberstack on more than one Google Ads account");
     expect(sent[0].text).toContain("https://camberstack.io/upgrade?t=capped.sig");
-    expect(sent[0].text).toContain("up to 10 accounts");
+    expect(sent[0].text).toContain("up to 5 accounts");
     expect(sent[0].text).toContain("yours was already used; the next one opens on November 13.");
     expect(sent[0].html).toContain("the next one opens on November 13");
     expect(await lc.run()).toBe(0);
@@ -170,7 +170,7 @@ describe("pro_welcome (transactional)", () => {
     expect(sent.map((m) => m.to[0])).toEqual(["paid@example.com"]);
     const m = sent[0];
     expect(m.subject).toBe("You're on Camberstack Pro");
-    expect(m.text).toContain("up to 10 Google Ads accounts");
+    expect(m.text).toContain("up to 5 Google Ads accounts");
     expect(m.text).toContain("$15/month");
     expect(m.text).toContain("https://camberstack.io/account");
     expect(m.reply_to).toBe("adam@camberstack.io");

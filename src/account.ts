@@ -13,7 +13,7 @@ import { SignIn } from "./signin.js";
 import { appPage, cmd, COPY_JS, esc, infoPage } from "./pages.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
-import { ACCOUNT_WINDOW_DAYS, PRO_PRICE_LABEL } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS, PRO_PRICE_LABEL } from "./plans.js";
 
 export interface AccountDeps {
   db: DB;
@@ -196,7 +196,7 @@ ${!by && "manage_billing" in plan && plan.manage_billing ? `<a class="btn" href=
         return `<div class="card"><p class="label">Plan</p><p class="big">Free</p>
 <p class="muted">Every tool, with unlimited applied changes, on ${plan.accounts_included} Google Ads account.
 ${used.length ? `In use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on an account yet."}
-Pro covers up to 10.</p>
+Pro covers up to ${PRO_ACCOUNTS}.</p>
 ${!by && "upgrade_url" in plan && plan.upgrade_url ? `<a class="btn" href="${esc(plan.upgrade_url)}">Upgrade to Pro · ${PRO_PRICE_LABEL}</a>` : ""}</div>`;
       })();
 

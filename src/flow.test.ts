@@ -357,7 +357,7 @@ beforeAll(async () => {
   const cfg: Config = {
     baseUrl: "http://localhost", port: 0, dataDir: ":memory:", encryptionKey: key,
     google: { clientId: "gid", clientSecret: "gsecret" },
-    freeAccounts: 1, proAccounts: 10, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
+    freeAccounts: 1, proAccounts: 5, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
   };
   // Bind first so baseUrl (the OAuth issuer) is the real test origin.
   server = await new Promise<Server>((resolve) => { const s = createApp(cfg, db).app.listen(0, () => resolve(s)); });
@@ -737,7 +737,7 @@ describe("OAuth + MCP end to end", () => {
     // The refusal is structured: facts as fields, no instructions to the assistant.
     const limit = JSON.parse(blocked.text.slice(blocked.text.indexOf("\n") + 1));
     expect(limit).toMatchObject({ error: "plan_limit", plan: "free", accounts_in_use: ["1112223333", "2223334444"], active_accounts: ["1112223333"], accounts_included: 1,
-      refused_account: "9998887777", upgrade: { plan: "pro", accounts_included: 10 } });
+      refused_account: "9998887777", upgrade: { plan: "pro", accounts_included: 5 } });
     expect(limit.upgrade.upgrade_url).toBe(link);
     expect(blocked.text).not.toMatch(/word for word|Show the user/i);
 
@@ -792,7 +792,7 @@ describe("OAuth + MCP end to end", () => {
     const doneHtml = await done.text();
     expect(doneHtml).toContain("on Camberstack Pro");
     expect(doneHtml).toContain('href="/account"');
-    expect(doneHtml).toContain("up to 10 Google Ads accounts");
+    expect(doneHtml).toContain("up to 5 Google Ads accounts");
 
     const pro = await call(token, "billing", {});
     expect(pro.json.plan).toBe("pro");
@@ -1127,7 +1127,7 @@ describe("OAuth + MCP end to end", () => {
     expect(ask.text).not.toContain("Plan limit:");  // a notice, not a refusal: no limit_reached email
     const notice = JSON.parse(ask.text.slice(ask.text.indexOf("\n") + 1));
     expect(notice).toMatchObject({ error: "switch_confirmation_needed", switch_to: "2223334444", locks_account: "1112223333",
-      keep_both: { plan: "pro", accounts_included: 10 } });
+      keep_both: { plan: "pro", accounts_included: 5 } });
     expect(notice.keep_both.upgrade_url).toContain("/upgrade?t=");
     expect(notice.to_go_ahead).toContain("call switch_account with customer_id 2223334444");
     // A field lookup reads Google's catalog, not the account it names: no switch, and the account isn't logged as used.
@@ -1173,7 +1173,7 @@ describe("OAuth + MCP end to end", () => {
       const blocked = await call(token, "switch_account", { customer_id: "111-222-3333" });
       expect(blocked.text).toContain("Plan limit:");
       // Switching back to an account used before: lead with Pro, then when it opens again.
-      expect(blocked.text).toContain("Pro ($15/month) covers up to 10, so 1112223333 works right away. On Free, 1112223333 opens again on ");
+      expect(blocked.text).toContain("Pro ($15/month) covers up to 5, so 1112223333 works right away. On Free, 1112223333 opens again on ");
       const limit = JSON.parse(blocked.text.slice(blocked.text.indexOf("\n") + 1));
       // The switch comes back when the second most recent account ages out of the window.
       const opens = new Date((t - 3 * 86400 + 30 * 86400) * 1000).toISOString().slice(0, 10);

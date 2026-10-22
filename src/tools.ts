@@ -5,7 +5,7 @@ import { MAX_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
-import { ACCOUNT_WINDOW_DAYS, PlanLimitError } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS, PlanLimitError } from "./plans.js";
 import { isDemo, type Account, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
 
@@ -477,7 +477,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "Plan and billing",
     description: o.chatgpt
       ? "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers. This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend."
-      : "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Pro 10). Returns a personal link to upgrade (Free) or to change card and cancel (Pro). This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend.",
+      : `Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Pro ${PRO_ACCOUNTS}). Returns a personal link to upgrade (Free) or to change card and cancel (Pro). This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend.`,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, () => session().plan());
 

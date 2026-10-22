@@ -1,3 +1,4 @@
+import { PRO_ACCOUNTS } from "./plans.js";
 /** Every environment variable the service reads, in one place. */
 
 /** A comma-separated list of emails, lowercased. */
@@ -75,7 +76,7 @@ export function loadConfig(): Config {
       developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN || undefined,
     },
     freeAccounts: Number(process.env.FREE_ACCOUNTS ?? 1),
-    proAccounts: Number(process.env.PRO_ACCOUNTS ?? 10),
+    proAccounts: Number(process.env.PRO_ACCOUNTS ?? PRO_ACCOUNTS),
     stripe: process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID
       ? { secretKey: process.env.STRIPE_SECRET_KEY, proPriceId: process.env.STRIPE_PRO_PRICE_ID }
       : undefined,

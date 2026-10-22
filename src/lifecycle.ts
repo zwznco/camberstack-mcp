@@ -21,7 +21,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, PRO_PRICE_LABEL } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 
 export interface MailConfig {
@@ -249,7 +249,7 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
   const when = opens && new Date(`${opens}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
   const stopped = `Camberstack stopped when you tried it on another Google Ads account. The Free plan covers one account at a time, `
     + `with one switch every ${ACCOUNT_WINDOW_DAYS} days, and yours was already used${when ? `; the next one opens on ${when}` : ""}.`;
-  const pro = `If you're working on more than one account, Camberstack Pro covers up to 10 accounts, for ${PRO_PRICE_LABEL}, cancel any time.`;
+  const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, cancel any time.`;
   const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work";
   return {
     subject: "Using Camberstack on more than one Google Ads account",
@@ -309,7 +309,7 @@ A good first question: "${ask}" From there, ask about search terms, keywords and
 
 Want to try it on sample data first? Ask: "Show me Camberstack's demo account."
 
-Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to 10.
+Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}.
 
 If anything doesn't work, just reply. I read every email.
 
@@ -318,7 +318,7 @@ Camberstack`,
     html: wrap(p("Hi,") + p("You're connected. You can now use Camberstack in Claude or ChatGPT.")
       + p(`A good first question: <em>“${ask}”</em> From there, ask about search terms, keywords and budgets. Nothing changes until you approve it, and every change can be undone from <a href="${base}/account">your account page</a>.`)
       + p(`Want to try it on sample data first? Ask: <em>“Show me Camberstack's demo account.”</em>`)
-      + p(`Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to 10.`)
+      + p(`Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}.`)
       + p("If anything doesn't work, just reply. I read every email.") + p("Adam<br>Camberstack")),
   };
 }
@@ -332,7 +332,7 @@ function proWelcome(base: string) {
 
 Thanks for subscribing to Camberstack Pro. It's active now.
 
-What Pro adds: up to 10 Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.
+What Pro adds: up to ${PRO_ACCOUNTS} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.
 
 What stays the same: every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.
 
@@ -344,7 +344,7 @@ If anything doesn't work the way you expected, just reply. I read every email.
 Adam
 Camberstack`,
     html: wrap(p("Hi,") + p("Thanks for subscribing to Camberstack Pro. It's active now.")
-      + p(`<strong>What Pro adds:</strong> up to 10 Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`)
+      + p(`<strong>What Pro adds:</strong> up to ${PRO_ACCOUNTS} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`)
       + p("<strong>What stays the same:</strong> every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.")
       + p(`<strong>Billing:</strong> ${PRO_PRICE_LABEL}, renewing monthly. You can see invoices, change your card or cancel any time from <a href="${base}/account">your account page</a>.`)
       + p("If anything doesn't work the way you expected, just reply. I read every email.") + p("Adam<br>Camberstack")),
