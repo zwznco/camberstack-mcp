@@ -849,7 +849,8 @@ export class UserSession {
   async merchantAdSpend(customerId: string, merchantId: string, o: { days: number; limit: number }) {
     const a = await this.account(customerId);
     const ymd = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
-    const q = (from: number) => `SELECT segments.product_item_id, segments.product_title, metrics.cost_micros, metrics.clicks, metrics.impressions,
+    // Google requires every filtered field in SELECT (seen live): product_merchant_id is there for the WHERE.
+    const q = (from: number) => `SELECT segments.product_item_id, segments.product_merchant_id, segments.product_title, metrics.cost_micros, metrics.clicks, metrics.impressions,
         metrics.conversions, metrics.conversions_value FROM shopping_performance_view
       WHERE segments.date BETWEEN '${ymd(from)}' AND '${ymd(1)}' AND segments.product_merchant_id = ${merchantId}`;
     const [rows, recent, products] = await Promise.all([
