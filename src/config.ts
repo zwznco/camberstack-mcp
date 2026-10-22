@@ -1,4 +1,4 @@
-import { PRO_ACCOUNTS } from "./plans.js";
+import { AGENCY_ACCOUNTS, PRO_ACCOUNTS } from "./plans.js";
 /** Every environment variable the service reads, in one place. */
 
 /** A comma-separated list of emails, lowercased. */
@@ -26,8 +26,10 @@ export interface Config {
   /** Google Ads accounts a plan covers at a time: distinct accounts used in the last 30 days, plus one switch (session.ts planState). */
   freeAccounts: number;
   proAccounts: number;
+  agencyAccounts: number;
   /** Pro subscription; unset = no upgrade links (free users stop at the limit with no way to pay). */
-  stripe?: { secretKey: string; proPriceId: string };
+  /** agencyPriceId: STRIPE_AGENCY_PRICE_ID; unset = no Agency plan offered. */
+  stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string };
   /** Emails treated as Pro regardless of billing (the operator, testers). */
   proEmails: Set<string>;
   /** Origin of the admin site (its own host, e.g. https://admin.camberstack.io); unset = no admin site. */
@@ -77,8 +79,10 @@ export function loadConfig(): Config {
     },
     freeAccounts: Number(process.env.FREE_ACCOUNTS ?? 1),
     proAccounts: Number(process.env.PRO_ACCOUNTS ?? PRO_ACCOUNTS),
+    agencyAccounts: Number(process.env.AGENCY_ACCOUNTS ?? AGENCY_ACCOUNTS),
     stripe: process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID
-      ? { secretKey: process.env.STRIPE_SECRET_KEY, proPriceId: process.env.STRIPE_PRO_PRICE_ID }
+      ? { secretKey: process.env.STRIPE_SECRET_KEY, proPriceId: process.env.STRIPE_PRO_PRICE_ID,
+          agencyPriceId: process.env.STRIPE_AGENCY_PRICE_ID || undefined }
       : undefined,
     proEmails: emails(process.env.PRO_EMAILS),
     adminUrl: process.env.ADMIN_URL?.replace(/\/+$/, "") || undefined,

@@ -21,7 +21,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, PRO_PRICE_LABEL } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, PRO_PRICE_LABEL } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 
 export interface MailConfig {
@@ -132,16 +132,16 @@ export class Lifecycle {
    */
   async transactional(): Promise<number> {
     if (!this.d.mail) return 0;
-    const pros = (this.d.db.prepare(`SELECT u.id, u.email FROM users u WHERE u.plan = 'pro' AND u.stripe_sub IS NOT NULL AND u.stripe_sub != ''
+    const pros = (this.d.db.prepare(`SELECT u.id, u.email, u.plan FROM users u WHERE u.plan IN ('pro', 'agency') AND u.stripe_sub IS NOT NULL AND u.stripe_sub != ''
       AND u.email_opt_out = 0 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = 'pro_welcome')`)
-      .all() as { id: string; email: string }[])
+      .all() as { id: string; email: string; plan: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
     const fresh = (this.d.db.prepare(`SELECT u.id, u.email FROM users u WHERE u.plan = 'free' AND u.enc_refresh IS NOT NULL
       AND u.created_at >= ? AND u.email_opt_out = 0 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = 'welcome')`)
       .all(Math.max(WELCOME_SINCE, now() - WELCOME_WITHIN)) as { id: string; email: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
     return await this.deliver(fresh.map((u) => ({ ...u, kind: "welcome" as const, days: 0 })), () => welcome(this.d.baseUrl))
-      + await this.deliver(pros.map((u) => ({ ...u, kind: "pro_welcome" as const, days: 0 })), () => proWelcome(this.d.baseUrl));
+      + await this.deliver(pros.map((u) => ({ ...u, kind: "pro_welcome" as const, days: 0 })), (u) => proWelcome(this.d.baseUrl, u.plan));
   }
 
   /** Logs before sending (at most once, even if a send is retried by a crash); a failed send is unlogged to retry. */
@@ -192,7 +192,7 @@ export class Lifecycle {
     await this.send(to, limitReached(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "2026-11-13"), "preview");
     await this.send(to, checkInEmail(), "preview");
     await this.send(to, welcome(this.d.baseUrl), "preview");
-    await this.send(to, proWelcome(this.d.baseUrl), "preview");
+    await this.send(to, proWelcome(this.d.baseUrl, "pro"), "preview");
   }
 
   mount(app: Express, page: (title: string, body: string) => string): void {
@@ -324,29 +324,31 @@ Camberstack`,
 }
 
 /** Transactional: confirms the upgrade. Billing changes and cancelling live on /account (Stripe's portal), receipts come from Stripe. */
-function proWelcome(base: string) {
+/** The welcome for a new subscriber, on the plan they bought (Pro or Agency; the kind stays pro_welcome for both). */
+function proWelcome(base: string, plan: string) {
   const ask = "List my Google Ads accounts";
+  const [name, accounts, price] = plan === "agency" ? ["Agency", AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL] : ["Pro", PRO_ACCOUNTS, PRO_PRICE_LABEL];
   return {
-    subject: "You're on Camberstack Pro",
+    subject: `You're on Camberstack ${name}`,
     text: `Hi,
 
-Thanks for subscribing to Camberstack Pro. It's active now.
+Thanks for subscribing to Camberstack ${name}. It's active now.
 
-What Pro adds: up to ${PRO_ACCOUNTS} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.
+What ${name} adds: up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.
 
 What stays the same: every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.
 
-Billing: ${PRO_PRICE_LABEL}, renewing monthly. You can see invoices, change your card or cancel any time from your account page:
+Billing: ${price}, renewing monthly. You can see invoices, change your card or cancel any time from your account page:
 ${base}/account
 
 If anything doesn't work the way you expected, just reply. I read every email.
 
 Adam
 Camberstack`,
-    html: wrap(p("Hi,") + p("Thanks for subscribing to Camberstack Pro. It's active now.")
-      + p(`<strong>What Pro adds:</strong> up to ${PRO_ACCOUNTS} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`)
+    html: wrap(p("Hi,") + p(`Thanks for subscribing to Camberstack ${name}. It's active now.`)
+      + p(`<strong>What ${name} adds:</strong> up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`)
       + p("<strong>What stays the same:</strong> every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.")
-      + p(`<strong>Billing:</strong> ${PRO_PRICE_LABEL}, renewing monthly. You can see invoices, change your card or cancel any time from <a href="${base}/account">your account page</a>.`)
+      + p(`<strong>Billing:</strong> ${price}, renewing monthly. You can see invoices, change your card or cancel any time from <a href="${base}/account">your account page</a>.`)
       + p("If anything doesn't work the way you expected, just reply. I read every email.") + p("Adam<br>Camberstack")),
   };
 }

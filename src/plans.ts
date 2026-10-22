@@ -3,6 +3,12 @@
 export const PRO_PRICE_LABEL = "$15/month";
 /** Google Ads accounts Pro covers at a time (PRO_ACCOUNTS overrides it, e.g. in tests). Was 10 until 2026-10-22. */
 export const PRO_ACCOUNTS = 5;
+export const AGENCY_PRICE_LABEL = "$49/month";
+/** Google Ads accounts Agency covers at a time (AGENCY_ACCOUNTS overrides it). */
+export const AGENCY_ACCOUNTS = 25;
+/** users.plan: free, or a paid plan its Stripe subscription's price decides (billing.ts). */
+export type Plan = "free" | "pro" | "agency";
+export const isPaid = (plan: string | null | undefined) => plan === "pro" || plan === "agency";
 /** Plans are sized in Google Ads accounts used over this rolling window (session.ts accountsInUse). */
 export const ACCOUNT_WINDOW_DAYS = 30;
 /** Error text the account gate starts with; lifecycle.ts finds blocked users by it in tool_calls. */

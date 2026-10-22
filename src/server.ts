@@ -86,6 +86,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   const deps: SessionDeps = {
     db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
     freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails,
+    agencyAccounts: billing.agencyEnabled ? cfg.agencyAccounts : undefined,
     billingLink: (kind, userId) => billing.link(kind, userId), refreshPlan: (userId) => billing.refreshPlan(userId),
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };

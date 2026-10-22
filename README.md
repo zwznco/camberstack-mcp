@@ -9,7 +9,7 @@ proposal, and every applied change can be undone in one call, on every plan.** R
 more than doubling a budget or bid, switching bid strategy) are flagged in the proposal before you approve. A demo
 account lets anyone try every tool first.
 
-Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time with one switch a month, every tool, unlimited changes; Pro $15/mo: up to 5 accounts).
+Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time with one switch a month, every tool, unlimited changes; Pro $15/mo: up to 5 accounts; Agency $49/mo: up to 25).
 
 **Setup guides, with screenshots and troubleshooting:** [Connect Google Ads to Claude](https://camberstack.io/google-ads-claude) ·
 [Connect Google Ads to ChatGPT](https://camberstack.io/google-ads-chatgpt) · [every tool](https://camberstack.io/tools) ·
@@ -111,6 +111,7 @@ BASE_URL=https://your.host npm run dev
 | `DATA_DIR` | SQLite location (default `./data`) |
 | `FREE_ACCOUNTS` / `PRO_ACCOUNTS` / `PRO_EMAILS` | Google Ads accounts each plan covers at a time, counted as distinct accounts used in the last 30 days plus one switch per 30 days, manager and demo accounts excluded (defaults 1 / 10) / emails treated as Pro |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
+| `STRIPE_AGENCY_PRICE_ID` / `AGENCY_ACCOUNTS` | the Agency plan's price (its own product) / accounts it covers (default 25); unset price = no Agency offered. Which plan a user is on follows their subscription's price, so a Pro ↔ Agency switch in Stripe's billing portal (which must list both prices) moves it within the hour |
 
 The hosted HTTP server is `npm run start:http` (the Docker image runs `node dist/server.js`).
 `npm start` is a stdio mode that needs no env, database or Google login: it lists every tool for

@@ -5,7 +5,7 @@
 
 import type { Release } from "./changelog.js";
 import { z } from "zod";
-import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS, PRO_PRICE_LABEL } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL } from "./plans.js";
 import type { ToolDoc } from "./tools.js";
 
 const CONTACT = "adam@camberstack.io";
@@ -304,6 +304,8 @@ export function homePage(baseUrl: string): string {
           description: "Every tool, with unlimited applied changes, on 1 Google Ads account." },
         { "@type": "Offer", name: "Pro", price: "15", priceCurrency: "USD", description: `Every tool on up to ${PRO_ACCOUNTS} Google Ads accounts.`,
           priceSpecification: { "@type": "UnitPriceSpecification", price: "15", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } },
+        { "@type": "Offer", name: "Agency", price: "49", priceCurrency: "USD", description: `Every tool on up to ${AGENCY_ACCOUNTS} Google Ads accounts.`,
+          priceSpecification: { "@type": "UnitPriceSpecification", price: "49", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } },
       ],
     },
     body: `
@@ -398,12 +400,14 @@ Changes there never reach Google, and the demo doesn't count as one of your plan
 </div></section>
 
 <section class="sec sec-tint" id="pricing"><div class="wrap">
-<div class="sec-head"><p class="kicker">Pricing</p><h2>Free for one account. ${PRO_PRICE_LABEL} for ten.</h2></div>
+<div class="sec-head"><p class="kicker">Pricing</p><h2>Free for one account. ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}, ${AGENCY_PRICE_LABEL} for ${AGENCY_ACCOUNTS}.</h2></div>
 <div class="plans">
 <div class="plan"><h3>Free</h3><p class="price">$0</p><p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong>. No card.</p>
 <p class="plan-cta"><a class="btn btn-ghost" href="#setup">Connect for free</a></p></div>
-<div class="plan plan-pro"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>Everything in Free, on <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>, for agencies and anyone managing clients through a manager (MCC) account. Cancel any time; you keep Pro until the end of the month you paid for.</p>
+<div class="plan plan-pro"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>Everything in Free, on <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>, for owners with a few brands and freelancers with a few clients. Cancel any time; you keep Pro until the end of the month you paid for.</p>
 <p class="plan-cta"><a class="btn" href="/account?upgrade=1">Upgrade to Pro</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p></div>
+<div class="plan"><h3>Agency</h3><p class="price">${AGENCY_PRICE_LABEL}</p><p>Everything in Free, on <strong>up to ${AGENCY_ACCOUNTS} Google Ads accounts</strong>, for agencies and anyone managing clients through a manager (MCC) account. Already on Pro? Switch from your account page; the difference is prorated.</p>
+<p class="plan-cta"><a class="btn btn-ghost" href="/account?upgrade=agency">Upgrade to Agency</a></p></div>
 </div>
 </div></section>
 
@@ -507,7 +511,7 @@ const commonQuestions = (app: string) => `<h3>Do I need a Google Ads developer t
 <h3>Does ${app} see my whole Google account?</h3>
 <p>No. It gets Google Ads access, your email address and, if you leave them ticked, read-only Search Console and Google Analytics (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
 <h3>What does it cost?</h3>
-<p>Free on one Google Ads account, with every tool and unlimited changes. <a href="/#pricing">Pro</a> covers up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}.</p>`;
+<p>Free on one Google Ads account, with every tool and unlimited changes. <a href="/#pricing">Pro</a> covers up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.</p>`;
 
 /**
  * Use-case page for "claude google ads" / "google ads claude" / "google ads mcp server" (keyword data:
@@ -653,7 +657,7 @@ ${guideTroubleshooting("ChatGPT",
 <p>No. The Google sign-in is Camberstack's, not ChatGPT's, and it shares only Google Ads, your email address and, if you leave them
 ticked, read-only Search Console and Google Analytics (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
 <h3>Does it need a paid Camberstack plan?</h3>
-<p>No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to ${PRO_ACCOUNTS}.</p>
+<p>No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to ${PRO_ACCOUNTS}, and Agency up to ${AGENCY_ACCOUNTS}.</p>
 <h3>Using Claude too?</h3>
 <p>Camberstack is in Claude's connector directory as well: see <a href="/google-ads-claude">the Claude guide</a>.</p>
 `)}
@@ -927,7 +931,8 @@ changes there never reach Google, and it doesn't count toward your plan. Ask <em
 <h2 id="plans">Plans and limits</h2>
 <table><tr><th>Plan</th><th>Covers</th></tr>
 <tr><td>Free</td><td>Every tool, unlimited applied changes, on 1 Google Ads account. No card.</td></tr>
-<tr><td>Pro, ${PRO_PRICE_LABEL}</td><td>The same, on up to ${PRO_ACCOUNTS} Google Ads accounts. Cancel any time.</td></tr></table>
+<tr><td>Pro, ${PRO_PRICE_LABEL}</td><td>The same, on up to ${PRO_ACCOUNTS} Google Ads accounts. Cancel any time.</td></tr>
+<tr><td>Agency, ${AGENCY_PRICE_LABEL}</td><td>The same, on up to ${AGENCY_ACCOUNTS} Google Ads accounts. Cancel any time; switching from Pro is prorated.</td></tr></table>
 <p>An account counts when you use Camberstack on it; it stops counting ${ACCOUNT_WINDOW_DAYS} days after its last use. Manager (MCC) accounts and the demo don't count.
 Each plan also gets one switch every ${ACCOUNT_WINDOW_DAYS} days: a new account becomes active and the least recently used one is locked.
 Using one more account than your plan covers returns a <code>plan_limit</code> error listing the accounts in use, when one frees up, and, on Free,
@@ -1243,7 +1248,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - Writes (each one proposed, approved, then applied; every applied change can be undone): negative keywords; pause/enable campaign, ad group, keyword or ad; daily budget; end date; build a Search, Display, Demand Gen (YouTube video) or Performance Max campaign (created paused); add ad groups, keywords, ads, sitelinks; bids; bid strategy; location/language targeting; URL suffix; conversion actions and goals.
 - Search Console (optional, read-only scope): site totals, query/page performance, period-over-period trends, ranking opportunities, URL Inspection (index status), sitemap status, and paid vs organic overlap with the Ads account.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
-- Pricing: Free plan covers 1 Google Ads account (every tool, unlimited applied changes); Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) and demo accounts don't count. Undo is always free.
+- Pricing: Free plan covers 1 Google Ads account (every tool, unlimited applied changes); Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) and demo accounts don't count. Undo is always free.
 - [Documentation](${baseUrl}/docs)
 - [Setup](${baseUrl}/#setup)
 - [Pricing](${baseUrl}/#pricing)

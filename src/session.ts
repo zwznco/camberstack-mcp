@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, accountsLabel } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, accountsLabel, isPaid, type Plan } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -79,11 +79,13 @@ export interface SessionDeps {
   /** Google Ads accounts each plan covers, over ACCOUNT_WINDOW_DAYS (config.ts). */
   freeAccounts: number;
   proAccounts: number;
+  /** Agency's accounts at a time; unset = no Agency plan (tests, and billing without STRIPE_AGENCY_PRICE_ID). */
+  agencyAccounts?: number;
   proEmails: Set<string>;
   /** Asks Stripe whether this user just paid; true when that made them Pro (billing.ts refreshPlan). */
   refreshPlan?: (userId: string) => Promise<boolean>;
   /** Signed per-user billing links (billing.ts); null when billing isn't configured. */
-  billingLink?: (kind: "upgrade" | "billing", userId: string) => string | null;
+  billingLink?: (kind: "upgrade" | "billing" | "agency", userId: string) => string | null;
   /** Tests inject a fake. */
   adsFactory?: (user: UserRow) => AdsClient;
   scFactory?: (user: UserRow) => SearchConsole;
@@ -199,12 +201,36 @@ export class UserSession {
     }
   }
 
+  /** On a paid plan (Pro or Agency), or complimentary Pro (PRO_EMAILS). */
   get isPro(): boolean {
-    return this.user.plan === "pro" || this.deps.proEmails.has(this.user.email.toLowerCase());
+    return isPaid(this.user.plan) || this.deps.proEmails.has(this.user.email.toLowerCase());
+  }
+
+  get planName(): Plan {
+    return this.user.plan === "agency" ? "agency" : this.isPro ? "pro" : "free";
   }
 
   get accountLimit(): number {
-    return this.isPro ? this.deps.proAccounts : this.deps.freeAccounts;
+    const p = this.planName;
+    return p === "agency" ? this.deps.agencyAccounts ?? this.deps.proAccounts : p === "pro" ? this.deps.proAccounts : this.deps.freeAccounts;
+  }
+
+  /** The plan above this one, if it's offered: Pro from Free, Agency from Pro. Never on ChatGPT (no upgrade pitches there). */
+  private nextPlan(): { plan: Plan; price: string; accounts_included: number; upgrade_url: string | null } | null {
+    if (this.chatgpt) return null;
+    const p = this.planName;
+    if (p === "free") return { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts, upgrade_url: this.deps.billingLink?.("upgrade", this.user.id) ?? null };
+    // Paid Pro switches in Stripe's billing portal (the agency link sends a paying user there); complimentary Pro checks out.
+    if (p === "pro" && this.deps.agencyAccounts) {
+      const url = this.deps.billingLink?.("agency", this.user.id) ?? null;
+      return url ? { plan: "agency", price: AGENCY_PRICE_LABEL, accounts_included: this.deps.agencyAccounts, upgrade_url: url } : null;
+    }
+    return null;
+  }
+
+  /** After Stripe said this user just paid: their plan as billing.ts recorded it. */
+  private reloadPlan(): void {
+    this.user.plan = (this.deps.db.prepare("SELECT plan FROM users WHERE id = ?").get(this.user.id) as { plan: string } | undefined)?.plan ?? this.user.plan;
   }
 
   /**
@@ -283,7 +309,7 @@ export class UserSession {
       if (!managers.has(cid)) {
         st = this.planState(managers);
         if (isSwitch() && !this.isPro && await this.deps.refreshPlan?.(this.user.id)) {
-          this.user.plan = "pro";
+          this.reloadPlan();
           st = this.planState(managers);
         }
         if (isSwitch()) this.noticeSwitch(cid, st);
@@ -295,7 +321,7 @@ export class UserSession {
         st = this.planState(managers);
         // Someone who paid and closed the tab before /upgraded must not be blocked for an hour: ask Stripe first.
         if (!st.allows(cid) && !this.isPro && await this.deps.refreshPlan?.(this.user.id)) {
-          this.user.plan = "pro";
+          this.reloadPlan();
           st = this.planState(managers);
         }
         if (!st.allows(cid)) this.refuse(cid, st);
@@ -317,28 +343,30 @@ export class UserSession {
     // Once spent, the switch comes back when the account it locks ages out of the window.
     const last = this.usage().find((u) => u.c === locks)?.last ?? now();
     const reopens = new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
-    const url = this.isPro || this.chatgpt ? null : this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const next = this.nextPlan();
     throw new PlanLimitError(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one switch per ${ACCOUNT_WINDOW_DAYS} days. `
       + `${locks} would lock until ${reopens}, including switching back to it. Nothing has been used yet. `
       + `Ask the user; if they want to go ahead, call switch_account with customer_id ${cid}, then this tool again.`,
-      { error: "switch_confirmation_needed", plan: this.isPro ? "pro" : "free", switch_to: cid, locks_account: locks,
+      { error: "switch_confirmation_needed", plan: this.planName, switch_to: cid, locks_account: locks,
         locked_until: reopens, accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
         to_go_ahead: `once the user agrees, call switch_account with customer_id ${cid}, then this tool again`,
-        ...(this.isPro || this.chatgpt ? {} : { keep_both: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts,
-          upgrade_url: url, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } }) });
+        ...(next ? { keep_both: { ...next, pricing_page: next.upgrade_url ? null : `${this.deps.baseUrl}/#pricing` } } : {}) });
   }
 
   private refuse(cid: string, st: ReturnType<UserSession["planState"]>): never {
     const used = `${PLAN_LIMIT_PREFIX} Camberstack has been used on ${accountsLabel(st.used.length)} in the last ${ACCOUNT_WINDOW_DAYS} days`;
     const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with one switch per ${ACCOUNT_WINDOW_DAYS} days, `
       + `already used; the next opens ${st.switchOpens}.`;
-    const common = { plan: this.isPro ? "pro" : "free", accounts_in_use: st.used, active_accounts: st.active,
+    const common = { plan: this.planName, accounts_in_use: st.used, active_accounts: st.active,
       accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS, refused_account: cid,
       switching: `one switch per ${ACCOUNT_WINDOW_DAYS} days, already used; the next opens ${st.switchOpens}`,
       still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"] };
     if (this.isPro) {
-      throw new PlanLimitError(`${used}; Pro ${rule}`,
-        { error: "plan_limit", ...common, contact: "adam@camberstack.io" });
+      const next = this.nextPlan(), name = this.planName === "agency" ? "Agency" : "Pro";
+      throw new PlanLimitError(`${used}; ${name} ${rule}`
+        + (next ? ` Agency (${AGENCY_PRICE_LABEL}) covers up to ${next.accounts_included}, switched to from the billing page (upgrade_url).` : ""),
+        { error: "plan_limit", ...common, ...(next ? { upgrade: { ...next, cancel: "any time", upgrade_url_expires: next.upgrade_url ? "7 days; personal to this user" : null } } : {}),
+          contact: "adam@camberstack.io" });
     }
     // Lead with what gets them working again: someone refused here is working on more than one account.
     const wait = st.used.includes(cid) ? `${cid} opens again on ${st.switchOpens}` : `the next switch opens on ${st.switchOpens}`;
@@ -347,34 +375,40 @@ export class UserSession {
         + `More accounts at a time need a different plan.`, { error: "plan_limit", ...common });
     }
     const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const agency = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;
     throw new PlanLimitError(`${used} (${st.used.join(", ")}). Pro (${PRO_PRICE_LABEL}) covers up to ${this.deps.proAccounts}, `
-      + `so ${cid} works right away. On Free, ${wait}: the Free plan ${rule}`,
+      + `so ${cid} works right away${agency ? `; Agency (${AGENCY_PRICE_LABEL}) up to ${this.deps.agencyAccounts}` : ""}. On Free, ${wait}: the Free plan ${rule}`,
       { error: "plan_limit", ...common,
         upgrade: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts, cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null,
-          pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
+          pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` },
+        ...(agency ? { or_agency: { plan: "agency", price: AGENCY_PRICE_LABEL, accounts_included: this.deps.agencyAccounts, upgrade_url: agency } } : {}) });
   }
 
   plan() {
     if (this.chatgpt) {
       const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
-      return this.isPro ? { plan: "pro", ...usage }
+      return this.isPro ? { plan: this.planName, ...usage }
         : { plan: "free", ...usage, included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
             note: "More accounts at a time need a different plan." };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const agencyUrl = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;
+    const agency = agencyUrl ? { agency: `up to ${accountsLabel(this.deps.agencyAccounts!)}, ${AGENCY_PRICE_LABEL}, cancel any time`, agency_upgrade_url: agencyUrl } : {};
     const account_page = `${this.deps.baseUrl}/account`;
     const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
     return this.isPro
-      ? { plan: "pro", account_page, ...usage,
-          // Paid Pro is plan = 'pro' (a live subscription). Pro any other way is complimentary (PRO_EMAILS):
+      ? { plan: this.planName, account_page, ...usage,
+          // Paid is plan = 'pro' or 'agency' (a live subscription). Pro any other way is complimentary (PRO_EMAILS):
           // nothing to manage or cancel, even if an old Stripe customer is still on record.
-          ...(this.user.plan === "pro" && this.user.stripe_customer
+          ...(isPaid(this.user.plan) && this.user.stripe_customer
             ? { manage_billing: this.deps.billingLink?.("billing", this.user.id) ?? null }
-            : { complimentary: true, manage_billing: null }) }
+            : { complimentary: true, manage_billing: null }),
+          // Pro → Agency switches on the billing page (Stripe's portal), with the difference prorated.
+          ...(this.planName === "pro" ? agency : {}) }
       : { plan: "free", account_page, ...usage,
           included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
-          pro: `up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, upgrade_url: upgrade,
+          pro: `up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
   }
 

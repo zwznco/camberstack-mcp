@@ -1,5 +1,6 @@
 /**
- * Pro billing: a Stripe Checkout subscription, no webhook.
+ * Paid plans (Pro, Agency) billing: a Stripe Checkout subscription, no webhook. Which plan someone is on follows their
+ * subscription's price, so switching between Pro and Agency in Stripe's billing portal moves the plan too (the sweep).
  *
  * The user is in a chat, not on our site, so every billing link we hand out is a signed, expiring,
  * per-user URL (the AI shows it; the user clicks it). Paying lands on /upgraded, which verifies the
@@ -13,7 +14,7 @@ import type { DB, UserRow } from "./db.js";
 import { now } from "./db.js";
 import { safeEqual, sign } from "./crypto.js";
 import { esc } from "./pages.js";
-import { PRO_ACCOUNTS } from "./plans.js";
+import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, isPaid, type Plan } from "./plans.js";
 
 const LINK_TTL = 7 * 86400;
 /** Subscription statuses that keep Pro (past_due: Stripe is still retrying the card). */
@@ -25,7 +26,7 @@ export interface BillingDeps {
   baseUrl: string;
   /** Signs billing links; derived from ENCRYPTION_KEY so no new secret is needed. */
   signingKey: Buffer;
-  stripe?: { secretKey: string; proPriceId: string };
+  stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string };
   fetch?: typeof fetch;
 }
 
@@ -38,11 +39,23 @@ export class Billing {
     return sign(this.d.signingKey, `billing:${payload}`);
   }
 
-  /** A link for one user, valid for a week. Null when billing isn't configured. */
-  link(kind: "upgrade" | "billing", userId: string): string | null {
-    if (!this.enabled) return null;
+  get agencyEnabled(): boolean { return this.enabled && Boolean(this.d.stripe?.agencyPriceId); }
+
+  /**
+   * A link for one user, valid for a week. Null when billing (or, for "agency", the Agency plan) isn't configured.
+   * "agency" is the upgrade link with plan=agency: which plan to buy is the user's choice, so it isn't signed.
+   */
+  link(kind: "upgrade" | "billing" | "agency", userId: string): string | null {
+    if (!this.enabled || (kind === "agency" && !this.agencyEnabled)) return null;
+    const k = kind === "agency" ? "upgrade" : kind;
     const payload = `${userId}.${now() + LINK_TTL}`;
-    return `${this.d.baseUrl}/${kind}?t=${payload}.${this.sign(`${kind}:${payload}`)}`;
+    return `${this.d.baseUrl}/${k}?t=${payload}.${this.sign(`${k}:${payload}`)}${kind === "agency" ? "&plan=agency" : ""}`;
+  }
+
+  /** The plan a live subscription pays for: Agency by its price, anything else Pro (the old $49 Pro price included). */
+  private planOf(sub: any): Plan {
+    const prices = (sub?.items?.data ?? []).map((i: any) => i.price?.id);
+    return this.d.stripe?.agencyPriceId && prices.includes(this.d.stripe.agencyPriceId) ? "agency" : "pro";
   }
 
   verify(kind: "upgrade" | "billing", t: unknown): string | null {
@@ -67,11 +80,11 @@ export class Billing {
     return this.d.db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
   }
 
-  /** Apply a completed Checkout Session. Idempotent; returns the user it upgraded. */
-  private settle(session: any): string | null {
+  /** Apply a completed Checkout Session, on the plan its live subscription pays for. Idempotent; returns the user it upgraded. */
+  private settle(session: any, sub: any): string | null {
     if (session?.status !== "complete" || session?.metadata?.app !== APP || !session.client_reference_id) return null;
-    const r = this.d.db.prepare("UPDATE users SET plan = 'pro', stripe_customer = ?, stripe_sub = ? WHERE id = ?")
-      .run(String(session.customer ?? ""), String(session.subscription ?? ""), session.client_reference_id);
+    const r = this.d.db.prepare("UPDATE users SET plan = ?, stripe_customer = ?, stripe_sub = ? WHERE id = ?")
+      .run(this.planOf(sub), String(session.customer ?? ""), String(session.subscription ?? ""), session.client_reference_id);
     return r.changes ? session.client_reference_id : null;
   }
 
@@ -91,7 +104,7 @@ export class Billing {
       // Only a subscription that is still live makes someone Pro. Without this, a checkout completed and then
       // cancelled within the 3-day window was re-linked (Pro) on every sweep and only undone by the next loop.
       const sub = await this.stripe(`subscriptions/${s.subscription}`);
-      if (LIVE.has(sub.status) && this.settle(s)) upgraded.push(u.id);
+      if (LIVE.has(sub.status) && this.settle(s, sub)) upgraded.push(u.id);
     }
     return upgraded;
   }
@@ -106,23 +119,24 @@ export class Billing {
     try { return (await this.settleCompleted(userId)).includes(userId); } catch { return false; }
   }
 
-  /** Hourly backstop: settle missed checkouts; drop Pro whose subscription has ended. */
+  /** Hourly backstop: settle missed checkouts; follow a switch between Pro and Agency; drop a plan whose subscription has ended. */
   async sweep(): Promise<void> {
     if (!this.enabled) return;
     // One bad answer from Stripe must not stop the rest: each step and each user fails on its own.
     try { await this.settleCompleted(); } catch (e) { console.error(`billing sweep: settle: ${(e as Error).message}`); }
-    const pros = this.d.db.prepare("SELECT id, stripe_sub FROM users WHERE plan = 'pro' AND stripe_sub IS NOT NULL AND stripe_sub != ''").all() as
-      { id: string; stripe_sub: string }[];
-    for (const p of pros) {
-      let status: string;
+    const paying = this.d.db.prepare("SELECT id, plan, stripe_sub FROM users WHERE plan IN ('pro', 'agency') AND stripe_sub IS NOT NULL AND stripe_sub != ''").all() as
+      { id: string; plan: Plan; stripe_sub: string }[];
+    for (const p of paying) {
+      let sub: any;
       try {
-        status = (await this.stripe(`subscriptions/${p.stripe_sub}`)).status;
+        sub = await this.stripe(`subscriptions/${p.stripe_sub}`);
       } catch (e) {
         // A subscription Stripe no longer has (deleted, or from test mode) has ended; anything else, retry next hour.
         if ((e as { status?: number }).status !== 404) { console.error(`billing sweep: ${p.id}: ${(e as Error).message}`); continue; }
-        status = "missing";
+        sub = { status: "missing" };
       }
-      if (!LIVE.has(status)) this.d.db.prepare("UPDATE users SET plan = 'free' WHERE id = ?").run(p.id);
+      const plan = LIVE.has(sub.status) ? this.planOf(sub) : "free";
+      if (plan !== p.plan) this.d.db.prepare("UPDATE users SET plan = ? WHERE id = ?").run(plan, p.id);
     }
   }
 
@@ -148,11 +162,25 @@ export class Billing {
       const userId = this.verify("upgrade", req.query.t);
       const u = userId ? this.user(userId) : undefined;
       if (!u || !this.enabled) return expired(res);
-      if (u.plan === "pro") return send(res, 200, "Already on Pro", `<p>${esc(u.email)} is already on Camberstack Pro. Go back to your AI assistant and carry on.</p>`);
+      const want: Plan = req.query.plan === "agency" && this.agencyEnabled ? "agency" : "pro";
+      const name = want === "agency" ? "Agency" : "Pro";
+      if (u.plan === want) return send(res, 200, `Already on ${name}`, `<p>${esc(u.email)} is already on Camberstack ${name}. Go back to your AI assistant and carry on.</p>`);
+      // Already paying for the other plan: a second subscription would bill twice, so switch in Stripe's billing portal.
+      if (isPaid(u.plan) && u.stripe_customer) {
+        try {
+          const p = await this.stripe("billing_portal/sessions", {
+            customer: u.stripe_customer, return_url: `${this.d.baseUrl}/account`, ...(await this.portalConfig()),
+          });
+          return res.redirect(303, p.url);
+        } catch (e) {
+          return send(res, 502, "Billing unavailable", `<p>Stripe's billing page is not available (${esc((e as Error).message)}). Email us to change your plan.</p>`);
+        }
+      }
       try {
         const s = await this.stripe("checkout/sessions", {
           mode: "subscription",
-          "line_items[0][price]": this.d.stripe!.proPriceId,
+          "line_items[0][price]": want === "agency" ? this.d.stripe!.agencyPriceId! : this.d.stripe!.proPriceId,
+          "metadata[plan]": want,
           "line_items[0][quantity]": "1",
           client_reference_id: u.id,
           customer_email: u.email,
@@ -173,12 +201,13 @@ export class Billing {
       if (!/^cs_[A-Za-z0-9_]+$/.test(id) || !this.enabled) return expired(res);
       try {
         const session = await this.stripe(`checkout/sessions/${id}`);
-        // The link stays valid after a cancellation, so reloading it must not bring Pro back.
-        const live = session?.subscription && LIVE.has((await this.stripe(`subscriptions/${session.subscription}`)).status);
-        const ok = live && this.settle(session);
+        // The link stays valid after a cancellation, so reloading it must not bring a plan back.
+        const sub = session?.subscription ? await this.stripe(`subscriptions/${session.subscription}`) : null;
+        const ok = sub && LIVE.has(sub.status) && this.settle(session, sub);
         if (!ok) return send(res, 400, "Payment not complete", `<p>We could not confirm this payment. If you were charged, email us and we will sort it out.</p>`);
-        send(res, 200, "You're on Pro", `<p><strong>Thanks, you're on Camberstack Pro.</strong></p>
-<p>Go back to your AI assistant and ask it to try again. Pro covers up to ${PRO_ACCOUNTS} Google Ads accounts.</p>
+        const agency = this.planOf(sub) === "agency", name = agency ? "Agency" : "Pro";
+        send(res, 200, `You're on ${name}`, `<p><strong>Thanks, you're on Camberstack ${name}.</strong></p>
+<p>Go back to your AI assistant and ask it to try again. ${name} covers up to ${agency ? AGENCY_ACCOUNTS : PRO_ACCOUNTS} Google Ads accounts.</p>
 <p><a class="btn" href="/account">Go to your account</a></p>
 <p class="muted">Change your card or cancel any time from your account page.</p>`);
       } catch (e) {
