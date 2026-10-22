@@ -54,12 +54,15 @@ export function buildReport(db: DB, o: ReportOptions) {
     // Counted on its own: summing `errors` would stop at its 15 groups and undercount wide windows.
     errorsInWindow: n("SELECT count(*) n FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.at >= ? AND c.ok = 0", since),
     users: q<{ id: string; email: string; plan: string; created_at: number; last_seen_at: number | null; connected: number;
-               google_scopes: string | null; paying: number; calls: number; errors: number; applied: number; client: string | null }>(
+               google_scopes: string | null; paying: number; calls: number; errors: number; applied: number; client: string | null;
+               used_accounts: number; ads_accounts: number | null; ads_managers: number | null }>(
       `SELECT u.id, u.email, u.plan, u.created_at, u.last_seen_at, u.enc_refresh IS NOT NULL connected, u.google_scopes,
          u.plan IN ('pro', 'agency') AND coalesce(u.stripe_sub, '') != '' paying,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id) calls,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 0) errors,
          (SELECT count(*) FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied') applied,
+         (SELECT count(DISTINCT customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.customer_id IS NOT NULL
+            AND c.customer_id != '${DEMO_CID}') used_accounts, u.ads_accounts, u.ads_managers,
          (SELECT ${client} FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id
             WHERE c.user_id = u.id ORDER BY c.at DESC LIMIT 1) client
        FROM {U} u ORDER BY coalesce(u.last_seen_at, u.created_at) DESC LIMIT 200`),
@@ -128,10 +131,12 @@ export const permissionLabels = (scopes: string | null | undefined): string[] | 
  */
 export function userDetail(db: DB, id: string, since = 0) {
   const user = db.prepare(`SELECT id, email, plan, created_at, last_seen_at, enc_refresh IS NOT NULL connected, google_scopes,
-    stripe_customer, stripe_sub, time_zone, email_opt_out, src_source, src_campaign, src_content FROM users WHERE id = ?`).get(id) as {
+    stripe_customer, stripe_sub, time_zone, email_opt_out, src_source, src_campaign, src_content, ads_accounts, ads_managers, ads_accounts_at
+    FROM users WHERE id = ?`).get(id) as {
       id: string; email: string; plan: string; created_at: number; last_seen_at: number | null; connected: number; google_scopes: string | null;
       stripe_customer: string | null; stripe_sub: string | null; time_zone: string | null; email_opt_out: number;
-      src_source: string | null; src_campaign: string | null; src_content: string | null } | undefined;
+      src_source: string | null; src_campaign: string | null; src_content: string | null;
+      ads_accounts: number | null; ads_managers: number | null; ads_accounts_at: number | null } | undefined;
   if (!user) return null;
   const all = <T>(sql: string) => db.prepare(sql).all(id) as T[];
   const calls = <T>(sql: string) => db.prepare(sql).all(id, since) as T[];

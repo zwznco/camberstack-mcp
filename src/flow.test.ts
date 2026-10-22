@@ -646,6 +646,12 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT DISTINCT time_zone tz FROM users WHERE enc_refresh IS NOT NULL").all()).toEqual([{ tz: "Europe/London" }]);
   });
 
+  it("records how many accounts the login can reach, for the admin's used-of-visible", async () => {
+    await call(token, "list_accounts");
+    expect(db.prepare("SELECT DISTINCT ads_accounts a, ads_managers m FROM users WHERE enc_refresh IS NOT NULL AND ads_accounts_at IS NOT NULL").all())
+      .toEqual([{ a: 1, m: 0 }]);
+  });
+
   it("lists accounts once across requests, not once per tool call", async () => {
     const real = ads.listAccessibleCustomers.bind(ads);
     let lists = 0;
@@ -1234,6 +1240,8 @@ describe("OAuth + MCP end to end", () => {
     expect(r.json.note).toContain("demo");
     // Demo-only must not read as "signed out": the note names who is signed in.
     expect(r.json.note).toMatch(/IS connected and signed in, as \S+@/);
+    // A refusal isn't "no accounts": nothing is recorded for the admin's used-of-visible.
+    expect(db.prepare("SELECT count(*) n FROM users WHERE ads_accounts_at IS NOT NULL AND ads_accounts = 0").get()).toEqual({ n: 0 });
   });
 
   it("gets Keyword Planner ideas and metrics without changing anything", async () => {

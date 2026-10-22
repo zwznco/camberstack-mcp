@@ -277,7 +277,7 @@ button{font:inherit;font-size:12px;background:none;border:1px solid var(--line);
 .top{margin-bottom:14px}h1{font-size:16px}
 table.users thead{display:none}table.users tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:10px 14px;border-bottom:1px solid var(--line)}
 table.users tr:last-child{border-bottom:0}table.users td{padding:0;border:0}table.users td:first-child{flex-basis:100%}
-table.users td:nth-child(4),table.users td:nth-child(6),table.users td:nth-child(7),table.users td:nth-child(8),table.users td:nth-child(9){display:none}
+table.users td:nth-child(4),table.users td:nth-child(6),table.users td:nth-child(7),table.users td:nth-child(8),table.users td:nth-child(10){display:none}
 table.users td:nth-child(5){margin-left:auto;color:var(--dim);font-size:12px}}
 </style></head><body><div class="app">
 <aside><div class="brand">camberstack<span>/admin</span></div><nav>${nav.map(([p, l, c]) =>
@@ -358,10 +358,18 @@ function callsChart(v: View): string {
 function usersPage(v: View): string {
   const r = v.report;
   const shown = r.users.length < r.funnel.all.connected ? `${r.users.length} of ${r.funnel.all.connected} users` : `${r.users.length} users`;
-  return card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], "app"],
+  return card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     r.users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
-      when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
+      when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
+      `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
     `<small>all time, by last seen</small>`);
+}
+
+/** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls
+ *  can't tell them apart; "?" until a fresh account list records it. */
+function usedOf(used: number, ads: number | null, managers: number | null): string {
+  const title = ads === null ? "accounts used / visible (not recorded yet)" : `accounts used / visible: ${ads} ad + ${managers ?? 0} manager`;
+  return `<span title="${title}">${num(used)}<span class="dim"> / ${ads === null ? "?" : num(ads + (managers ?? 0))}</span></span>`;
 }
 
 function userPage(x: UserDetail, v: View): string {
@@ -371,7 +379,9 @@ function userPage(x: UserDetail, v: View): string {
 ${stat(`Calls · ${w}`, num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
 ${stat(`Errors · ${w}`, x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
 ${stat("Proposals · all time", num(x.proposals.length), `${x.proposals.filter((p) => p.status === "applied").length} applied`)}
-${stat("Ads accounts", num(x.accounts.length), w)}
+${stat("Ads accounts used", num(x.accounts.filter((a) => a.customer_id !== "0000000001").length),
+    u.ads_accounts === null ? `${w} · visible not recorded yet`
+      : `${w} · of ${u.ads_accounts} visible${u.ads_managers ? ` + ${u.ads_managers} manager${u.ads_managers > 1 ? "s" : ""}` : ""} (${ago(u.ads_accounts_at!)})`)}
 </div>
 <div class="grid2">
 ${card("Account", `<dl>

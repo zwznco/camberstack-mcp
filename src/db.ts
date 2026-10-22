@@ -189,6 +189,9 @@ export function openDb(dataDir: string): DB {
   if (!cols.has("google_scopes")) db.exec("ALTER TABLE users ADD COLUMN google_scopes TEXT");
   // Operator courtesy reset of plan accounts (session.ts usage): calls before it don't count. NULL = never reset.
   if (!cols.has("plan_reset_at")) db.exec("ALTER TABLE users ADD COLUMN plan_reset_at INTEGER");
+  // What their Google login can reach, as of its last fresh account list (session.ts accounts(), 2026-10-22): ad accounts
+  // (not managers, not the demo) and manager accounts. NULL = not listed since this was added.
+  for (const c of ["ads_accounts", "ads_managers", "ads_accounts_at"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} INTEGER`);
   // First-touch source of a new user (firsttouch.ts, 2026-10-16): utm_source/campaign/content and Reddit's rdt_cid.
   // NULL = untagged landing, or signed up before it was recorded.
   for (const c of ["src_source", "src_campaign", "src_content", "src_click"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} TEXT`);
