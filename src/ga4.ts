@@ -251,7 +251,7 @@ export class DemoAnalytics implements Analytics {
     if (path === p) return { name: p, displayName: "DEMO: Northwind Plumbing (sample data)", timeZone: "America/Chicago", currencyCode: "USD" };
     if (path.startsWith(`${p}/dataStreams`)) return { dataStreams: [{ name: `${p}/dataStreams/1`, type: "WEB_DATA_STREAM", displayName: "northwindplumbing.example",
       webStreamData: { measurementId: "G-DEMO000001", defaultUri: "https://northwindplumbing.example" } }] };
-    if (path.startsWith(`${p}/keyEvents`)) return { keyEvents: s.keyEvents.map((k) => ({ name: keyName(k.id), eventName: k.eventName, countingMethod: k.countingMethod })) };
+    if (path.startsWith(`${p}/keyEvents`)) return { keyEvents: s.keyEvents.map((k) => ({ name: keyName(k.id), eventName: k.eventName, countingMethod: k.countingMethod, deletable: true })) };
     if (path.startsWith(`${p}/googleAdsLinks`)) return { googleAdsLinks: s.adsLinks.map((l) => ({ name: linkName(l.id), customerId: l.customerId })) };
     throw new Error(`The demo property doesn't support ${method} ${path}.`);
   }

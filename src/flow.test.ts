@@ -306,7 +306,7 @@ const ga = {
   },
   async runReport() { return { row_count: 0, rows: [] }; },
   /** Property 321's setup, which the changes below alter. */
-  keyEvents: [] as { name: string; eventName: string; countingMethod: string }[],
+  keyEvents: [] as { name: string; eventName: string; countingMethod: string; deletable?: boolean }[],
   links: [] as { name: string; customerId: string }[],
   failOn: "",
   /** Writes of this method that answer 503 once before working, like a brief Google outage. */
@@ -318,7 +318,7 @@ const ga = {
     if (method === "GET" && path.startsWith("properties/321/keyEvents")) return { keyEvents: this.keyEvents };
     if (method === "GET" && path.startsWith("properties/321/googleAdsLinks")) return { googleAdsLinks: this.links };
     if (method === "POST" && path === "properties/321/keyEvents") {
-      const k = { name: `properties/321/keyEvents/${this.keyEvents.length + 1}`, eventName: body.eventName, countingMethod: body.countingMethod };
+      const k = { name: `properties/321/keyEvents/${this.keyEvents.length + 1}`, eventName: body.eventName, countingMethod: body.countingMethod, deletable: true };
       this.keyEvents.push(k); return k;
     }
     if (method === "POST" && path === "properties/321/googleAdsLinks") {
@@ -997,6 +997,15 @@ describe("OAuth + MCP end to end", () => {
     ga.flaky = { method: "DELETE", times: 1 };
     expect((await call(token, "apply_changes", { proposal_id: u4.json.proposal_id })).json.status).toBe("applied");
     expect(ga.keyEvents).toHaveLength(0);
+
+    // A built-in key event (purchase) can't be deleted: refused when proposing, not by a rollback at apply.
+    ga.keyEvents.push({ name: "properties/321/keyEvents/9", eventName: "purchase", countingMethod: "ONCE_PER_EVENT" });
+    const builtIn = await call(token, "propose_analytics_changes", { changes: [
+      { type: "mark_key_event", property_id: "321", event_name: "sign_up" },
+      { type: "unmark_key_event", property_id: "321", event_name: "purchase" }] });
+    expect(builtIn.isError).toBe(true);
+    expect(builtIn.text).toContain("built-in key event");
+    ga.keyEvents = [];
 
     const h = (await call(token, "change_history", { customer_id: "ga4" })).json;
     expect(h[0].customer_id).toBe("ga4");
