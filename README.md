@@ -70,7 +70,8 @@ What a proposal can do:
   Images are existing image assets or https URLs, which are downloaded SSRF-safe (`src/fetch-safe.ts`) and
   uploaded. A proposal can also add an ad group, keywords, an ad or sitelinks to an existing campaign.
 - **Tune:** keyword and ad group bids, bid strategy, location and language targeting, presence-only location
-  mode, final URL suffix.
+  mode, final URL suffix, and a campaign's EU political advertising declaration (Google refuses every change to an
+  account while any campaign lacks one).
 - **Measure:** create a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 
 Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, more than doubling a budget or a

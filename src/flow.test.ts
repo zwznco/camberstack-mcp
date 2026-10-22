@@ -48,6 +48,8 @@ class FakeAds {
   kwStatus = "ENABLED";
   campaignStatus = "ENABLED";
   campaignEnd: string | undefined;
+  /** campaign.contains_eu_political_advertising; undefined reads as Google's "not declared". */
+  euPolitical: string | undefined;
   async listAccessibleCustomers() { return ["1112223333"]; }
   fieldQueries: string[] = [];
   /** Google's field catalog: a trimmed real v23 snapshot. Any other query is a run_gaql field lookup, answered as Google shapes it. */
@@ -117,7 +119,8 @@ class FakeAds {
     if (q.includes("FROM campaign")) {
       return [{ campaign: { id: "10", name: "Search", status: this.campaignStatus, endDateTime: this.campaignEnd, advertisingChannelType: "SEARCH",
           ...(this.portfolio ? { biddingStrategyType: "TARGET_CPA", biddingStrategy: `customers/1112223333/biddingStrategies/${this.portfolio.id}` }
-            : { biddingStrategyType: "MANUAL_CPC", manualCpc: { enhancedCpcEnabled: false } }), finalUrlSuffix: "" },
+            : { biddingStrategyType: "MANUAL_CPC", manualCpc: { enhancedCpcEnabled: false } }), finalUrlSuffix: "",
+          containsEuPoliticalAdvertising: this.euPolitical },
         campaignBudget: { resourceName: "customers/1112223333/campaignBudgets/99", amountMicros: "20000000", explicitlyShared: false },
         metrics: { costMicros: "200000000", clicks: "80", impressions: "900", conversions: 4, conversionsValue: 400 } }];
     }
@@ -214,6 +217,7 @@ class FakeAds {
           if (service === "adGroups") this.agBid = op.update.cpcBidMicros; else this.kwBid = op.update.cpcBidMicros;
           return { resourceName: op.update.resourceName };
         }
+        if (op.update?.containsEuPoliticalAdvertising) { this.euPolitical = op.update.containsEuPoliticalAdvertising; return { resourceName: op.update.resourceName }; }
         if (op.update?.endDateTime) { this.campaignEnd = op.update.endDateTime; return { resourceName: op.update.resourceName }; }
         if (op.update?.status && service === "campaigns") { this.campaignStatus = op.update.status; return { resourceName: op.update.resourceName }; }
         if (op.update?.status) { this.kwStatus = op.update.status; return { resourceName: op.update.resourceName }; }
@@ -1853,6 +1857,15 @@ describe("OAuth + MCP end to end", () => {
     await expect(propose([{ ...campaign, name: "Search" }])).rejects.toThrow('A campaign named "Search" already exists');
     await expect(propose([{ ...campaign, ad_groups: [{ ...campaign.ad_groups[0], default_max_cpc: undefined, keywords: [{ text: "x", match_type: "PHRASE" }] }] }]))
       .rejects.toThrow("Manual CPC needs a bid");
+    // Repeated ad text is refused by name, before Google (whose DUPLICATE_ASSET names only the field) is asked; capitals differ, so they pass.
+    const sent = ads.mutations.length;
+    const twice = { ...ad, headlines: ["Start Free", "Start  Free ", "Pay By Card"], descriptions: ["Fill it in free.", "Clients pay by card."] };
+    await expect(propose([{ ...campaign, ad_groups: [{ ...campaign.ad_groups[0], ads: [twice] }] }])).rejects.toThrow('"Start Free" is in this list twice');
+    await expect(propose([{ type: "add_responsive_search_ad", ad_group_id: "20", ad: { ...ad, descriptions: ["Fill it in free.", "Fill it in free."] } }]))
+      .rejects.toThrow('"Fill it in free." is in this list twice');
+    expect(ads.mutations.length).toBe(sent);
+    expect((await propose([{ type: "add_responsive_search_ad", ad_group_id: "20", ad: { ...ad, headlines: ["Start Free", "start free", "Pay By Card"] } }])).summary)
+      .toContain("3 headlines");
 
     const before = ads.mutations.length;
     const p = await propose([campaign]);
@@ -2068,6 +2081,26 @@ describe("OAuth + MCP end to end", () => {
 
     const sfx = await propose([{ type: "set_url_suffix", campaign_id: "10", suffix: "?utm_source=google&utm_term={keyword}" }]);
     expect(sfx.summary).toContain('from none to "utm_source=google&utm_term={keyword}"');
+
+    // The EU political ads declaration: Google refuses every change to an account with an undeclared campaign (prod, 2026-10-22).
+    // A first declaration can't be undone (Google has no "not declared" to go back to); a changed one can.
+    const eu = await propose([{ type: "set_eu_political_advertising", campaign_id: "10", contains_eu_political_advertising: false }]);
+    expect(eu.summary).toContain('Declare that campaign "Search" does not contain EU political advertising (was: not declared)');
+    expect(eu.summary).not.toContain("⚠");
+    const euApplied = (await call(token, "apply_changes", { proposal_id: eu.proposal_id })).json;
+    expect(last().operations).toEqual([{ update: { resourceName: "customers/1112223333/campaigns/10",
+      containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING" }, updateMask: "contains_eu_political_advertising" }]);
+    expect(euApplied.undo).toBeUndefined();
+    expect((await call(token, "undo_changes", { proposal_id: eu.proposal_id })).text).toContain("Nothing to undo");
+    expect((await call(token, "propose_changes", { customer_id: "1112223333", changes: [{ type: "set_eu_political_advertising", campaign_id: "10",
+      contains_eu_political_advertising: false }] })).text).toContain("already in place");
+    const euYes = await propose([{ type: "set_eu_political_advertising", campaign_id: "10", contains_eu_political_advertising: true }]);
+    expect(euYes.summary).toContain('contains EU political advertising (was: does not contain) ⚠ Google no longer runs political ads in the EU');
+    const euBack = await applyUndo(euYes.proposal_id);
+    expect(ads.euPolitical).toBe("CONTAINS_EU_POLITICAL_ADVERTISING");
+    expect(euBack.summary).toContain('does not contain EU political advertising (was: contains)');
+    await call(token, "apply_changes", { proposal_id: euBack.proposal_id });
+    expect(ads.euPolitical).toBe("DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING");
 
     const ca = await propose([{ type: "create_conversion_action", name: "Provider signup", category: "SIGNUP" }]);
     expect(ca.summary).toContain('Create conversion action "Provider signup" (SIGNUP, uploaded click ids, one per click, primary) ⚠');

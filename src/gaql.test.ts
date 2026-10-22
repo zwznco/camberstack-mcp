@@ -30,6 +30,15 @@ describe("queryShape, for the usage log", () => {
 });
 
 describe("checkGaql against Google's field catalog", () => {
+  // Which metrics a segment can split isn't in the catalog, so errors.ts's hint for this one stands alone (prod, 2026-10-22).
+  it("finds nothing in a segment/metric clash, which only Google can see", () => {
+    // The trimmed fixture lacks this segment; the live catalog has it, usable FROM campaign.
+    const live: Catalog = new Map(cat);
+    live.set("segments.conversion_action_name", { name: "segments.conversion_action_name", category: "SEGMENT", dataType: "STRING", selectable: true, filterable: true });
+    live.set("campaign", { ...cat.get("campaign")!, segments: [...cat.get("campaign")!.segments!, "segments.conversion_action_name"] });
+    expect(checkGaql("SELECT campaign.name, segments.conversion_action_name, metrics.conversions, metrics.cost_micros FROM campaign "
+      + "WHERE segments.date BETWEEN '2026-10-01' AND '2026-10-21'", live)).toEqual([]);
+  });
   // The mistakes users' assistants actually made (tool_calls.error, 2026-10).
   it("suggests the real field for a guessed path", () => {
     const [i] = checkGaql("SELECT campaign.id, campaign.maximize_clicks.cpc_bid_ceiling_micros FROM campaign", cat);

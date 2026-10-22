@@ -30,12 +30,23 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "BAD_ENUM_CONSTANT" }, "Invalid enum values cannot be included in WHERE clause: 'LOCATION', 'AFFILIATE_LOCATION'.", undefined, "FROM campaign_asset_set"],
     [{ changeEventError: "CHANGE_DATE_RANGE_INFINITE" }, "The change_event request is missing filters on change_event.change_date_time or is filtering on change_event.change_date_time with an infinite range.", undefined, "both ends of the window"],
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized field in the query: 'metrics.video_views'.", undefined, "metrics.video_trueview_views"],
+    [{ queryError: "UNEXPECTED_INPUT" }, "Error in query: unexpected input OR.", undefined, "no parentheses or OR"],
+    [{ queryError: "PROHIBITED_SEGMENT_WITH_METRIC_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select the following segments because at least one unsupported metric is found in SELECT or WHERE clause: 'segments.conversion_action_name'(unsupported metrics: 'cost_micros').", undefined, "second one without the segment"],
+    [{ assetError: "DUPLICATE_ASSET" }, "Assets are duplicated across operations.", "mutate_operations.ad_group_ad_operation.create.ad.responsive_search_ad.headlines", "ignores spacing but not capitals"],
+    [{ euPoliticalAdvertisingError: "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED" }, "Mutates are generally not allowed if the customer contains non-exempt campaigns without the EU political advertising declaration.", undefined, "campaign.missing_eu_political_advertising_declaration = TRUE"],
     [{ imageError: "ASPECT_RATIO_NOT_ALLOWED" }, "The aspect ratio of the image does not match the expected aspect ratios provided in the asset spec.", "logo_images", "1.91:1"],
   ])("%j → hint", (code, message, field, hint) => {
     const e = new AdsApiError(400, body(code, message, field));
     expect(e.message).toContain(message);   // Google's own words stay
     expect(e.message).toContain(`→ `);
     expect(e.message).toContain(hint);
+  });
+
+  it("says a repeated error once", () => {
+    const err = { errorCode: { assetError: "DUPLICATE_ASSET" }, message: "Assets are duplicated across operations.",
+      location: { fieldPathElements: [{ fieldName: "headlines" }] } };
+    const e = new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: Array(7).fill(err) }] } }));
+    expect(e.message.match(/DUPLICATE_ASSET/g)).toHaveLength(1);
   });
 
   it("names the policy and the flagged text from PolicyViolationDetails", () => {

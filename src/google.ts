@@ -156,6 +156,9 @@ const DURING_LITERALS = "TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS, LAST_30_DA
  * fields that moved or were renamed, and which resource a thing lives on. A generic guess next to the catalog's finding
  * contradicted it ("check the name" for FROM invoice, which has no such resource, 2026-10-20).
  */
+const NO_OR = "GAQL has no parentheses or OR: WHERE conditions can only be joined with AND. Use field IN ('a', 'b') for alternatives, "
+  + "LIKE for one pattern, or separate queries.";
+
 function adsErrorFix(code: string, message: string, field: string): string | null {
   switch (code) {
     case "EXPECTED_FILTERS_ON_DATE_RANGE":
@@ -218,9 +221,20 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       }
       return null;
     case "BAD_FIELD_NAME":
-      return /'\('/.test(message)
-        ? "GAQL has no parentheses or OR: WHERE conditions can only be joined with AND. Use field IN ('a', 'b') for alternatives, or separate queries."
-        : null;
+      return /'\('/.test(message) ? NO_OR : null;
+    case "UNEXPECTED_INPUT":
+      return /unexpected input (OR\b|[()])/i.test(message) ? NO_OR : null;
+    case "PROHIBITED_SEGMENT_WITH_METRIC_IN_SELECT_OR_WHERE_CLAUSE":
+      return "Google can't split the metrics it names by that segment. Drop them from this query and get them in a second one without the segment: "
+        + "e.g. conversions by segments.conversion_action_name in one, cost per campaign in another.";
+    case "DUPLICATE_ASSET":
+      return "two texts in one ad or asset group are the same to Google, which ignores spacing but not capitals. Make every headline and "
+        + "description different, and propose again.";
+    case "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED":
+      return "Google refuses every change to this account until each of its campaigns declares whether it contains EU political advertising. "
+        + "Find them: SELECT campaign.id, campaign.name FROM campaign WHERE campaign.missing_eu_political_advertising_declaration = TRUE "
+        + "AND campaign.status != 'REMOVED'. Ask the user whether any of them run EU political ads (it is their legal declaration; most "
+        + "businesses answer no), propose set_eu_political_advertising for each in one proposal, apply it, then retry this change.";
     case "POLICY_FINDING":
       return "Google's ad policy check rejected the ad text, images or video. Common causes: repeated punctuation (\"!!\"), "
         + "ALL CAPS, symbols or emoji used for emphasis, phone numbers in headlines, or a video or landing page that breaks policy. "
@@ -268,7 +282,9 @@ export class AdsApiError extends Error {
           + (pv.isExemptible ? ", exemptible" : "") + "]" : "";
         return [code, d.message, field ? `(field ${field})` : "", policy, fix ? `→ ${fix}` : ""].filter(Boolean).join(" ");
       });
-      return `Google Ads API ${status}: ${msgs.length ? msgs.join("; ") : e?.message ?? body.slice(0, 300)}`;
+      // Google repeats one error per offending operation (seven identical DUPLICATE_ASSETs, 2026-10-22): once is enough.
+      const distinct = [...new Set(msgs)];
+      return `Google Ads API ${status}: ${distinct.length ? distinct.join("; ") : e?.message ?? body.slice(0, 300)}`;
     } catch {
       return `Google Ads API ${status}: ${body.slice(0, 300)}`;
     }
