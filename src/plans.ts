@@ -9,7 +9,13 @@ export const PLAN_LIMIT_PREFIX = "Plan limit:";
 export const SWITCH_NOTICE_PREFIX = "Account switch:";
 
 /** "1 Google Ads account" / "10 Google Ads accounts". */
-export const accountsLabel = (n: number) => `${n} Google Ads account${n === 1 ? "" : "s"}`;
+export const accountsLabel = (n: number, pool: Pool = "ads") => `${n} ${pool === "mc" ? "Merchant Center" : "Google Ads"} account${n === 1 ? "" : "s"}`;
+/**
+ * Which allowance an account counts against: Google Ads accounts, or Merchant Center accounts (`mc:<id>`, merchant-changes.ts).
+ * Each plan covers the same number of each, counted and switched separately, so one store with one Ads account fits Free.
+ */
+export type Pool = "ads" | "mc";
+export const poolOf = (cid: string): Pool => (cid.startsWith("mc:") ? "mc" : "ads");
 
 /**
  * The account gate's refusal. `message` keeps the PLAN_LIMIT_PREFIX sentence (logs, lifecycle.ts); `detail` is

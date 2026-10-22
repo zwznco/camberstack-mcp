@@ -10,9 +10,9 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, accountsLabel } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, accountsLabel, poolOf, type Pool } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
-import { DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
+import { DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -219,17 +219,18 @@ export class UserSession {
    * counts, nor does Google Analytics (change_history for "ga4"), nor failed calls (a call the gate refused is logged as failed),
    * nor calls before the user's plan_reset_at (a reset by hand: UPDATE users SET plan_reset_at = unixepoch()).
    */
-  accountsInUse(): string[] {
-    return this.usage().map((u) => u.c);
+  accountsInUse(pool: Pool = "ads"): string[] {
+    return this.usage(pool).map((u) => u.c);
   }
 
-  /** accountsInUse, most recently used first, with when each was last used. */
-  private usage(): { c: string; last: number }[] {
+  /** accountsInUse, most recently used first, with when each was last used. Merchant Center accounts (mc:<id>) are their own pool. */
+  private usage(pool: Pool = "ads"): { c: string; last: number }[] {
     // max(id): a same-second tie goes to the later call, so switch_account's account is the active one.
     return this.deps.db.prepare(`SELECT customer_id c, max(at) last FROM tool_calls
-        WHERE user_id = ? AND ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?) AND at >= ?
+        WHERE user_id = ? AND ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?, ?) AND (customer_id LIKE 'mc:%') = ? AND at >= ?
         GROUP BY customer_id ORDER BY last DESC, max(id) DESC, c`)
-      .all(this.user.id, DEMO_CID, GA_TARGET, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0)) as { c: string; last: number }[];
+      .all(this.user.id, DEMO_CID, GA_TARGET, `mc:${DEMO_MERCHANT}`, pool === "mc" ? 1 : 0,
+        Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0)) as { c: string; last: number }[];
   }
 
   /**
@@ -240,10 +241,10 @@ export class UserSession {
    * another switch. Over limit + 1 (a Pro who cancelled), the rest stay locked until they age out;
    * `switchOpens` is when the next switch (or a locked account) opens up.
    */
-  planState(managers: Set<string>) {
-    const running = [...(inFlight.get(this.user.id)?.keys() ?? [])];
+  planState(managers: Set<string>, pool: Pool = "ads") {
+    const running = [...(inFlight.get(this.user.id)?.keys() ?? [])].filter((c) => poolOf(c) === pool);
     const seen = new Set<string>();
-    const ranked = [...running.map((c) => ({ c, last: now() })), ...this.usage()]
+    const ranked = [...running.map((c) => ({ c, last: now() })), ...this.usage(pool)]
       .filter((u) => !managers.has(u.c) && !seen.has(u.c) && seen.add(u.c));
     const limit = this.accountLimit;
     const used = ranked.map((u) => u.c), active = used.slice(0, limit);
@@ -280,31 +281,35 @@ export class UserSession {
   }
 
   private async admit(cid: string, confirmSwitch: boolean): Promise<() => void> {
-    if (isDemo(cid)) return () => {};
-    let st = this.planState(new Set());
+    if (isDemo(cid) || cid === `mc:${DEMO_MERCHANT}`) return () => {};
+    const pool = poolOf(cid);
+    // Manager accounts are a Google Ads idea: Merchant Center has none to leave out.
+    const managerIds = async () => (pool === "mc" ? new Set<string>()
+      : new Set((await this.accounts().catch(() => [] as Account[])).filter((a) => a.manager).map((a) => a.customerId)));
+    let st = this.planState(new Set(), pool);
     // A new account on a full plan is the switch: it passes only once the user has said yes to spending it.
     const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
     if (isSwitch() && !confirmSwitch) {
-      const managers = new Set((await this.accounts().catch(() => [] as Account[])).filter((a) => a.manager).map((a) => a.customerId));
+      const managers = await managerIds();
       if (!managers.has(cid)) {
-        st = this.planState(managers);
+        st = this.planState(managers, pool);
         if (isSwitch() && !this.isPro && await this.deps.refreshPlan?.(this.user.id)) {
           this.user.plan = "pro";
-          st = this.planState(managers);
+          st = this.planState(managers, pool);
         }
-        if (isSwitch()) this.noticeSwitch(cid, st);
+        if (isSwitch()) this.noticeSwitch(cid, st, pool);
       }
     }
     if (!st.allows(cid)) {
-      const managers = new Set((await this.accounts().catch(() => [] as Account[])).filter((a) => a.manager).map((a) => a.customerId));
+      const managers = await managerIds();
       if (!managers.has(cid)) {
-        st = this.planState(managers);
+        st = this.planState(managers, pool);
         // Someone who paid and closed the tab before /upgraded must not be blocked for an hour: ask Stripe first.
         if (!st.allows(cid) && !this.isPro && await this.deps.refreshPlan?.(this.user.id)) {
           this.user.plan = "pro";
-          st = this.planState(managers);
+          st = this.planState(managers, pool);
         }
-        if (!st.allows(cid)) this.refuse(cid, st);
+        if (!st.allows(cid)) this.refuse(cid, st, pool);
       }
     }
     const mine = inFlight.get(this.user.id) ?? new Map<string, number>();
@@ -318,13 +323,13 @@ export class UserSession {
   }
 
   /** Stop before the switch is spent: what it locks, until when, and how to go ahead. */
-  private noticeSwitch(cid: string, st: ReturnType<UserSession["planState"]>): never {
+  private noticeSwitch(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool = "ads"): never {
     const locks = st.active.at(-1)!;
     // Once spent, the switch comes back when the account it locks ages out of the window.
-    const last = this.usage().find((u) => u.c === locks)?.last ?? now();
+    const last = this.usage(pool).find((u) => u.c === locks)?.last ?? now();
     const reopens = new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
     const url = this.isPro || this.chatgpt ? null : this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-    throw new PlanLimitError(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one switch per ${ACCOUNT_WINDOW_DAYS} days. `
+    throw new PlanLimitError(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one ${pool === "mc" ? "Merchant Center " : ""}switch per ${ACCOUNT_WINDOW_DAYS} days. `
       + `${locks} would lock until ${reopens}, including switching back to it. Nothing has been used yet. `
       + `Ask the user; if they want to go ahead, call switch_account with customer_id ${cid}, then this tool again.`,
       { error: "switch_confirmation_needed", plan: this.isPro ? "pro" : "free", switch_to: cid, locks_account: locks,
@@ -334,8 +339,8 @@ export class UserSession {
           upgrade_url: url, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } }) });
   }
 
-  private refuse(cid: string, st: ReturnType<UserSession["planState"]>): never {
-    const used = `${PLAN_LIMIT_PREFIX} Camberstack has been used on ${accountsLabel(st.used.length)} in the last ${ACCOUNT_WINDOW_DAYS} days`;
+  private refuse(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool = "ads"): never {
+    const used = `${PLAN_LIMIT_PREFIX} Camberstack has been used on ${accountsLabel(st.used.length, pool)} in the last ${ACCOUNT_WINDOW_DAYS} days`;
     const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with one switch per ${ACCOUNT_WINDOW_DAYS} days, `
       + `already used; the next opens ${st.switchOpens}.`;
     const common = { plan: this.isPro ? "pro" : "free", accounts_in_use: st.used, active_accounts: st.active,
@@ -361,16 +366,23 @@ export class UserSession {
           pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
   }
 
+  /** What billing shows of the plan's use: Google Ads accounts, and Merchant Center accounts once there are any (a separate allowance of the same size). */
+  private planUsage() {
+    const mc = this.accountsInUse("mc");
+    return { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
+      ...(mc.length ? { merchant_center_accounts_in_use: mc.map((c) => c.slice(3)), merchant_center_accounts_included: this.accountLimit } : {}) };
+  }
+
   plan() {
     if (this.chatgpt) {
-      const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
+      const usage = this.planUsage();
       return this.isPro ? { plan: "pro", ...usage }
         : { plan: "free", ...usage, included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
             note: "More accounts at a time need a different plan." };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     const account_page = `${this.deps.baseUrl}/account`;
-    const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
+    const usage = this.planUsage();
     return this.isPro
       ? { plan: "pro", account_page, ...usage,
           // Paid Pro is plan = 'pro' (a live subscription). Pro any other way is complimentary (PRO_EMAILS):

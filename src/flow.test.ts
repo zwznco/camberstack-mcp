@@ -2355,9 +2355,13 @@ describe("Merchant Center rollout", () => {
   });
 });
 
+/** One connection for the Merchant Center tests below: connecting is rate limited. */
+let mcOwner: Promise<string> | undefined;
+const merchantOwner = () => (mcOwner ??= connect());
+
 describe("Merchant Center changes on the demo account", () => {
   it("proposes an override, applies it, and undo puts the feed's value back", async () => {
-    const owner = await connect();
+    const owner = await merchantOwner();
     const priceIssue = async () => ((await call(owner, "merchant_product_issues", { account_id: "000000001" })).json.issues as { code: string; products: number }[])
       .find((i) => i.code === "price_mismatch")?.products ?? 0;
     expect(await priceIssue()).toBe(2);
@@ -2383,7 +2387,7 @@ describe("Merchant Center changes on the demo account", () => {
   });
 
   it("excludes products from Shopping ads, and refuses a product that isn't there", async () => {
-    const owner = await connect();
+    const owner = await merchantOwner();
     const p = await call(owner, "propose_merchant_changes", { account_id: "000000001", changes: [
       { type: "exclude_products", offer_ids: ["NW-SP-12", "NW-GD-34"] }] });
     expect(p.json.summary).toMatch(/Exclude 2 products from shopping ads: NW-SP-12, NW-GD-34 ⚠/);
@@ -2395,5 +2399,29 @@ describe("Merchant Center changes on the demo account", () => {
       { type: "set_product_attributes", offer_id: "NOPE", attributes: { brand: "X" } }] });
     expect(missing.text).toContain("No product with offer_id NOPE");
     await call(owner, "apply_changes", { proposal_id: (await call(owner, "undo_changes", { proposal_id: p.json.proposal_id })).json.proposal_id });
+  });
+});
+
+describe("Merchant Center plan allowance", () => {
+  it("counts Merchant Center accounts in their own pool, with its own switch, apart from Google Ads", async () => {
+    const owner = await merchantOwner();
+    // Earlier tests leave this user on Pro; the allowance is clearest on Free (1 of each).
+    const was = db.prepare("SELECT plan, stripe_customer, stripe_sub FROM users WHERE email = 'owner@example.com'").get() as Record<string, unknown>;
+    db.prepare("UPDATE users SET plan = 'free', stripe_customer = NULL, stripe_sub = NULL WHERE email = 'owner@example.com'").run();
+    try {
+      const report = (id: string) => call(owner, "merchant_report", { account_id: id, query: "SELECT id FROM product_view" });
+      expect((await report("111")).isError).toBe(false);
+      // Google Ads use (earlier tests) doesn't count here, and Free covers one Merchant Center account too.
+      const second = await report("222");
+      expect(second.text).toContain("Account switch: using mc:222 spends this plan's one Merchant Center switch");
+      expect(second.text).toContain("call switch_account with customer_id mc:222");
+      expect((await report("111")).isError).toBe(false);
+      expect((await report("000000001")).isError).toBe(false);  // the demo never counts
+      const plan = (await call(owner, "billing")).json;
+      expect(plan.merchant_center_accounts_in_use).toEqual(["111"]);
+      expect(plan.accounts_in_use).not.toContain("mc:111");
+    } finally {
+      db.prepare("UPDATE users SET plan = ?, stripe_customer = ?, stripe_sub = ? WHERE email = 'owner@example.com'").run(was.plan, was.stripe_customer, was.stripe_sub);
+    }
   });
 });

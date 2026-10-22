@@ -31,6 +31,9 @@ const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
 const GATED = new Set(["account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
   ...PUBLIC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
 
+/** Tools that read or change one Merchant Center account (account_id): their own allowance, logged as mc:<id>. */
+const MC_GATED = new Set(["merchant_product_issues", "merchant_report", "propose_merchant_changes", ...PUBLIC_MC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
+
 /** A run_gaql field lookup reads Google's field catalog, not the account named: no plan gate, and no account in the log. */
 const isLookup = (name: string, a: unknown) => {
   const q = (a as { query?: unknown } | undefined)?.query;
@@ -105,11 +108,13 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     return async (a: A) => {
       const t0 = Date.now();
       const lookup = isLookup(name, a);
-      const cid = lookup ? undefined : (a as { customer_id?: unknown } | undefined)?.customer_id;
+      const acc = (a as { account_id?: unknown } | undefined)?.account_id;
+      const cid = lookup ? undefined : MC_GATED.has(name) && typeof acc === "string" ? mcTarget(acc)
+        : (a as { customer_id?: unknown } | undefined)?.customer_id;
       let out: ReturnType<typeof ok> | ReturnType<typeof fail>;
       let release = () => {};
       try {
-        if (GATED.has(name) && typeof cid === "string")
+        if ((GATED.has(name) || MC_GATED.has(name)) && typeof cid === "string")
           // Only switch_account may spend the plan's switch: the read tools stay free of side effects.
           release = await session().checkAccount(cid, name === "switch_account");
         out = ok(await fn(a));
@@ -119,7 +124,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       }
       try {
         log({
-          tool: name, customerId: typeof cid === "string" ? cid.replace(/-/g, "") : null,
+          tool: name, customerId: typeof cid === "string" ? (cid.startsWith("mc:") ? cid : cid.replace(/-/g, "")) : null,
           ok: !("isError" in out), error: "isError" in out ? out.content[0]!.text.slice(7, 1007) : null,
           ms: Date.now() - t0, bytes: out.content[0]!.text.length,
           queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
@@ -534,11 +539,17 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "Switch the plan's active account",
     description: "Spends the plan's one account switch per 30 days on customer_id: it becomes an active account, and the least recently used active account "
       + "locks until the date the \"Account switch:\" notice gave, switching back included. Call it only after another tool answered \"Account switch:\" "
-      + "for this account and the user agreed. Changes nothing in Google Ads; a no-op for an account that is already active.",
+      + "for this account and the user agreed. Changes nothing in Google Ads; a no-op for an account that is already active. "
+      + "Merchant Center accounts are a separate allowance with their own switch: pass mc:<account_id>, as the notice gives it.",
     inputSchema: { customer_id: customerId },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async ({ customer_id }: { customer_id: string }) => {
-    const s = session(), id = customer_id.replace(/-/g, "");
+    const s = session(), id = customer_id.startsWith("mc:") ? customer_id : customer_id.replace(/-/g, "");
+    if (id.startsWith("mc:")) {
+      if (!(await s.merchant.accounts()).some((a) => a.account_id === id.slice(3)))
+        throw new Error(`${id.slice(3)} isn't a Merchant Center account this login can reach (merchant_accounts shows the ones it can). Nothing was spent.`);
+      return { switched_to: id, active_merchant_center_accounts: s.planState(new Set(), "mc").active.map((c) => c.slice(3)) };
+    }
     // Throwing logs the call as failed, which spends nothing: never spend the switch on an account the login can't use.
     const reaches = (list: Account[]) => list.some((a) => a.customerId === id);
     if (!reaches(await s.accounts()) && !reaches(await s.accounts({ fresh: true })))
