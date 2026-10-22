@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { openDb, now } from "./db.js";
-import { buildReport, windowStart } from "./report.js";
+import { buildReport, userDetail, windowStart } from "./report.js";
 
 describe("buildReport", () => {
   const seed = () => {
@@ -33,6 +33,24 @@ describe("buildReport", () => {
     const r = buildReport(seed(), { days: 7, exclude: [] });
     expect(r.paying).toBe(1);
     expect(r.users.find((u) => u.id === "lapsed")?.paying).toBe(0);
+  });
+});
+
+describe("userDetail", () => {
+  it("counts calls from the window's start, but keeps proposals all-time", () => {
+    const db = openDb(":memory:");
+    db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES ('u', 'g', 'u@example.com', 'free', ?)").run(now() - 60 * 86400);
+    const call = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes) VALUES (?, 'u', ?, ?, 1, 5, 10)");
+    call.run(now() - 30 * 86400, "run_gaql", "1111111111");
+    call.run(windowStart(1) + 1, "account_overview", "2222222222");
+    db.prepare("INSERT INTO proposals (id, user_id, customer_id, summary, changes, status, created_at) VALUES ('p', 'u', '1111111111', 's', '[]', 'applied', ?)").run(now() - 30 * 86400);
+    const all = userDetail(db, "u")!, today = userDetail(db, "u", windowStart(1))!;
+    expect(all.totals.calls).toBe(2);
+    expect(today.totals.calls).toBe(1);
+    expect(today.accounts.map((a) => a.customer_id)).toEqual(["2222222222"]);
+    expect(today.tools.map((t) => t.tool)).toEqual(["account_overview"]);
+    expect(today.recent).toHaveLength(1);
+    expect(today.proposals).toHaveLength(1);
   });
 });
 

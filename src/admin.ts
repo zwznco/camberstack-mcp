@@ -86,10 +86,10 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
   site.get("/users/:id", (req, res) => {
     const who = email(req);
     if (!who) { res.redirect(302, "/login"); return; }
-    const u = userDetail(d.db, req.params.id);
+    const v = view(req);
+    const u = userDetail(d.db, req.params.id, windowStart(v.days));
     if (!u) { res.status(404).send("No such user."); return; }
     if (req.query.format === "json") { res.json(u); return; }
-    const v = view(req);
     const heading = `<a class="muted" href="/users${qs(v)}">Users</a> <span class="dim">/</span> ${esc(u.user.email)} ${planBadge(u.user.plan, Boolean(u.user.stripe_sub))}${
       d.internalEmails.has(u.user.email.toLowerCase()) ? ` <span class="chip">internal</span>` : ""}`;
     res.type("html").send(shell("/users", who, v, userPage(u, v), heading));
@@ -365,13 +365,13 @@ function usersPage(v: View): string {
 }
 
 function userPage(x: UserDetail, v: View): string {
-  const u = x.user;
+  const u = x.user, w = lastW(v.days);
   const stripe = u.stripe_customer ? `<a href="https://dashboard.stripe.com/customers/${encodeURIComponent(u.stripe_customer)}" target="_blank" rel="noopener"><code>${esc(u.stripe_customer)}</code> ↗</a>` : `<span class="dim">—</span>`;
   return `<div class="stats">
-${stat("Calls · all time", num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
-${stat("Errors · all time", x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
-${stat("Proposals", num(x.proposals.length), `${x.proposals.filter((p) => p.status === "applied").length} applied`)}
-${stat("Ads accounts", num(x.accounts.length), "")}
+${stat(`Calls · ${w}`, num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
+${stat(`Errors · ${w}`, x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
+${stat("Proposals · all time", num(x.proposals.length), `${x.proposals.filter((p) => p.status === "applied").length} applied`)}
+${stat("Ads accounts", num(x.accounts.length), w)}
 </div>
 <div class="grid2">
 ${card("Account", `<dl>
@@ -386,18 +386,19 @@ ${card("Account", `<dl>
 <dt>User id</dt><dd><code>${esc(u.id)}</code></dd>
 </dl>
 <form method="post" action="/users/${encodeURIComponent(u.id)}/login-as" target="_blank"><button>Log in as user ↗</button></form>`)}
-${card("Ads accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === "0000000001" ? ` <span class="chip">demo</span>` : ""), num(a.calls), when(a.first), when(a.last)])))}
+${card("Ads accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === "0000000001" ? ` <span class="chip">demo</span>` : ""), num(a.calls), when(a.first), when(a.last)]),
+    "No calls in this window."), `<small>${w}</small>`)}
 </div>
 <div class="grid2">
-${card("AI apps", table(["app", ["calls", "r"], "last", "tool list"], x.clients.map((c) => [esc(c.client), num(c.calls), when(c.last), toolList(x, c.client)])),
-    `<small>tool list: our version when the app last fetched it</small>`)}
-${card("Tools", table(["tool", ["calls", "r"], ["errors", "r"]], x.tools.map((t) => [`<code>${esc(t.tool)}</code>`, num(t.calls), bad(t.errors)])))}
+${card("AI apps", table(["app", ["calls", "r"], "last", "tool list"], x.clients.map((c) => [esc(c.client), num(c.calls), when(c.last), toolList(x, c.client)]), "No calls in this window."),
+    `<small>${w} · tool list: our version when the app last fetched it</small>`)}
+${card("Tools", table(["tool", ["calls", "r"], ["errors", "r"]], x.tools.map((t) => [`<code>${esc(t.tool)}</code>`, num(t.calls), bad(t.errors)]), "No calls in this window."), `<small>${w}</small>`)}
 </div>
 ${card("Proposals", table(["id", "account", "status", "summary", "created"], x.proposals.map((p) => [`<code>${esc(p.id)}</code>`, cid(p.customer_id),
     `<span class="chip ${p.status === "applied" ? "okc" : p.status === "failed" ? "badc" : ""}">${esc(p.status)}${p.undo_of ? " · undo" : ""}</span>`,
     `<span class="muted">${esc(p.summary).replace(/\n/g, "<br>")}</span>`, when(p.created_at)]), "No proposals.").replaceAll("<td><span class=\"muted\">", "<td class=\"wrap\"><span class=\"muted\">"))}
 ${card("Emails sent", table(["email", "sent"], x.emails.map((e) => [`<code>${esc(e.kind)}</code>`, `${date(e.sent_at)} UTC`]), "None sent."))}
-${card("Recent calls", callsTable(x.recent.map((c) => ({ ...c, email: null }))), `<small>last ${x.recent.length}</small>`)}`;
+${card("Recent calls", callsTable(x.recent.map((c) => ({ ...c, email: null }))), `<small>${w} · last ${x.recent.length}</small>`)}`;
 }
 
 /** The tool set an app holds: our version when it last fetched the list. Apps keep it until they fetch again. */

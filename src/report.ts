@@ -122,8 +122,11 @@ export const permissionLabels = (scopes: string | null | undefined): string[] | 
   return Object.entries(SCOPE_LABELS).filter(([s]) => have.has(s)).map(([, l]) => l);
 };
 
-/** Everything about one user for the admin's user page. Null when there's no such user. */
-export function userDetail(db: DB, id: string) {
+/**
+ * Everything about one user for the admin's user page. Null when there's no such user. Call-derived parts (totals, accounts,
+ * apps, tools, recent calls) count from `since`; proposals, emails and tool-list versions are the account's whole history.
+ */
+export function userDetail(db: DB, id: string, since = 0) {
   const user = db.prepare(`SELECT id, email, plan, created_at, last_seen_at, enc_refresh IS NOT NULL connected, google_scopes,
     stripe_customer, stripe_sub, time_zone, email_opt_out, src_source, src_campaign, src_content FROM users WHERE id = ?`).get(id) as {
       id: string; email: string; plan: string; created_at: number; last_seen_at: number | null; connected: number; google_scopes: string | null;
@@ -131,29 +134,30 @@ export function userDetail(db: DB, id: string) {
       src_source: string | null; src_campaign: string | null; src_content: string | null } | undefined;
   if (!user) return null;
   const all = <T>(sql: string) => db.prepare(sql).all(id) as T[];
+  const calls = <T>(sql: string) => db.prepare(sql).all(id, since) as T[];
   const client = "coalesce(json_extract(cl.info, '$.client_name'), c.client_id, 'unknown')";
   return {
     user,
-    totals: db.prepare("SELECT count(*) calls, coalesce(sum(ok = 0), 0) errors, cast(coalesce(avg(ms), 0) AS int) avg_ms FROM tool_calls WHERE user_id = ?").get(id) as
+    totals: db.prepare("SELECT count(*) calls, coalesce(sum(ok = 0), 0) errors, cast(coalesce(avg(ms), 0) AS int) avg_ms FROM tool_calls WHERE user_id = ? AND at >= ?").get(id, since) as
       { calls: number; errors: number; avg_ms: number },
-    accounts: all<{ customer_id: string; calls: number; first: number; last: number }>(
-      `SELECT customer_id, count(*) calls, min(at) first, max(at) last FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL
+    accounts: calls<{ customer_id: string; calls: number; first: number; last: number }>(
+      `SELECT customer_id, count(*) calls, min(at) first, max(at) last FROM tool_calls WHERE user_id = ? AND at >= ? AND customer_id IS NOT NULL
        GROUP BY 1 ORDER BY last DESC`),
-    clients: all<{ client: string; calls: number; last: number }>(
+    clients: calls<{ client: string; calls: number; last: number }>(
       `SELECT ${client} client, count(*) calls, max(c.at) last FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id
-       WHERE c.user_id = ? GROUP BY 1 ORDER BY calls DESC`),
+       WHERE c.user_id = ? AND c.at >= ? GROUP BY 1 ORDER BY calls DESC`),
     /** Each app's latest tool-list fetch and our version then (client_tools; recorded from 2026-10-15). */
     toolLists: all<{ client: string; version: string; fetched_at: number }>(
       `SELECT ${client.replaceAll("c.client_id", "ct.client_id")} client, ct.version, ct.fetched_at
        FROM client_tools ct LEFT JOIN clients cl ON cl.client_id = ct.client_id WHERE ct.user_id = ? ORDER BY ct.fetched_at DESC`),
-    tools: all<{ tool: string; calls: number; errors: number }>(
-      "SELECT tool, count(*) calls, sum(ok = 0) errors FROM tool_calls WHERE user_id = ? GROUP BY 1 ORDER BY calls DESC"),
+    tools: calls<{ tool: string; calls: number; errors: number }>(
+      "SELECT tool, count(*) calls, sum(ok = 0) errors FROM tool_calls WHERE user_id = ? AND at >= ? GROUP BY 1 ORDER BY calls DESC"),
     proposals: all<{ id: string; customer_id: string; summary: string; status: string; undo_of: string | null; created_at: number; applied_at: number | null }>(
       "SELECT id, customer_id, summary, status, undo_of, created_at, applied_at FROM proposals WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
     emails: all<{ kind: string; sent_at: number }>("SELECT kind, sent_at FROM email_log WHERE user_id = ? ORDER BY sent_at"),
-    recent: all<{ at: number; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
+    recent: calls<{ at: number; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
       `SELECT c.at, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client
-       FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = ? ORDER BY c.id DESC LIMIT 100`),
+       FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = ? AND c.at >= ? ORDER BY c.id DESC LIMIT 100`),
   };
 }
 export type UserDetail = NonNullable<ReturnType<typeof userDetail>>;
