@@ -179,9 +179,11 @@ describe("Merchant Center ↔ Google Ads link (AdsClient)", () => {
     expect(calls[0]).toEqual({ url: "https://googleads.googleapis.com/v23/customers/1/productLinks:create", body: { productLink: { merchantCenter: { merchantCenterId: "5" } } } });
   });
 
-  it("removes through productLinks:remove, with its dry run", async () => {
+  it("removes through productLinks:remove, skipping the dry run (Google's answers 500)", async () => {
     const calls: { url: string; body: any }[] = [];
-    await ads(calls).mutate("1", "productLinks", [{ remove: "customers/1/productLinks/9" }], { validateOnly: true });
-    expect(calls[0]).toEqual({ url: "https://googleads.googleapis.com/v23/customers/1/productLinks:remove", body: { resourceName: "customers/1/productLinks/9", validateOnly: true } });
+    expect(await ads(calls).mutate("1", "productLinks", [{ remove: "customers/1/productLinks/9" }], { validateOnly: true })).toEqual({ results: [] });
+    expect(calls).toEqual([]);
+    await ads(calls).mutate("1", "productLinks", [{ remove: "customers/1/productLinks/9" }]);
+    expect(calls[0]).toEqual({ url: "https://googleads.googleapis.com/v23/customers/1/productLinks:remove", body: { resourceName: "customers/1/productLinks/9" } });
   });
 });

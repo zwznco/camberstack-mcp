@@ -351,15 +351,17 @@ export class AdsClient {
   }
 
   /**
-   * ProductLinkService has create and remove instead of a mutate. Create has no validateOnly: the dry run is skipped
-   * (session.ts checks the Merchant Center account is reachable and not a test account before proposing); remove has one.
+   * ProductLinkService has create and remove instead of a mutate. Neither dry-runs: create has no validateOnly, and
+   * remove's answers 500 every time (seen live 2026-10-22, request shJd7BNiYk67JPth23JjwA), which would block every
+   * undo of a link. resolveChange has just read the link, and session.ts checks a Merchant Center account is reachable and
+   * not a test account before proposing one.
    */
   private async productLink(customerId: string, op: { create?: object; remove?: string },
     opts: { validateOnly?: boolean; loginCustomerId?: string | null }): Promise<{ results: { resourceName?: string }[] }> {
-    if (op.create && opts.validateOnly) return { results: [] };
+    if (opts.validateOnly) return { results: [] };
     const res = await this.f(`${ADS_API}/customers/${customerId}/productLinks:${op.create ? "create" : "remove"}`, {
       method: "POST", headers: await this.headers(opts.loginCustomerId),
-      body: JSON.stringify(op.create ? { productLink: op.create } : { resourceName: op.remove, validateOnly: !!opts.validateOnly }),
+      body: JSON.stringify(op.create ? { productLink: op.create } : { resourceName: op.remove }),
     });
     const body = await this.body(res);
     const r = body ? JSON.parse(body) : {};
