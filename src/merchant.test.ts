@@ -51,6 +51,11 @@ describe("MerchantClient", () => {
     await expect(m.accounts()).rejects.toThrow(/Camberstack's to fix, not the user's/);
   });
 
+  it("points an account the login can't reach at merchant_accounts (Google answers 401)", async () => {
+    const m = client(() => json({ error: { code: 401, message: "The caller does not have access to the accounts: [123456789]" } }, 401));
+    await expect(m.accountIssues("123456789")).rejects.toThrow(/use an account_id from merchant_accounts/);
+  });
+
   it("points a report on an advanced account at its sub-accounts", async () => {
     const m = client(() => json({ error: { code: 400, message: "Reports are not available for advanced accounts." } }, 400));
     await expect(m.search("7", "SELECT id FROM product_view", 5)).rejects.toThrow(/sub-account's account_id from merchant_accounts/);
