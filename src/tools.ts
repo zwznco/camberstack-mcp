@@ -160,7 +160,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           ? `One switch per ${ACCOUNT_WINDOW_DAYS} days: using a "switch" account makes it active and locks ${st.active.at(-1)}, `
             + "switching back included. Nothing is spent until the user agrees and switch_account is called."
           : `This ${ACCOUNT_WINDOW_DAYS}-day switch is used; locked accounts open up from ${st.switchOpens}`
-            + (s.isPro || s.chatgpt ? "." : ", or on Pro, which covers more (the billing tool has the upgrade link)."),
+            + (s.chatgpt || s.planName === "agency" ? "." : s.isPro ? ", or on Agency, which covers more (the billing tool has the switch link)."
+              : ", or on Pro or Agency, which cover more (the billing tool has the upgrade links)."),
       } } : {}),
       ...(s.lastUnreadable.length ? { unreadable: s.lastUnreadable } : {}),
       // Google Ads wasn't granted (connected for Search Console only): one link adds it, nothing to reconnect.

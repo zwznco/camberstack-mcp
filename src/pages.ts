@@ -11,7 +11,7 @@ import type { ToolDoc } from "./tools.js";
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
 const PRIVACY_UPDATED = "2026-10-17";
-const TERMS_UPDATED = "2026-10-15";
+const TERMS_UPDATED = "2026-10-22";
 
 const CSS = `
 .linkish{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
@@ -749,7 +749,7 @@ runs that part for you: one Google sign-in, and it works the same in Claude on t
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>The Search Console tools are free and don't count toward a plan. Plans count Google Ads accounts only: <a href="/#pricing">Free covers one, Pro ten</a>.</p>
+<p>The Search Console tools are free and don't count toward a plan. Plans count Google Ads accounts only: <a href="/#pricing">Free covers one, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}</a>.</p>
 <h3>Which Search Console permission do I need?</h3>
 <p>Any user of the property can read its performance data. Only the sites your Google login can see in Search Console are listed.</p>
 <h3>Do you store my search data?</h3>
@@ -1065,9 +1065,9 @@ export function termsPage(baseUrl: string): string {
 <p>Camberstack lets an AI assistant read your Google Ads account and, when you approve a specific proposal, change it.
 If you add them to your connection, it can also read your Search Console data (read-only) and your Google Analytics data,
 and change your Google Analytics setup when you approve a specific proposal.
-There is a free plan and a paid Pro plan, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
-<h2>Pro subscription</h2>
-<p>Pro is billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; Pro continues until the end of the period you paid for, and we don't refund partial months. If we change the price we will email you at least 30 days before it applies to you.</p>
+There is a free plan and two paid plans, Pro and Agency, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
+<h2>Paid subscriptions</h2>
+<p>Pro and Agency are billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; your plan continues until the end of the period you paid for, and we don't refund partial months. Switching between Pro and Agency takes effect right away, and Stripe prorates the difference. If we change the price we will email you at least 30 days before it applies to you.</p>
 <h2>You stay in control, and responsible</h2>
 <p>Recommendations are generated from your account data and may be wrong. You decide what to approve, and you are responsible
 for changes you approve, for your Google Ads spend, and for the tracking and consent on any website you measure with Google Analytics. Review proposals before approving them.</p>

@@ -249,7 +249,8 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
   const when = opens && new Date(`${opens}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
   const stopped = `Camberstack stopped when you tried it on another Google Ads account. The Free plan covers one account at a time, `
     + `with one switch every ${ACCOUNT_WINDOW_DAYS} days, and yours was already used${when ? `; the next one opens on ${when}` : ""}.`;
-  const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, cancel any time.`;
+  const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, `
+    + `and Agency up to ${AGENCY_ACCOUNTS}, for ${AGENCY_PRICE_LABEL}; cancel any time.`;
   const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work";
   return {
     subject: "Using Camberstack on more than one Google Ads account",
@@ -309,7 +310,7 @@ A good first question: "${ask}" From there, ask about search terms, keywords and
 
 Want to try it on sample data first? Ask: "Show me Camberstack's demo account."
 
-Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}.
+Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.
 
 If anything doesn't work, just reply. I read every email.
 
@@ -318,7 +319,7 @@ Camberstack`,
     html: wrap(p("Hi,") + p("You're connected. You can now use Camberstack in Claude or ChatGPT.")
       + p(`A good first question: <em>“${ask}”</em> From there, ask about search terms, keywords and budgets. Nothing changes until you approve it, and every change can be undone from <a href="${base}/account">your account page</a>.`)
       + p(`Want to try it on sample data first? Ask: <em>“Show me Camberstack's demo account.”</em>`)
-      + p(`Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}.`)
+      + p(`Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`)
       + p("If anything doesn't work, just reply. I read every email.") + p("Adam<br>Camberstack")),
   };
 }

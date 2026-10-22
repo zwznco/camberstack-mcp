@@ -19,7 +19,7 @@ import type { Lifecycle } from "./lifecycle.js";
 import { esc } from "./pages.js";
 
 export type Audience = "all" | "free" | "pro";
-export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Pro plan" };
+export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Paid plans (Pro, Agency)" };
 
 export interface Preset {
   id: string;
