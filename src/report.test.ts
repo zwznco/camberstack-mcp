@@ -39,6 +39,26 @@ describe("buildReport", () => {
   });
 });
 
+describe("came from", () => {
+  it("splits connects by the app of the first call, else of a live token", () => {
+    const db = openDb(":memory:");
+    const client = db.prepare("INSERT INTO clients (client_id, info, created_at) VALUES (?, ?, 0)");
+    client.run("gpt", JSON.stringify({ client_name: "ChatGPT" }));
+    client.run("cl", JSON.stringify({ client_name: "Claude" }));
+    const user = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, 'free', ?)");
+    for (const id of ["called", "token", "none"]) user.run(id, id, `${id}@example.com`, now() - 60);
+    // First call wins over later apps.
+    const call = db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, ok, ms, bytes) VALUES (?, 'called', ?, 'list_accounts', 1, 5, 10)");
+    call.run(now() - 50, "gpt");
+    call.run(now() - 40, "cl");
+    db.prepare("INSERT INTO tokens (token_hash, kind, client_id, user_id, scopes, expires_at) VALUES ('h', 'refresh', 'gpt', 'token', '', ?)").run(now() + 86400);
+    const r = buildReport(db, { days: 7, exclude: [] });
+    expect(r.sources.map((s) => [s.app, s.connected])).toEqual([["ChatGPT", 2], [null, 1]]);
+    expect(userDetail(db, "called")!.user.came_from).toBe("ChatGPT");
+    expect(userDetail(db, "none")!.user.came_from).toBeNull();
+  });
+});
+
 describe("userDetail", () => {
   it("counts calls from the window's start, but keeps proposals all-time", () => {
     const db = openDb(":memory:");

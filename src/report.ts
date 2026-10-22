@@ -22,6 +22,16 @@ export function windowStart(days: number, t = now()): number {
   return t - (t % 86400) - (days - 1) * 86400;
 }
 
+/**
+ * The AI app a user connected from (alias `u`): their first tool call's client, else the client on a live token (they
+ * connected but haven't called a tool). Tokens go on disconnect, so a disconnected user with no calls reads NULL.
+ */
+const cameFrom = `coalesce(
+  (SELECT json_extract(cl.info, '$.client_name') FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id
+    WHERE c.user_id = u.id ORDER BY c.at LIMIT 1),
+  (SELECT json_extract(cl.info, '$.client_name') FROM tokens t JOIN clients cl ON cl.client_id = t.client_id
+    WHERE t.user_id = u.id LIMIT 1))`;
+
 export function buildReport(db: DB, o: ReportOptions) {
   const since = windowStart(o.days);
   const ex = o.exclude.map((e) => e.toLowerCase());
@@ -86,14 +96,13 @@ export function buildReport(db: DB, o: ReportOptions) {
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE at >= ? GROUP BY 1 ORDER BY 1`, since) : [],
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
-    /** Connects split by first-touch source (firsttouch.ts), so a paid test is read by its own users, not a date window.
-     *  Real-account stages only, as in the funnel. Untagged = no utm/click id on the landing, or signed up before 2026-10-16. */
-    sources: q<{ source: string; campaign: string | null; content: string | null; connected: number; in_window: number; used_real: number; applied: number }>(
-      `SELECT coalesce(u.src_source, '(untagged)') source, u.src_campaign campaign, u.src_content content, count(*) connected,
+    /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
+    sources: q<{ app: string | null; connected: number; in_window: number; used_real: number; applied: number }>(
+      `SELECT ${cameFrom} app, count(*) connected,
          sum(u.created_at >= ?) in_window,
          sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL AND c.customer_id != '${DEMO_CID}')) used_real,
          sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}')) applied
-       FROM {U} u GROUP BY 1, 2, 3 ORDER BY u.src_source IS NULL, connected DESC`, since),
+       FROM {U} u GROUP BY 1 ORDER BY app IS NULL, connected DESC`, since),
     adConversions: q<{ recorded: number; uploaded: number; failing: number; last_error: string | null }>(
       `SELECT count(*) recorded, count(a.uploaded_at) uploaded, sum(a.uploaded_at IS NULL AND a.error IS NOT NULL) failing,
          (SELECT f.error FROM ad_conversions f JOIN {U} fu ON fu.id = f.user_id WHERE f.uploaded_at IS NULL AND f.error IS NOT NULL
@@ -131,11 +140,11 @@ export const permissionLabels = (scopes: string | null | undefined): string[] | 
  */
 export function userDetail(db: DB, id: string, since = 0) {
   const user = db.prepare(`SELECT id, email, plan, created_at, last_seen_at, enc_refresh IS NOT NULL connected, google_scopes,
-    stripe_customer, stripe_sub, time_zone, email_opt_out, src_source, src_campaign, src_content, ads_accounts, ads_managers, ads_accounts_at
-    FROM users WHERE id = ?`).get(id) as {
+    stripe_customer, stripe_sub, time_zone, email_opt_out, ${cameFrom} came_from, ads_accounts, ads_managers, ads_accounts_at
+    FROM users u WHERE id = ?`).get(id) as {
       id: string; email: string; plan: string; created_at: number; last_seen_at: number | null; connected: number; google_scopes: string | null;
       stripe_customer: string | null; stripe_sub: string | null; time_zone: string | null; email_opt_out: number;
-      src_source: string | null; src_campaign: string | null; src_content: string | null;
+      came_from: string | null;
       ads_accounts: number | null; ads_managers: number | null; ads_accounts_at: number | null } | undefined;
   if (!user) return null;
   const all = <T>(sql: string) => db.prepare(sql).all(id) as T[];

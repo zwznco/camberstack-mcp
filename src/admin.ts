@@ -316,9 +316,9 @@ ${card("Google permissions", table(["service", ["connected users", "r"], ""], [
     ...(r.permissionsUnknown ? [[`<span class="dim">not reported yet</span>`, num(r.permissionsUnknown), ""]] : []),
   ]), `<small>connected users only</small>`)}
 </div>
-${card("Connects by source", table(["source", "campaign", "content", ["users", "r"], [`new · ${w}`, "r"], ["used real", "r"], ["applied", "r"]],
-    r.sources.map((x) => [x.source === "(untagged)" ? `<span class="dim">untagged</span>` : esc(x.source), esc(x.campaign ?? "—"), esc(x.content ?? "—"),
-      num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>first touch</small>`)}
+${card("Connects by app", table(["app", ["users", "r"], [`new · ${w}`, "r"], ["used real", "r"], ["applied", "r"]],
+    r.sources.map((x) => [x.app ? esc(x.app) : `<span class="dim">unknown</span>`,
+      num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>app of first call, else token</small>`)}
 <div class="grid2">
 ${card("Latest signups", table(["user", "plan", "permissions", ["signed up", "r"]], [...r.users].sort((a, b) => b.created_at - a.created_at).slice(0, 6)
     .map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }), `<span class="r">${when(u.created_at)}</span>`])),
@@ -389,7 +389,7 @@ ${card("Account", `<dl>
 <dt>Google permissions</dt><dd>${perms(u.google_scopes, u.connected, { missing: true })}</dd>
 <dt>Signed up</dt><dd>${date(u.created_at)} UTC <span class="dim">(${ago(u.created_at)})</span></dd>
 <dt>Last seen</dt><dd>${when(u.last_seen_at)}</dd>
-<dt>Came from</dt><dd>${u.src_source ? esc([u.src_source, u.src_campaign, u.src_content].filter(Boolean).join(" · ")) : `<span class="dim">untagged</span>`}</dd>
+<dt>Came from</dt><dd>${u.came_from ? esc(u.came_from) : `<span class="dim">unknown</span>`}</dd>
 <dt>Time zone</dt><dd>${esc(u.time_zone ?? "—")}</dd>
 <dt>Stripe</dt><dd>${stripe}${u.stripe_sub ? ` <code class="dim">${esc(u.stripe_sub)}</code>` : ""}</dd>
 <dt>Emails</dt><dd>${u.email_opt_out ? `<span class="bad">unsubscribed</span>` : "subscribed"}</dd>

@@ -17,7 +17,7 @@ for (const k of Object.keys(r.funnel.all) as (keyof typeof r.funnel.all)[]) {
   console.log(`  ${k.padEnd(13)} ${String(r.funnel.window[k]).padStart(4)} | ${r.funnel.all[k]}`);
 }
 console.log(`  active in window (≥1 ok call): ${r.activeInWindow}`);
-console.log(`\n## Connects by source (first touch)`); console.table(r.sources);
+console.log(`\n## Connects by AI app`); console.table(r.sources);
 console.log(`## Tools, last ${r.days}d`); console.table(r.tools);
 console.log(`## MCP clients, last ${r.days}d`); console.table(r.clients);
 console.log(`## Recent errors, last ${r.days}d`); console.table(r.errors);

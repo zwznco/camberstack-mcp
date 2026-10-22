@@ -21,7 +21,6 @@ import { mountAccount } from "./account.js";
 import { mountFeedback } from "./feedback.js";
 import { Billing } from "./billing.js";
 import { AdConversions } from "./adconversions.js";
-import { FirstTouch } from "./firsttouch.js";
 import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
@@ -64,7 +63,6 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.set("trust proxy", 1); // behind Traefik: one hop
   app.disable("x-powered-by");
   const adConversions = new AdConversions(db, cfg.conversions, cfg.baseUrl.startsWith("https://"), overrides.adsConversionFetch);
-  const firstTouch = new FirstTouch(db, cfg.baseUrl.startsWith("https://"));
   const billing = new Billing({ db, baseUrl: cfg.baseUrl, stripe: cfg.stripe, fetch: overrides.stripeFetch,
     signingKey: deriveKey(cfg.encryptionKey, "billing-links") });
   const internalEmails = new Set([...cfg.adminEmails, ...cfg.proEmails]);
@@ -216,7 +214,6 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
       if (done.userId) {
         analytics.event(req, "connect");
         adConversions.record(req, res, done.userId, !!done.created);
-        firstTouch.record(req, res, done.userId, !!done.created);
       }
       res.redirect(302, done.to);
     } catch (e) {
@@ -324,7 +321,6 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   const page = (html: string) => (req: express.Request, res: express.Response) => {
     res.setHeader("Cache-Control", "public, max-age=300");
     adConversions.captureClick(req, res);  // keeps an ad click id; makes the response private if it does
-    firstTouch.capture(req, res);          // keeps the first tagged landing (utm_*, rdt_cid); same
     res.type("html").send(html);
   };
   const tools = toolCatalog();

@@ -17,7 +17,6 @@ import { io, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { SERVER_VERSION } from "./tools.js";
 import { CATALOG_QUERY } from "./gaql.js";
-import { buildReport } from "./report.js";
 
 const key = randomBytes(32);
 const idToken = (sub: string, email: string) =>
@@ -2172,31 +2171,6 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT uploaded_at FROM ad_conversions").get()).toMatchObject({ uploaded_at: expect.any(Number) });
     // Nothing about the user travels with it.
     expect(JSON.stringify(conversionUploads)).not.toContain("new@example.com");
-  });
-
-  it("records a new user's first-touch source, and never overwrites it", async () => {
-    const q = "utm_source=reddit&utm_medium=paid_social&utm_campaign=cs-reddit-2026-10&utm_content=demo&rdt_cid=rdt.test_click_99";
-    const land = await fetch(`${base}/?${q}`);
-    const set = land.headers.get("set-cookie") ?? "";
-    expect(set).toMatch(/cs_src=[^;]+;.*HttpOnly/);
-    expect(land.headers.get("cache-control")).toContain("private");
-    const cookie = set.match(/cs_src=[^;]+/)![0];
-    // First touch: a later tagged landing in the same browser doesn't replace it.
-    const again = await fetch(`${base}/?utm_source=google`, { headers: { cookie } });
-    expect(again.headers.get("set-cookie") ?? "").not.toContain("cs_src=");
-    expect((await fetch(`${base}/docs`)).headers.get("set-cookie") ?? "").not.toContain("cs_src=");
-
-    // An existing user reconnecting: cookie cleared, their row untouched.
-    await connect(cookie);
-    expect(lastCallbackCookies).toContain("cs_src=;");
-    expect(db.prepare("SELECT src_source FROM users WHERE google_sub = 'google-sub-1'").get()).toMatchObject({ src_source: null });
-
-    googleUser.sub = "google-sub-reddit"; googleUser.email = "reddit@example.com";
-    try { await connect(cookie); } finally { googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com"; }
-    expect(db.prepare("SELECT src_source, src_campaign, src_content, src_click FROM users WHERE google_sub = 'google-sub-reddit'").get())
-      .toEqual({ src_source: "reddit", src_campaign: "cs-reddit-2026-10", src_content: "demo", src_click: "rdt.test_click_99" });
-    const row = buildReport(db, { days: 7, exclude: [] }).sources.find((x) => x.source === "reddit");
-    expect(row).toMatchObject({ campaign: "cs-reddit-2026-10", content: "demo", connected: 1, in_window: 1, used_real: 0, applied: 0 });
   });
 
   it("selects a field Google says WHERE or ORDER BY needs, and reruns", async () => {
