@@ -104,6 +104,7 @@ export type Merchant = {
 function merchantFix(status: number, msg: string): string {
   if (/advanced account/i.test(msg)) return " → reports work on a standalone account or a sub-account, not an advanced (multi-client) account: use a sub-account's account_id from merchant_accounts.";
   if (status === 403 && /performance|PERFORMANCE_REPORTING/i.test(msg)) return " → performance views need the \"Performance and insights\" access in Merchant Center (People and access) for this Google login.";
+  if (/Terms of Service is not signed/i.test(msg)) return " → the account hasn't accepted Merchant Center's terms of service yet: the account's admin opens it at merchants.google.com and accepts them. Camberstack doesn't accept terms on anyone's behalf.";
   // Google answers 401 for an account the login can't reach (seen live, 2026-10-22), 403 elsewhere.
   if (status === 403 || /does not have access to the accounts/i.test(msg)) return " → this Google login has no access to that Merchant Center account: use an account_id from merchant_accounts.";
   return "";

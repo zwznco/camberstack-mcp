@@ -56,6 +56,11 @@ describe("MerchantClient", () => {
     await expect(m.accountIssues("123456789")).rejects.toThrow(/use an account_id from merchant_accounts/);
   });
 
+  it("says an account without signed terms needs its admin to accept them (seen live on a new test account)", async () => {
+    const m = client(() => json({ error: { code: 403, message: "Terms of Service is not signed for account 5." } }, 403));
+    await expect(m.accountIssues("5")).rejects.toThrow(/accepts them\. Camberstack doesn't accept terms/);
+  });
+
   it("points a report on an advanced account at its sub-accounts", async () => {
     const m = client(() => json({ error: { code: 400, message: "Reports are not available for advanced accounts." } }, 400));
     await expect(m.search("7", "SELECT id FROM product_view", 5)).rejects.toThrow(/sub-account's account_id from merchant_accounts/);
