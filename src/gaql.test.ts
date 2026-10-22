@@ -45,6 +45,24 @@ describe("checkGaql against Google's field catalog", () => {
     expect(i).toContain("campaign.maximize_clicks.cpc_bid_ceiling_micros doesn't exist");
     expect(i).toContain("campaign.target_spend.cpc_bid_ceiling_micros");
   });
+  it("points criterion metrics at the view that keeps the criterion, once per field", () => {
+    const i = checkGaql("SELECT ad_group_criterion.keyword.text, ad_group_criterion.type, metrics.impressions, metrics.clicks FROM ad_group_criterion "
+      + "WHERE campaign.id = 1 AND segments.date DURING LAST_30_DAYS ORDER BY metrics.impressions DESC LIMIT 50", cat);
+    expect(i).toContain("metrics.impressions can't be used FROM ad_group_criterion; query it FROM keyword_view, "
+      + "which keeps one row per ad_group_criterion, with its fields.");
+    expect(i.filter((x) => x.startsWith("metrics.impressions"))).toHaveLength(1);
+  });
+  it("names keyword_view before display_keyword_view, and first when the query names no criterion type", () => {
+    const live: Catalog = new Map(cat);
+    for (const v of ["display_keyword_view", "age_range_view", "ad_group_audience_view", "content_criterion_view"])
+      live.set(v, { ...cat.get("keyword_view")!, name: v });
+    const [kw] = checkGaql("SELECT ad_group_criterion.keyword.text, metrics.clicks FROM ad_group_criterion", live);
+    expect(kw).toContain("query it FROM keyword_view or FROM display_keyword_view, each keeping");
+    const [id] = checkGaql("SELECT ad_group_criterion.criterion_id, metrics.clicks FROM ad_group_criterion", live);
+    expect(id).toMatch(/query it FROM keyword_view or FROM /);
+    const [age] = checkGaql("SELECT ad_group_criterion.age_range.type, metrics.clicks FROM ad_group_criterion", live);
+    expect(age).toContain("query it FROM age_range_view, which keeps");
+  });
   it("points a sub-field of a message at the message", () => {
     const [i] = checkGaql("SELECT recommendation.type, recommendation.impact.base_metrics.clicks FROM recommendation", cat);
     expect(i).toContain("recommendation.impact.base_metrics.clicks doesn't exist");

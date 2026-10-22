@@ -155,11 +155,12 @@ export function checkGaql(query: string, cat: Catalog): string[] {
         const own = f.category === "SEGMENT" ? cat.get(`${p.from}.${name.slice("segments.".length)}`) : undefined;
         issues.push(own && usable(own) && own.selectable !== false
           ? `${name} can't be used FROM ${p.from}: select ${own.name} instead, its own field.`
-          : `${name} can't be used FROM ${p.from}${whereFrom(f, cat, p.from)}.`);
+          : `${name} can't be used FROM ${p.from}${whereFrom(f, cat, p.from, [...p.select, ...p.where])}.`);
       }
     }
   }
-  return [...issues, ...enumIssues(query, cat)];
+  // The same field in SELECT and ORDER BY gave the same line twice.
+  return [...new Set([...issues, ...enumIssues(query, cat)])];
 }
 
 /** An enum literal in WHERE that isn't one of the field's values (Google only says BAD_ENUM_CONSTANT): name the values it takes. */
@@ -202,9 +203,26 @@ const BROAD = ["customer", "campaign"];
  * what that query wanted: `metrics.conversions FROM conversion_action` was pointed at ad_group (catalog order), not
  * at customer or campaign with segments.conversion_action (2026-10-15).
  */
-function whereFrom(f: FieldMeta, cat: Catalog, from?: string): string {
+function whereFrom(f: FieldMeta, cat: Catalog, from?: string, fields: string[] = []): string {
   const own = f.category === "ATTRIBUTE" ? f.name.split(".")[0]! : null;
   const ok = [...cat.values()].filter((r) => r.category === "RESOURCE" && fromAllows(r, f)).map((r) => r.name);
+  // A view that carries the FROM resource keeps its rows: metrics FROM ad_group_criterion belong FROM keyword_view, and
+  // campaign/ad_group (the generic list) drop the per-keyword split the query was after (prod, 2026-10-22). Which view
+  // fits is named by the query's own fields: ad_group_criterion.keyword.text → keyword_view.
+  const grain = from && f.category !== "ATTRIBUTE"
+    ? ok.filter((r) => r.endsWith("_view") && (cat.get(r)!.attributeResources ?? []).includes(from)) : [];
+  if (grain.length) {
+    const parts = new Set(fields.filter((n) => n.startsWith(`${from}.`)).map((n) => n.split(".")[1]!));
+    const stem = (r: string) => r.replace(/_view$/, "");
+    // An exact name first: ad_group_criterion.keyword is keyword_view, and display_keyword_view only after it. With none
+    // named, keyword_view leads: catalog order left it out of the first four (dev, 2026-10-22).
+    const exact = grain.filter((r) => parts.has(stem(r)));
+    const near = grain.filter((r) => !exact.includes(r) && [...parts].some((x) => stem(r).endsWith(`_${x}`) || x.endsWith(`_${stem(r)}`)));
+    const named = [...exact, ...near];
+    const rest = ["keyword_view"].filter((r) => grain.includes(r) && !named.includes(r));
+    const pick = [...named, ...rest, ...grain.filter((r) => !named.includes(r) && !rest.includes(r))].slice(0, named.length || 4);
+    return `; query it FROM ${pick.join(" or FROM ")}, ${pick.length > 1 ? "each keeping" : "which keeps"} one row per ${from}, with its fields`;
+  }
   const seg = from && cat.get(`segments.${from}`)?.category === "SEGMENT" ? `segments.${from}` : null;
   const split = seg ? ok.filter((r) => (cat.get(r)!.segments ?? []).includes(seg)) : [];
   if (split.length) {
