@@ -40,7 +40,7 @@ Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time wit
 | `merchant_accounts` | no | the Merchant Center accounts the login can read (sub-accounts included); if Merchant Center isn't granted yet, a personal link that adds it |
 | `merchant_product_issues` | no | account issues, product status counts, and each product issue with how many products it hits and examples; or one product's issues in full |
 | `merchant_report` | no | any read-only Merchant Center Query Language (MCQL) query, e.g. Shopping clicks per product from `product_performance_view` |
-| `propose_merchant_changes` | no | like `propose_changes`, for Merchant Center products: `set_product_attributes` (price, GTIN, title, …), `exclude_products`/`include_products`, `clear_product_overrides`. Applied and undone with `apply_changes`/`undo_changes` |
+| `propose_merchant_changes` | no | like `propose_changes`, for Merchant Center products: `set_product_attributes` (price, GTIN, title, …), `exclude_products`/`include_products`, `clear_product_overrides`, and `add_product`/`update_product`/`delete_product` for products in Camberstack's own "Camberstack products" source. Applied and undone with `apply_changes`/`undo_changes` |
 | `propose_changes` | no | resolves changes against the live account, dry-runs them with Google (`validateOnly`), stores a proposal with a plain-English summary |
 | `apply_changes` | **yes** | applies a stored proposal (the user's own, un-applied, still matching the account; if the account moved, returns an updated proposal to approve instead); records each change's inverse |
 | `undo_changes` | no | builds the reversing proposal for an applied one |
@@ -67,6 +67,10 @@ the Merchant API enabled and **registered once** with a production Merchant Cent
 don't register. Unregistered, calls answer 401 "not registered", which the tools report as Camberstack's to fix.
 Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Account `000000001` is the
 demo (sample data: two best sellers disapproved for a price mismatch 9 days ago; overrides there fix the issue).
+
+Products Camberstack creates live in its own primary API source ("Camberstack products"); only those can be updated in
+place or deleted (undo re-creates them from Camberstack's copy). Adding an offer_id another feed already has is refused,
+since Google would move that product into our source ("offer stealing").
 
 Merchant Center changes never edit the merchant's feed. Each is an override in Camberstack's own supplemental data source
 ("Camberstack overrides"), created on the first write. Google applies a supplemental source only once it's in a primary

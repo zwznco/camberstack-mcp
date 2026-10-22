@@ -436,8 +436,9 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       description: "Checks Merchant Center product changes against the live account and stores them as a proposal with a plain-English summary; "
         + "nothing is changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). "
         + "Supported: set_product_attributes (override a product's price, sale price, GTIN, brand, title, availability, …, e.g. to fix a price "
-        + "mismatch or a missing GTIN), exclude_products / include_products (from Shopping ads or free listings), clear_product_overrides. "
-        + "Every change is an override in Camberstack's own supplemental data source, layered on top of the feed: the feed itself is never edited. "
+        + "mismatch or a missing GTIN), exclude_products / include_products (from Shopping ads or free listings), clear_product_overrides; "
+        + "and add_product / update_product / delete_product for products Camberstack creates in its own data source. "
+        + "Changes to products from the merchant's feed are overrides in Camberstack's own supplemental data source, layered on top: the feed itself is never edited. "
         + "Point out any ⚠ line before they approve. A fix in the feed or the store (Shopify, …) lasts longer: suggest it too.",
       inputSchema: { account_id: merchantId,
         changes: z.array(PublicMcChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },

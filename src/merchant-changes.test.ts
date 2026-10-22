@@ -60,6 +60,19 @@ describe("MerchantClient writes", () => {
     expect(await g.m.overrides("5", KEY)).toBeNull();
   });
 
+  it("creates its own products in its own primary source, and deletes only from there", async () => {
+    const g = fakeGoogle();
+    await g.m.setOwnProduct("5", KEY, { title: "New" });
+    expect(g.calls.find((c) => c.method === "POST" && c.url === "datasources/v1/accounts/5/dataSources")!.body)
+      .toEqual({ displayName: "Camberstack products", primaryProductDataSource: {} });
+    expect(g.calls.find((c) => c.url.includes("productInputs:insert"))!.url).toContain(encodeURIComponent("accounts/5/dataSources/99"));
+    expect(await g.m.ownProducts("5")).toEqual([{ key: KEY, attrs: { title: "New" } }]);
+    g.calls.length = 0;
+    await g.m.setOwnProduct("5", KEY, null);
+    expect(g.calls.map((c) => c.method)).toEqual(["GET", "DELETE"]);
+    expect(await g.m.ownProducts("5")).toEqual([]);
+  });
+
   it("refuses feeds made in the Merchant Center UI or by autofeed, at propose", async () => {
     const g = fakeGoogle({ input: "UI" });
     expect((await g.m.linkState("5", PRIMARY)).state).toBe("cannot");
@@ -115,5 +128,32 @@ describe("Merchant Center changes (demo)", () => {
     const c = await resolve(m, { type: "clear_product_overrides", offer_id: "NW-SP-12" });
     expect(c.describe).toContain("remove Camberstack's overrides (brand)");
     expect(c.operations[0]!.overrides).toBeNull();
+  });
+
+  it("creates, updates and deletes Camberstack's own products, each undoable, and won't take one from the feed", async () => {
+    const m = fresh();
+    const attrs = { title: "Shutoff Valve", link: "https://northwind-plumbing.example/p/sv", image_link: "https://northwind-plumbing.example/sv.jpg",
+      price: 12.5, availability: "IN_STOCK" };
+    await expect(resolve(m, { type: "add_product", offer_id: "NW-SP-12", attributes: attrs })).rejects.toThrow(/already in this account's feed/);
+    const add = await resolve(m, { type: "add_product", offer_id: "NW-NEW-1", attributes: attrs });
+    expect(add.describe).toContain('Add product NW-NEW-1 ("Shutoff Valve") to Merchant Center, 12.50 USD, in stock');
+    await writeMc(m, DEMO_MERCHANT, add.operations);
+    await expect(resolve(m, { type: "add_product", offer_id: "NW-NEW-1", attributes: attrs })).rejects.toThrow(/use update_product/);
+    await expect(resolve(m, { type: "set_product_attributes", offer_id: "NW-NEW-1", attributes: { brand: "X" } })).rejects.toThrow(/use update_product/);
+
+    const upd = await resolve(m, { type: "update_product", offer_id: "NW-NEW-1", attributes: { price: 11 } });
+    expect(upd.describe).toContain("price 12.50 USD → 11.00 USD");
+    await writeMc(m, DEMO_MERCHANT, upd.operations);
+    const del = await resolve(m, { type: "delete_product", offer_id: "NW-NEW-1" });
+    await writeMc(m, DEMO_MERCHANT, del.operations);
+    expect(await m.ownProducts(DEMO_MERCHANT)).toEqual([]);
+    const back = await resolve(m, del.inverse!);
+    expect(back.describe).toContain('Re-create product NW-NEW-1 ("Shutoff Valve") as it was');
+    await writeMc(m, DEMO_MERCHANT, back.operations);
+    expect((await m.ownProducts(DEMO_MERCHANT))[0]!.attrs.price).toEqual({ amountMicros: "11000000", currencyCode: "USD" });
+    // And the product shows up like any other.
+    expect((await m.search(DEMO_MERCHANT, "SELECT id, offer_id FROM product_view WHERE offer_id = 'NW-NEW-1'", 5)).rows).toHaveLength(1);
+
+    await expect(resolve(m, { type: "delete_product", offer_id: "NW-SP-12" })).rejects.toThrow(/isn't a product Camberstack created/);
   });
 });

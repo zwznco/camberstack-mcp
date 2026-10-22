@@ -35,6 +35,10 @@ export type Overrides = Record<string, unknown>;
 export interface LinkState { state: "linked" | "will_link" | "cannot"; label: string; why?: string }
 /** Camberstack's supplemental data source, found by this name. */
 export const SOURCE_NAME = "Camberstack overrides";
+/** Camberstack's primary data source, for products it creates (merchant-changes.ts add_product), found by this name. */
+export const PRODUCTS_SOURCE_NAME = "Camberstack products";
+/** OverrideStore key space for the products Camberstack created: their full attributes, as last written. */
+export const ownSpace = (account: string) => `own:${account}`;
 
 /** The API's product id: unpadded base64url of contentLanguage~feedLabel~offerId, which any offer id survives. */
 export const encodeKey = (k: ProductKey) => Buffer.from(`${k.contentLanguage}~${k.feedLabel}~${k.offerId}`).toString("base64url");
@@ -58,6 +62,16 @@ export class OverrideStore {
     this.db.prepare(`INSERT INTO merchant_overrides (account_id, product, attrs, updated_at) VALUES (?, ?, ?, ?)
       ON CONFLICT(account_id, product) DO UPDATE SET attrs = excluded.attrs, updated_at = excluded.updated_at`).run(account, keyId(k), JSON.stringify(o), now());
   }
+  /** Every product with something stored under `account`. */
+  list(account: string): { key: ProductKey; attrs: Overrides }[] {
+    const parse = (id: string, attrs: Overrides) => {
+      const [contentLanguage, feedLabel, ...rest] = id.split("~");
+      return { key: { contentLanguage: contentLanguage!, feedLabel: feedLabel!, offerId: rest.join("~") }, attrs };
+    };
+    if (!this.db) return [...this.mem.entries()].filter(([k]) => k.startsWith(`${account}\u0000`)).map(([k, v]) => parse(k.slice(account.length + 1), v));
+    return (this.db.prepare("SELECT product, attrs FROM merchant_overrides WHERE account_id = ?").all(account) as { product: string; attrs: string }[])
+      .map((r) => parse(r.product, JSON.parse(r.attrs) as Overrides));
+  }
   any(account: string): boolean {
     if (!this.db) return [...this.mem.keys()].some((k) => k.startsWith(`${account}\u0000`));
     return !!this.db.prepare("SELECT 1 FROM merchant_overrides WHERE account_id = ? LIMIT 1").get(account);
@@ -80,6 +94,10 @@ export type Merchant = {
   linkState(accountId: string, primary: string): Promise<LinkState>;
   /** Replace the product's overrides (null removes them), linking the primary source first if it isn't yet. */
   setOverrides(accountId: string, key: ProductKey, primary: string, overrides: Overrides | null): Promise<void>;
+  /** Products Camberstack created in this account, with the attributes it last wrote. */
+  ownProducts(accountId: string): Promise<{ key: ProductKey; attrs: Overrides }[]>;
+  /** Create or replace one of Camberstack's own products (null deletes it), in its own primary source. */
+  setOwnProduct(accountId: string, key: ProductKey, attributes: Overrides | null): Promise<void>;
 };
 
 /** What to do about the Merchant API errors AIs and users actually hit, appended to Google's message. */
@@ -169,12 +187,14 @@ export class MerchantClient implements Merchant {
 
   async overrides(accountId: string, key: ProductKey) { return this.store.get(accountId, key); }
 
-  /** Camberstack's supplemental source in the account, if it has one. */
-  private async source(accountId: string): Promise<string | null> {
+  /** Camberstack's supplemental source (or, with primary, its own products' source) in the account, if it has one. */
+  private async source(accountId: string, primary = false): Promise<string | null> {
     let page = "";
     do {
       const r = await this.call(`datasources/v1/accounts/${accountId}/dataSources?pageSize=1000${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
-      const s = (r.dataSources ?? []).find((d: any) => d.displayName === SOURCE_NAME && d.supplementalProductDataSource);
+      const s = (r.dataSources ?? []).find((d: any) => (primary
+        ? d.displayName === PRODUCTS_SOURCE_NAME && d.primaryProductDataSource
+        : d.displayName === SOURCE_NAME && d.supplementalProductDataSource));
       if (s) return s.name as string;
       page = r.nextPageToken ?? "";
     } while (page);
@@ -216,6 +236,25 @@ export class MerchantClient implements Merchant {
     }
     this.store.set(accountId, key, overrides);
   }
+
+  async ownProducts(accountId: string) { return this.store.list(ownSpace(accountId)); }
+
+  async setOwnProduct(accountId: string, key: ProductKey, attributes: Overrides | null): Promise<void> {
+    let src = await this.source(accountId, true);
+    if (attributes) {
+      // No feed label or language on the source: an API source then takes products of any.
+      src ??= (await this.call(`datasources/v1/accounts/${accountId}/dataSources`, { displayName: PRODUCTS_SOURCE_NAME, primaryProductDataSource: {} })).name as string;
+      await this.call(`products/v1/accounts/${accountId}/productInputs:insert?dataSource=${encodeURIComponent(src)}`,
+        { offerId: key.offerId, contentLanguage: key.contentLanguage, feedLabel: key.feedLabel, productAttributes: attributes });
+    } else if (src) {
+      try {
+        await this.call(`products/v1/accounts/${accountId}/productInputs/${encodeKey(key)}?dataSource=${encodeURIComponent(src)}`, undefined, "DELETE");
+      } catch (e) {
+        if (!/Merchant API 404/.test((e as Error).message)) throw e;
+      }
+    }
+    this.store.set(ownSpace(accountId), key, attributes);
+  }
 }
 
 /** Sends the demo account's calls to the demo, everything else to Google. */
@@ -229,6 +268,8 @@ export function routedMerchant(google: Merchant, demo: Merchant): Merchant {
     overrides: (id, k) => (id === DEMO_MERCHANT ? demo.overrides(id, k) : google.overrides(id, k)),
     linkState: (id, p) => (id === DEMO_MERCHANT ? demo.linkState(id, p) : google.linkState(id, p)),
     setOverrides: (id, k, p, o) => (id === DEMO_MERCHANT ? demo.setOverrides(id, k, p, o) : google.setOverrides(id, k, p, o)),
+    ownProducts: (id) => (id === DEMO_MERCHANT ? demo.ownProducts(id) : google.ownProducts(id)),
+    setOwnProduct: (id, k, a) => (id === DEMO_MERCHANT ? demo.setOwnProduct(id, k, a) : google.setOwnProduct(id, k, a)),
   };
 }
 
@@ -358,9 +399,11 @@ export class DemoMerchant implements Merchant {
   async accountIssues() { return DEMO_ACCOUNT_ISSUES; }
 
   private key = (offerId: string): ProductKey => ({ offerId, contentLanguage: "en", feedLabel: "US" });
-  /** The demo's products with this user's overrides applied. */
+  /** The demo's products, plus the ones this user created, with this user's overrides applied. */
   private live(): (DemoProduct & { excluded: string[] })[] {
-    return DEMO_PRODUCTS.map((p) => {
+    const own: DemoProduct[] = this.store.list(ownSpace(this.acct)).map(({ key, attrs }) => ({ offerId: key.offerId, title: String(attrs.title ?? key.offerId),
+      brand: String(attrs.brand ?? ""), price: Number((attrs.price as { amountMicros?: string } | undefined)?.amountMicros ?? 0) / 1e6, clicks: 0, issues: [] }));
+    return [...DEMO_PRODUCTS, ...own].map((p) => {
       const o = this.store.get(this.acct, this.key(p.offerId)) ?? {};
       const price = (o.price as { amountMicros?: string } | undefined)?.amountMicros;
       return { ...p, title: String(o.title ?? p.title), brand: String(o.brand ?? p.brand), price: price ? Number(price) / 1e6 : p.price,
@@ -369,11 +412,16 @@ export class DemoMerchant implements Merchant {
     });
   }
 
-  async productKeys(_id: string, offerId: string) { return DEMO_PRODUCTS.some((p) => p.offerId === offerId) ? [this.key(offerId)] : []; }
+  async productKeys(_id: string, offerId: string) {
+    if (DEMO_PRODUCTS.some((p) => p.offerId === offerId)) return [this.key(offerId)];
+    return this.store.list(ownSpace(this.acct)).filter((x) => x.key.offerId === offerId).map((x) => x.key);
+  }
   async product(_id: string, key: ProductKey) {
     const p = this.live().find((x) => x.offerId === key.offerId);
     if (!p) throw new Error(`Merchant API 404: product ${key.offerId} not found.`);
     const o = this.store.get(this.acct, key) ?? {};
+    const own = this.store.get(ownSpace(this.acct), key);
+    if (own) return { dataSource: `accounts/${DEMO_MERCHANT}/dataSources/2`, attributes: { ...own, ...o } };
     return { dataSource: DEMO_SOURCE, attributes: { title: p.title, brand: p.brand, availability: "IN_STOCK", condition: "NEW",
       price: { amountMicros: String(Math.round(p.price * 1e6)), currencyCode: "USD" }, link: `https://northwind-plumbing.example/p/${p.offerId.toLowerCase()}`,
       ...o, ...(p.excluded.length ? { excludedDestinations: p.excluded } : {}) } };
@@ -383,6 +431,8 @@ export class DemoMerchant implements Merchant {
     return { state: this.store.any(this.acct) ? "linked" : "will_link", label: "Northwind store feed" };
   }
   async setOverrides(_id: string, key: ProductKey, _primary: string, overrides: Overrides | null) { this.store.set(this.acct, key, overrides); }
+  async ownProducts() { return this.store.list(ownSpace(this.acct)); }
+  async setOwnProduct(_id: string, key: ProductKey, attributes: Overrides | null) { this.store.set(ownSpace(this.acct), key, attributes); }
 
   async search(_id: string, query: string, maxRows: number): Promise<SearchResult> {
     const m = /^\s*SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?\s*$/is.exec(query);
