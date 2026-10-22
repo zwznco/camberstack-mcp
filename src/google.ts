@@ -166,6 +166,9 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
     case "CHANGE_DATE_RANGE_INFINITE":
       return "change_event needs both ends of the window, within the last 30 days, plus a LIMIT (at most 10000): WHERE change_event.change_date_time "
         + ">= 'YYYY-MM-DD' AND change_event.change_date_time <= 'YYYY-MM-DD' … LIMIT 1000. For changes made through Camberstack, use change_history.";
+    case "MISALIGNED_DATE_FOR_FILTER":
+      return "keep segments.week/month/quarter in SELECT but filter on segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' instead: rows "
+        + "still come back per week/month/quarter. (Filtering segments.week itself needs a Monday; segments.month the 1st.)";
     case "EXPECTED_FILTER_ON_A_SINGLE_DAY":
       return "click_view needs one day: segments.date = 'YYYY-MM-DD'. Query each day separately.";
     case "EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE":
@@ -236,7 +239,7 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
         + "AND campaign.status != 'REMOVED'. Ask the user whether any of them run EU political ads (it is their legal declaration; most "
         + "businesses answer no), propose set_eu_political_advertising for each in one proposal, apply it, then retry this change.";
     case "POLICY_FINDING":
-      return "Google's ad policy check rejected the ad text, images or video. Common causes: repeated punctuation (\"!!\"), "
+      return "Google's ad policy check rejected the ad text, images or video. Change what any [policy …] above flags. Common causes: repeated punctuation (\"!!\"), "
         + "ALL CAPS, symbols or emoji used for emphasis, phone numbers in headlines, or a video or landing page that breaks policy. "
         + "Reword the ad and propose again; the full reasons show under Policy in Google Ads.";
     case "POLICY_ERROR":
@@ -280,7 +283,13 @@ export class AdsApiError extends Error {
         const pv = d.details?.policyViolationDetails;
         const policy = pv ? `[policy ${pv.externalPolicyName ?? pv.key?.policyName}` + (pv.key?.violatingText ? ` flagged "${pv.key.violatingText}"` : "")
           + (pv.isExemptible ? ", exemptible" : "") + "]" : "";
-        return [code, d.message, field ? `(field ${field})` : "", policy, fix ? `→ ${fix}` : ""].filter(Boolean).join(" ");
+        // POLICY_FINDING's topics and the text Google flagged are in PolicyFindingDetails. Without them the AI reworded
+        // blind and got the same refusal twice (2026-10-22).
+        const findings = (d.details?.policyFindingDetails?.policyTopicEntries ?? []).map((t: any) => {
+          const texts = (t.evidences ?? []).flatMap((ev: any) => ev.textList?.texts ?? []);
+          return `[policy ${t.topic}${t.type ? ` ${t.type}` : ""}${texts.length ? ` flagged ${texts.map((s: string) => `"${s}"`).join(", ")}` : ""}]`;
+        }).join(" ");
+        return [code, d.message, field ? `(field ${field})` : "", policy, findings, fix ? `→ ${fix}` : ""].filter(Boolean).join(" ");
       });
       // Google repeats one error per offending operation (seven identical DUPLICATE_ASSETs, 2026-10-22): once is enough.
       const distinct = [...new Set(msgs)];

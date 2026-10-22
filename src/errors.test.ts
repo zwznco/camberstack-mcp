@@ -34,6 +34,7 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "PROHIBITED_SEGMENT_WITH_METRIC_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select the following segments because at least one unsupported metric is found in SELECT or WHERE clause: 'segments.conversion_action_name'(unsupported metrics: 'cost_micros').", undefined, "second one without the segment"],
     [{ assetError: "DUPLICATE_ASSET" }, "Assets are duplicated across operations.", "mutate_operations.ad_group_ad_operation.create.ad.responsive_search_ad.headlines", "ignores spacing but not capitals"],
     [{ euPoliticalAdvertisingError: "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED" }, "Mutates are generally not allowed if the customer contains non-exempt campaigns without the EU political advertising declaration.", undefined, "campaign.missing_eu_political_advertising_declaration = TRUE"],
+    [{ dateError: "MISALIGNED_DATE_FOR_FILTER" }, "Dates in conditions should be the start of week/month/quarter if the filtered field is segments.week/segments.month/segments.quarter.", undefined, "filter on segments.date BETWEEN"],
     [{ imageError: "ASPECT_RATIO_NOT_ALLOWED" }, "The aspect ratio of the image does not match the expected aspect ratios provided in the asset spec.", "logo_images", "1.91:1"],
   ])("%j → hint", (code, message, field, hint) => {
     const e = new AdsApiError(400, body(code, message, field));
@@ -56,6 +57,20 @@ describe("AdsApiError fix hints", () => {
       details: { policyViolationDetails: { externalPolicyName: "Alcohol", key: { policyName: "ALCOHOL", violatingText: "borrel" }, isExemptible: true } },
     }] }] } }));
     expect(e.message).toContain('[policy Alcohol flagged "borrel", exemptible]');
+    expect(e.message).toContain("→ ");
+  });
+
+  it("names the policy topics and flagged text from PolicyFindingDetails", () => {
+    const e = new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{
+      errorCode: { policyFindingError: "POLICY_FINDING" },
+      message: "The resource has been disapproved since the policy summary includes policy topics of type PROHIBITED.",
+      location: { fieldPathElements: [{ fieldName: "operations" }, { fieldName: "create" }, { fieldName: "ad" }] },
+      details: { policyFindingDetails: { policyTopicEntries: [
+        { topic: "PUNCTUATION", type: "PROHIBITED", evidences: [{ textList: { texts: ["¡¡Compra ya!!"] } }] },
+        { topic: "DESTINATION_NOT_WORKING", type: "PROHIBITED" },
+      ] } },
+    }] }] } }));
+    expect(e.message).toContain('[policy PUNCTUATION PROHIBITED flagged "¡¡Compra ya!!"] [policy DESTINATION_NOT_WORKING PROHIBITED]');
     expect(e.message).toContain("→ ");
   });
 
