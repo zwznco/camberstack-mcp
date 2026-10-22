@@ -106,7 +106,8 @@ export class MerchantClient implements Merchant {
       if (scopeMissing(res.status, text)) throw new NotGrantedError("merchant-center", this.grantLink());
       let msg = text.slice(0, 300);
       try { msg = JSON.parse(text).error?.message ?? msg; } catch { /* not JSON */ }
-      if (res.status === 401 && /not registered|AUTH_GCP_NOT_REGISTERED/i.test(text)) {
+      // Registered, but with no verified API developer on the registering account: also Camberstack's side (the operator's account).
+      if (res.status === 401 && (/not registered|AUTH_GCP_NOT_REGISTERED/i.test(text) || /API_DEVELOPER/.test(text))) {
         throw new Error("Camberstack's Merchant Center access isn't set up on Google's side yet (developer registration). This is Camberstack's "
           + "to fix, not the user's: nothing is wrong with their account. The Google Ads, Search Console and Analytics tools work as usual.");
       }
