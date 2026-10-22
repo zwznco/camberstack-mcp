@@ -14,7 +14,8 @@ import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_L
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
-import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields } from "./gaql.js";
+import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields, queryShape } from "./gaql.js";
+import { reportBug } from "./sentry.js";
 import {
   ChangeSchema, MAX_CHANGES, inverseAfterApply, sameSummary, pendingOf, resolveChange, summarize,
   type Change, type ResolvedChange,
@@ -540,8 +541,15 @@ export class UserSession {
         q = q.replace(/^\s*select\s+/i, `SELECT ${missing.join(", ")}, `);
       }
     }
-    // A finding on a query Google ran is a bug in the check, not in the query: log it, never show it.
-    void this.gaqlCheck(q).then((found) => { if (found.length) console.error(`gaql check false positive: ${found.join(" ")} | ${q.slice(0, 300)}`); });
+    // A finding on a query Google ran is a bug in the check, not in the query: report it, never show it. To Bugsink as well
+    // as the log, which every deploy replaces: none had survived to say whether the check was ever wrong (2026-10-22).
+    // The shape, not the query: the event leaves the box, and the query carries the user's values.
+    void this.gaqlCheck(q).then((found) => {
+      if (!found.length) return;
+      const msg = `gaql check false positive: ${found.join(" ")} | ${queryShape(q).slice(0, 300)}`;
+      console.error(msg);
+      reportBug(msg, "run_gaql");
+    });
     return { ...demoNote(a.customerId), ...(rewrote.length ? { rewritten: `Google only accepts LAST_7/14/30_DAYS, so ran ${rewrote.join(", ")} (dates in UTC)` } : {}),
       ...(renamed.length ? { renamed: `These fields were renamed in the API, so ran ${renamed.join(", ")} (a date and time, e.g. 2026-01-31 23:59:59)` } : {}),
       ...(added.length ? { added_to_select: `Google requires fields used in WHERE or ORDER BY to be selected too, so added ${added.join(", ")} to SELECT` } : {}),

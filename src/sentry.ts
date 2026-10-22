@@ -41,3 +41,8 @@ export function isUnexpected(e: unknown): boolean {
 export function reportError(e: unknown, where: string): void {
   Sentry.captureException(e, { tags: { where } });
 }
+
+/** Report a bug that throws nothing (a check that misfired); `where` names the tool or job. A no-op when reporting is off. */
+export function reportBug(message: string, where: string): void {
+  Sentry.captureMessage(message, { level: "warning", tags: { where } });
+}
