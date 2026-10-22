@@ -3,7 +3,7 @@
  * bounce through "Google", get tokens, then drive the tools through MCP, including the
  * propose → apply → undo cycle and the guards around apply.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
@@ -17,6 +17,9 @@ import { io, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { SERVER_VERSION } from "./tools.js";
 import { CATALOG_QUERY } from "./gaql.js";
+import { reportBug } from "./sentry.js";
+
+vi.mock("./sentry.js", async (orig) => ({ ...(await orig<typeof import("./sentry.js")>()), reportBug: vi.fn() }));
 
 const key = randomBytes(32);
 const idToken = (sub: string, email: string) =>
@@ -49,6 +52,8 @@ class FakeAds {
   campaignEnd: string | undefined;
   /** campaign.contains_eu_political_advertising; undefined reads as Google's "not declared". */
   euPolitical: string | undefined;
+  /** When set, Google refuses every mutate for want of the EU declaration, and these campaigns read as missing it. */
+  euBlock: { id: string; name: string }[] | undefined;
   async listAccessibleCustomers() { return ["1112223333"]; }
   fieldQueries: string[] = [];
   /** Google's field catalog: a trimmed real v23 snapshot. Any other query is a run_gaql field lookup, answered as Google shapes it. */
@@ -64,6 +69,8 @@ class FakeAds {
       selectableWith: Array.from({ length: 650 }, (_, i) => `resource_${i}`) }];
   }
   async search(_cid: string, q: string): Promise<any[]> {
+    if (q.includes("missing_eu_political_advertising_declaration = TRUE")) return (this.euBlock ?? []).map((c) => ({ campaign: c }));
+    if (q.endsWith("FROM customer")) return [{ customer: { containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING" } }];
     // Google's rule: a field in WHERE or ORDER BY must be in SELECT too.
     if (q.includes("ORDER BY campaign.status") && !/^SELECT[^]*campaign\.status[^]*FROM/.test(q)) {
       throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { queryError: "EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE" },
@@ -169,6 +176,10 @@ class FakeAds {
   /** A test can make Google refuse operations mentioning `text`: at validation too, or only on the real write. */
   failOn: { text: string; writesOnly?: boolean } | undefined;
   async mutate(_cid: string, service: string, operations: any[], opts: { validateOnly?: boolean } = {}) {
+    if (this.euBlock) {
+      throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { euPoliticalAdvertisingError: "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED" },
+        message: "Mutates are generally not allowed if the customer contains non-exempt campaigns without the EU political advertising declaration." }] }] } }));
+    }
     if (this.failOn && JSON.stringify(operations).includes(this.failOn.text) && !(this.failOn.writesOnly && opts.validateOnly)) {
       throw new Error(`Google Ads API 400: refused ${this.failOn.text}`);
     }
@@ -2116,6 +2127,23 @@ describe("OAuth + MCP end to end", () => {
     expect(euBack.summary).toContain('does not contain EU political advertising (was: contains)');
     await call(token, "apply_changes", { proposal_id: euBack.proposal_id });
     expect(ads.euPolitical).toBe("DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING");
+
+    // Google refuses the change for want of the declaration: the undeclared campaigns are named, so the AI can propose them.
+    const neg = { customer_id: "1112223333", changes: [{ type: "add_negative_keywords", campaign_id: "10", keywords: [{ text: "eu", match_type: "PHRASE" }] }] };
+    ads.euBlock = [{ id: "10", name: "Search" }];
+    const named = (await call(token, "propose_changes", neg)).text;
+    expect(named).toContain('Not declared yet: "Search" (id 10)');
+    expect(named).toContain("propose set_eu_political_advertising");
+    // None reads as missing, yet Google still refuses (prod, 2026-10-22): the AI was left with nothing to propose and stopped.
+    // Now it's told the user must answer in Google Ads, and the account state goes to Bugsink.
+    ads.euBlock = [];
+    const none = (await call(token, "propose_changes", neg)).text;
+    ads.euBlock = undefined;
+    expect(none).toContain("No campaign shows as missing it through the API");
+    expect(none).toContain("in Google Ads");
+    expect(none).not.toContain("propose set_eu_political_advertising");
+    expect(reportBug).toHaveBeenCalledWith(expect.stringContaining("customer 1112223333, account DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING; "
+      + "campaigns not declared: none"), "propose_changes");
 
     const ca = await propose([{ type: "create_conversion_action", name: "Provider signup", category: "SIGNUP" }]);
     expect(ca.summary).toContain('Create conversion action "Provider signup" (SIGNUP, uploaded click ids, one per click, primary) ⚠');

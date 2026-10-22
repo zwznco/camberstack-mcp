@@ -934,7 +934,8 @@ export class UserSession {
     const live = resolved.filter((r) => r.operations.length);
     if (!live.length) throw new Error("Nothing to change: every requested change is already in place.");
     // Dry run against Google so problems surface now, not after the user approves.
-    await mapLimited(live, (r) => this.write(a.customerId, a.loginCustomerId, r, true));
+    await mapLimited(live, (r) => this.write(a.customerId, a.loginCustomerId, r, true))
+      .catch((e) => this.explainEuBlock(e, a.customerId, a.loginCustomerId));
     const id = `p_${randomUUID().slice(0, 8)}`;
     const summary = summarize(live);
     this.deps.db.prepare(`INSERT INTO proposals (id, user_id, customer_id, login_customer_id, changes, summary, status, undo_of, created_at)
@@ -1052,6 +1053,38 @@ export class UserSession {
     return { proposal_id: fresh.proposal_id, status: "needs approval", replaces: p.id, summary: fresh.summary, skipped: fresh.skipped,
       note: `Nothing was applied: the account changed since ${p.id} was proposed, so it no longer matches what was approved. `
         + `Show the user this updated summary and call apply_changes with ${fresh.proposal_id} only after they approve it.` };
+  }
+
+  /**
+   * Google refuses every change to an account with an undeclared campaign, and the hint alone left the AI to look them up.
+   * When the lookup came back empty it had nothing to propose and stopped, twice for one user (prod, 2026-10-22). So
+   * look them up here and name them, or say plainly that none show through the API and the user must answer in Google
+   * Ads, and report that case: the account state that triggers it isn't known yet.
+   */
+  private async explainEuBlock(e: unknown, customerId: string, login: string | null): Promise<never> {
+    if (!(e instanceof AdsApiError) || !e.body.includes("EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED")) throw e;
+    const head = "Google Ads API 400: EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED Google refuses every change to this account until it has "
+      + "the EU political advertising declaration. ";
+    const missing = await this.ads.search(customerId, "SELECT campaign.id, campaign.name FROM campaign "
+      + "WHERE campaign.missing_eu_political_advertising_declaration = TRUE AND campaign.status != 'REMOVED'", login).catch(() => null);
+    if (!missing) throw e; // the static hint still says how to look them up
+    if (missing.length) {
+      e.message = head + `Not declared yet: ${missing.map((r) => `"${r.campaign.name}" (id ${r.campaign.id})`).join(", ")}. Ask the user whether `
+        + "any of them run EU political ads (it is their legal declaration; most businesses answer no), propose set_eu_political_advertising "
+        + "for each in one proposal, apply it, then propose this change again.";
+      throw e;
+    }
+    e.message = head + "No campaign shows as missing it through the API, so Camberstack can't make the declaration. Ask the user to answer "
+      + "the EU political ads question in Google Ads (in each campaign's settings, or Admin → Account settings), then propose this change again.";
+    const state = await Promise.all([
+      this.ads.search(customerId, "SELECT customer.contains_eu_political_advertising FROM customer", login),
+      this.ads.search(customerId, "SELECT campaign.id, campaign.status, campaign.advertising_channel_type, campaign.contains_eu_political_advertising FROM campaign", login),
+    ]).then(([[c], camps]) => `account ${c?.customer?.containsEuPoliticalAdvertising ?? "unset"}; campaigns not declared: `
+      + (camps.filter((r) => !/^(CONTAINS|DOES_NOT_CONTAIN)_EU/.test(r.campaign.containsEuPoliticalAdvertising ?? ""))
+        .map((r) => `${r.campaign.id} ${r.campaign.status} ${r.campaign.advertisingChannelType}`).join(", ") || "none"),
+    (err: Error) => `state unreadable: ${err.message.slice(0, 200)}`);
+    reportBug(`EU declaration required but none missing: customer ${customerId}, ${state}`, "propose_changes");
+    throw e;
   }
 
   /** Read what a change would do against the live account (Google Ads) or property (Google Analytics). */
