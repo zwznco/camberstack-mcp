@@ -72,8 +72,9 @@ export function buildReport(db: DB, o: ReportOptions) {
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id) calls,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 0) errors,
          (SELECT count(*) FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied') applied,
-         (SELECT count(DISTINCT customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.customer_id IS NOT NULL
-            AND c.customer_id != '${DEMO_CID}') used_accounts, u.ads_accounts, u.ads_managers,
+         -- Used as the plan counts it (session.ts usage): an account a call was stopped on, like a switch notice, isn't used.
+         (SELECT count(DISTINCT customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL
+            AND c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}')) used_accounts, u.ads_accounts, u.ads_managers,
          (SELECT ${client} FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id
             WHERE c.user_id = u.id ORDER BY c.at DESC LIMIT 1) client
        FROM {U} u ORDER BY coalesce(u.last_seen_at, u.created_at) DESC LIMIT 200`),
@@ -170,8 +171,9 @@ export function userDetail(db: DB, id: string, since = 0) {
     user,
     totals: db.prepare("SELECT count(*) calls, coalesce(sum(ok = 0), 0) errors, cast(coalesce(avg(ms), 0) AS int) avg_ms FROM tool_calls WHERE user_id = ? AND at >= ?").get(id, since) as
       { calls: number; errors: number; avg_ms: number },
-    accounts: calls<{ customer_id: string; calls: number; first: number; last: number }>(
-      `SELECT customer_id, count(*) calls, min(at) first, max(at) last FROM tool_calls WHERE user_id = ? AND at >= ? AND customer_id IS NOT NULL
+    // ok_calls = 0: only ever stopped (a switch notice before 0.19.0, a plan refusal) or failed, so not used.
+    accounts: calls<{ customer_id: string; calls: number; ok_calls: number; first: number; last: number }>(
+      `SELECT customer_id, count(*) calls, sum(ok) ok_calls, min(at) first, max(at) last FROM tool_calls WHERE user_id = ? AND at >= ? AND customer_id IS NOT NULL
        GROUP BY 1 ORDER BY last DESC`),
     clients: calls<{ client: string; calls: number; last: number }>(
       `SELECT ${client} client, count(*) calls, max(c.at) last FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id

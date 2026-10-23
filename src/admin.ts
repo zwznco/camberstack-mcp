@@ -388,7 +388,7 @@ function userPage(x: UserDetail, v: View): string {
 ${stat(`Calls · ${w}`, num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
 ${stat(`Errors · ${w}`, x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
 ${stat("Proposals · all time", num(x.proposals.length), `${x.proposals.filter((p) => p.status === "applied").length} applied`)}
-${stat("Ads accounts used", num(x.accounts.filter((a) => a.customer_id !== "0000000001").length),
+${stat("Ads accounts used", num(x.accounts.filter((a) => a.ok_calls > 0 && a.customer_id !== "0000000001" && a.customer_id !== "ga4").length),
     u.ads_accounts === null ? `${w} · visible not recorded yet`
       : `${w} · of ${u.ads_accounts} visible${u.ads_managers ? ` + ${u.ads_managers} manager${u.ads_managers > 1 ? "s" : ""}` : ""} (${ago(u.ads_accounts_at!)})`)}
 </div>
@@ -405,7 +405,8 @@ ${card("Account", `<dl>
 <dt>User id</dt><dd><code>${esc(u.id)}</code></dd>
 </dl>
 <form method="post" action="/users/${encodeURIComponent(u.id)}/login-as" target="_blank"><button>Log in as user ↗</button></form>`)}
-${card("Ads accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === "0000000001" ? ` <span class="chip">demo</span>` : ""), num(a.calls), when(a.first), when(a.last)]),
+${card("Ads accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === "0000000001" ? ` <span class="chip">demo</span>` : "")
+      + (a.ok_calls ? "" : ` <span class="chip">not used: stopped or failed</span>`), num(a.calls), when(a.first), when(a.last)]),
     "No calls in this window."), `<small>${w}</small>`)}
 </div>
 <div class="grid2">
