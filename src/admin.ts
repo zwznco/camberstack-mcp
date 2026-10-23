@@ -423,7 +423,7 @@ ${card("Recent calls", callsTable(x.recent.map((c) => ({ ...c, email: null }))),
 
 /**
  * The tool set an app holds: our version when it last fetched the list. Apps keep it until they fetch again. ChatGPT's
- * published app fetches once for everyone, so its users show that app-wide fetch (appToolLists in report.ts).
+ * published app fetches once for everyone, so its users show that fetch (appToolLists in report.ts).
  */
 function toolList(x: UserDetail, client: string): string {
   const own = x.toolLists.find((l) => l.client === client);  // newest first
@@ -431,7 +431,7 @@ function toolList(x: UserDetail, client: string): string {
   if (!t) return `<span class="dim" title="Hasn't fetched the tool list since 2026-10-15, when this started being recorded">unknown</span>`;
   const stale = t.version !== SERVER_VERSION;
   const how = own ? "Fetched" : "ChatGPT fetches the tool list once for every user of the app, not per user; last fetched";
-  return `<span class="${stale ? "bad" : "ok"}" title="${how} ${date(t.fetched_at)} UTC${stale ? `; current is ${SERVER_VERSION}` : ""}">${esc(t.version)}</span> <span class="dim">${own ? "" : "app-wide · "}${ago(t.fetched_at)}</span>`;
+  return `<span class="${stale ? "bad" : "ok"}" title="${how} ${date(t.fetched_at)} UTC${stale ? `; current is ${SERVER_VERSION}` : ""}">${esc(t.version)}</span> <span class="dim">${ago(t.fetched_at)}</span>`;
 }
 
 function callsTable(rows: { at: number; email: string | null; id?: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }[], v?: View): string {
