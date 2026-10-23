@@ -406,7 +406,7 @@ ${card("Account", `<dl>
 </dl>
 <form method="post" action="/users/${encodeURIComponent(u.id)}/login-as" target="_blank"><button>Log in as user ↗</button></form>`)}
 ${card("Ads accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === "0000000001" ? ` <span class="chip">demo</span>` : "")
-      + (a.ok_calls ? "" : ` <span class="chip">not used: stopped or failed</span>`), num(a.calls), when(a.first), when(a.last)]),
+      + (a.ok_calls ? "" : ` <span class="chip">not used</span>`), num(a.calls), when(a.first), when(a.last)]),
     "No calls in this window."), `<small>${w}</small>`)}
 </div>
 <div class="grid2">
