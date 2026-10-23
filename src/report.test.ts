@@ -112,6 +112,26 @@ describe("userDetail", () => {
   });
 });
 
+describe("userDetail tool lists", () => {
+  it("gives a ChatGPT app user the app's newest fetch, since ChatGPT fetches once for everyone", () => {
+    const db = openDb(":memory:");
+    const client = db.prepare("INSERT INTO clients (client_id, info, created_at) VALUES (?, ?, 0)");
+    client.run("gpt", JSON.stringify({ client_name: "ChatGPT", redirect_uris: ["https://chatgpt.com/connector/oauth/x"] }));
+    client.run("claude", JSON.stringify({ client_name: "Claude", redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] }));
+    const user = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, 'free', 0)");
+    for (const u of ["reviewer", "user", "other"]) user.run(u, u, `${u}@example.com`);
+    const call = db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, ok, ms, bytes) VALUES (1, ?, ?, 'list_accounts', 1, 5, 10)");
+    call.run("user", "gpt"); call.run("user", "claude");
+    const list = db.prepare("INSERT INTO client_tools (user_id, client_id, version, fetched_at) VALUES (?, ?, ?, ?)");
+    list.run("reviewer", "gpt", "0.18.0", 100);
+    list.run("reviewer2", "gpt", "0.19.0", 200);
+    list.run("other", "claude", "0.19.0", 300);  // Claude fetches per user: another user's list says nothing about this one's
+    const x = userDetail(db, "user")!;
+    expect(x.toolLists).toEqual([]);
+    expect(x.appToolLists).toEqual([{ client: "ChatGPT", version: "0.19.0", fetched_at: 200 }]);
+  });
+});
+
 describe("windowStart", () => {
   it("counts whole UTC days ending today", () => {
     const t = Date.parse("2026-10-20T00:52:00Z") / 1000;

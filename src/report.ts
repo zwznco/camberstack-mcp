@@ -198,6 +198,17 @@ export function userDetail(db: DB, id: string, since = 0) {
     toolLists: all<{ client: string; version: string; fetched_at: number }>(
       `SELECT ${client.replaceAll("c.client_id", "ct.client_id")} client, ct.version, ct.fetched_at
        FROM client_tools ct LEFT JOIN clients cl ON cl.client_id = ct.client_id WHERE ct.user_id = ? ORDER BY ct.fetched_at DESC`),
+    /**
+     * ChatGPT's published app fetches the tool list once, under the account that publishes or refreshes it, and serves
+     * that copy to every user, so its users never get a toolLists row (2026-10-23: 1 row across 23 users). For each
+     * ChatGPT client this user has, the newest fetch on that client by anyone stands in.
+     */
+    appToolLists: db.prepare(`SELECT ${client.replaceAll("c.client_id", "ct.client_id")} client, ct.version, ct.fetched_at
+       FROM client_tools ct JOIN clients cl ON cl.client_id = ct.client_id
+       WHERE ct.client_id IN (SELECT client_id FROM tool_calls WHERE user_id = ? UNION SELECT client_id FROM tokens WHERE user_id = ?)
+         AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%')
+         AND ct.fetched_at = (SELECT max(fetched_at) FROM client_tools WHERE client_id = ct.client_id)
+       ORDER BY ct.fetched_at DESC`).all(id, id) as { client: string; version: string; fetched_at: number }[],
     tools: calls<{ tool: string; calls: number; errors: number }>(
       "SELECT tool, count(*) calls, sum(ok = 0) errors FROM tool_calls WHERE user_id = ? AND at >= ? GROUP BY 1 ORDER BY calls DESC"),
     proposals: all<{ id: string; customer_id: string; summary: string; status: string; undo_of: string | null; created_at: number; applied_at: number | null }>(
