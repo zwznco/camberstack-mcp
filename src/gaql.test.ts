@@ -187,6 +187,10 @@ describe("gaql_fields lookup (unlisted; apps that hold it still call it)", () =>
     expect(top("campaign.url_expansion_opt_out")).toEqual([]);
     expect(top("conversion_action.all_conversions_settings")).toEqual([]);
   });
+  it("offers the resource's own <resource>_<leaf> before other resources' fields", () => {
+    // experiment.id got only customer.id, the one .id usable FROM experiment (2026-10-23).
+    expect(closest("experiment.id", ["customer.id", "experiment.experiment_id", "experiment.name"])[0]).toBe("experiment.experiment_id");
+  });
   it("ranks the shared last part first", () => {
     expect(closest("campaign.max_clicks.cpc_bid_ceiling_micros", ["campaign.target_spend.cpc_bid_ceiling_micros", "campaign.max_clicks"])[0])
       .toBe("campaign.target_spend.cpc_bid_ceiling_micros");

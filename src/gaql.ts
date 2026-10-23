@@ -257,6 +257,10 @@ export function closest(name: string, pool: string[]): string[] {
   // Same last part (e.g. every *.cpc_bid_ceiling_micros): offer them all, since the path is what was guessed wrong and
   // names alone can't tell which (maximize clicks is target_spend in the API, say).
   const sameLeaf = scored.filter((x) => x.c.split(".").at(-1) === leaf);
+  // The resource's own name prefixed to the leaf: experiment.id is experiment.experiment_id, and the same-leaf rule alone
+  // offered only customer.id for it (2026-10-23).
+  const own = parts.length > 1 ? `${parts.slice(0, -1).join(".")}.${parts.at(-2)}_${leaf}` : "";
+  if (pool.includes(own)) return [own, ...sameLeaf.map((x) => x.c)].slice(0, 8);
   if (sameLeaf.length) return sameLeaf.slice(0, 8).map((x) => x.c);
   // Otherwise only names that are plausibly what was meant, judged on the last part: sharing the resource prefix alone
   // offered campaign.campaign_group for campaign.url_expansion_opt_out (2026-10-15), and a wrong guess costs a retry.
