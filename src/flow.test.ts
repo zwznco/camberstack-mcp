@@ -662,6 +662,32 @@ describe("OAuth + MCP end to end", () => {
       .toEqual([{ a: 1, m: 0, ids: "[]" }]);
   });
 
+  it("lists clients of a manager nested under another manager", async () => {
+    const realList = ads.listAccessibleCustomers.bind(ads), realSearch = ads.search.bind(ads);
+    // Google's customer_client: the root manager 9990001111, a sub-manager 9990002222 under it, and its client 2223334444.
+    const tree = [
+      { id: "9990001111", descriptiveName: "Agency", manager: true, level: 0 },
+      { id: "9990002222", descriptiveName: "Agency East", manager: true, level: 1 },
+      { id: "2223334444", descriptiveName: "Beta", manager: false, level: 2 },
+    ];
+    ads.listAccessibleCustomers = async () => ["9990001111"];
+    ads.search = async (cid: string, q: string) => {
+      if (!q.includes("FROM customer_client")) return realSearch(cid, q);
+      const max = /level <= (\d+)/.exec(q)?.[1];
+      return tree.filter((c) => max === undefined || c.level <= Number(max)).map((c) => ({ customerClient: { ...c, currencyCode: "USD", status: "ENABLED" } }));
+    };
+    try {
+      const { accounts } = (await call(token, "list_accounts")).json as { accounts: { customerId: string; loginCustomerId: string | null }[] };
+      expect(accounts.find((a) => a.customerId === "2223334444")).toMatchObject({ loginCustomerId: "9990001111" });
+      expect(db.prepare("SELECT DISTINCT ads_accounts a, ads_managers m FROM users WHERE enc_refresh IS NOT NULL AND ads_accounts_at IS NOT NULL").all())
+        .toEqual([{ a: 1, m: 2 }]);
+    } finally {
+      ads.listAccessibleCustomers = realList;
+      ads.search = realSearch;
+      await call(token, "list_accounts");  // back to the usual one account for the tests after
+    }
+  });
+
   it("lists accounts once across requests, not once per tool call", async () => {
     const real = ads.listAccessibleCustomers.bind(ads);
     let lists = 0;

@@ -433,9 +433,11 @@ export class UserSession {
       unreadable.push({ customerId: "this Google login", error: (e as Error).message, ...(e instanceof NotGrantedError && e.link ? { grant_url: e.link } : {}) });
     }
     // All roots at once; merged below in Google's order, so the result is the same as reading them one by one.
+    // Every level, not just direct clients: a manager under a manager has its own clients, which a level <= 1 read never
+    // listed (2026-10-23). The root works as login-customer-id at any depth below it.
     const perRoot = await Promise.all(roots.map((root) => this.ads.search(root, `SELECT customer_client.id, customer_client.descriptive_name,
         customer_client.currency_code, customer_client.time_zone, customer_client.manager, customer_client.level, customer_client.status
-      FROM customer_client WHERE customer_client.level <= 1 AND customer_client.status = 'ENABLED'`, root)
+      FROM customer_client WHERE customer_client.status = 'ENABLED'`, root)
       .then((rows) => ({ rows }), (e: Error) => ({ error: e.message }))));
     for (const [i, root] of roots.entries()) {
       const got = perRoot[i]!;
