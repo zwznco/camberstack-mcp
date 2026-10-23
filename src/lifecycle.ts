@@ -7,7 +7,7 @@
  *                  spend it, still free the next morning (6+ hours later) → the plan that covers all their accounts
  *                  (Pro, or Agency past Pro's limit), its upgrade link. One upgrade email per user: never both this and limit_reached
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
- *   welcome        signed up (still Free) → the first question to ask, the demo, the plans
+ *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on Pro with a Stripe subscription → what Pro adds, where billing lives
  * Those two are transactional: sent within a minute (transactional(), every minute), not held for the morning.
  * The first three go out in the user's morning (SEND_HOURS in the time zone of their Google Ads account, or FALLBACK_TZ),
@@ -159,7 +159,9 @@ export class Lifecycle {
   }
 
   /**
-   * Every minute. welcome: a Free user who connected in the last day (Pro gets pro_welcome instead).
+   * Every minute. welcome: a Free user who connected in the last day (Pro gets pro_welcome instead), once their app holds a
+   * token or has called a tool. The account exists from the Google callback, before the app swaps its code for a token: a
+   * Codex that never did got "You're connected" while it couldn't connect (2026-10-23). Finishing later, within the day, still sends it.
    * pro_welcome: anyone on Pro through Stripe who hasn't had it. Polling the plan, not hooking the
    * upgrade, covers every way someone becomes Pro (/upgraded, the paywall's refreshPlan, the hourly sweep).
    * PRO_EMAILS users have no stripe_sub, so they never get it.
@@ -171,7 +173,8 @@ export class Lifecycle {
       .all() as { id: string; email: string; plan: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
     const fresh = (this.d.db.prepare(`SELECT u.id, u.email FROM users u WHERE u.plan = 'free' AND u.enc_refresh IS NOT NULL
-      AND u.created_at >= ? AND u.email_opt_out = 0 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = 'welcome')`)
+      AND u.created_at >= ? AND u.email_opt_out = 0 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = 'welcome')
+      AND (EXISTS (SELECT 1 FROM tokens t WHERE t.user_id = u.id) OR EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id))`)
       .all(Math.max(WELCOME_SINCE, now() - WELCOME_WITHIN)) as { id: string; email: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
     return await this.deliver(fresh.map((u) => ({ ...u, kind: "welcome" as const, days: 0 })), () => welcome(this.d.baseUrl))

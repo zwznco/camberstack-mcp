@@ -226,12 +226,16 @@ describe("pro_welcome (transactional)", () => {
 describe("welcome (transactional)", () => {
   it("goes once to a Free user who just signed up, never to earlier signups, Pro, internal or disconnected users", async () => {
     const { db, lc, sent, user } = setup(() => new Date("2026-10-14T03:00:00Z"));  // any hour
+    const token = (id: string) => db.prepare("INSERT INTO tokens (token_hash, kind, client_id, user_id, scopes, expires_at) VALUES (?, 'refresh', 'c', ?, '', ?)")
+      .run(`h-${id}`, id, now() + DAY);
     user("new", "new@example.com", 0);
     user("old", "old@example.com", 3);                 // before welcome shipped: no backfill
     user("paid", "paid@example.com", 0, "pro");        // gets pro_welcome only if Stripe; never welcome
     user("me", "me@example.com", 0);                   // internal
     user("gone", "gone@example.com", 0);
     db.prepare("UPDATE users SET enc_refresh = NULL WHERE id = 'gone'").run();
+    user("dropped", "dropped@example.com", 0);         // the app never swapped its code for a token: not connected
+    for (const id of ["new", "old", "paid", "me", "gone"]) token(id);
     expect(await lc.transactional()).toBe(1);
     expect(sent.map((m) => m.to[0])).toEqual(["new@example.com"]);
     const m = sent[0];
@@ -241,11 +245,15 @@ describe("welcome (transactional)", () => {
     expect(m.text).toContain("https://camberstack.io/account");
     expect(m.text).toContain("$15/month");
     expect(await lc.transactional()).toBe(0);  // never twice
+    token("dropped");                            // connected after all, later the same day
+    expect(await lc.transactional()).toBe(1);
+    expect(sent.at(-1).to).toEqual(["dropped@example.com"]);
   });
 
   it("a Free user who then upgrades gets both, welcome first", async () => {
     const { db, lc, sent, user } = setup();
     user("u", "u@example.com", 0);
+    db.prepare("INSERT INTO tokens (token_hash, kind, client_id, user_id, scopes, expires_at) VALUES ('h-u', 'refresh', 'c', 'u', '', ?)").run(now() + DAY);
     expect(await lc.transactional()).toBe(1);
     db.prepare("UPDATE users SET plan = 'pro', stripe_sub = 'sub_1' WHERE id = 'u'").run();
     expect(await lc.transactional()).toBe(1);
