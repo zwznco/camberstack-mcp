@@ -467,6 +467,19 @@ async function call(token: string, name: string, args: object = {}) {
   return { isError: !!body.result?.isError, text, json: body.result?.isError ? null : JSON.parse(text || "null") };
 }
 
+/**
+ * What every connection loads before its first call, so it can't grow unnoticed (2026-10-23: 18.5K tokens, a third of it
+ * field descriptions repeated per change kind). The budgets sit just above that day's sizes: raising one is a decision,
+ * not a side effect. Claude Code cuts any description past 4,096 characters (its MCP docs), so none may get there.
+ */
+function expectToolBudget(tools: { name: string; description?: string }[], b: { total: number; perTool: number; except?: Record<string, number> }) {
+  expect(JSON.stringify(tools).length, "tools/list bytes").toBeLessThanOrEqual(b.total);
+  for (const t of tools) {
+    expect(JSON.stringify(t).length, t.name).toBeLessThanOrEqual(b.except?.[t.name] ?? b.perTool);
+    expect((t.description ?? "").length, t.name).toBeLessThanOrEqual(4096);
+  }
+}
+
 describe("OAuth + MCP end to end", () => {
   let token = "";
 
@@ -593,6 +606,7 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT version FROM client_tools").all()).toEqual([{ version: SERVER_VERSION }]);
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
+    expectToolBudget(tools, { total: 72_000, perTool: 6_000, except: { propose_changes: 40_000 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1068,6 +1082,7 @@ describe("OAuth + MCP end to end", () => {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
+      expectToolBudget(tools, { total: 90_000, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
