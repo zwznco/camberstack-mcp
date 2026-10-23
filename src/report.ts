@@ -25,13 +25,29 @@ export function windowStart(days: number, t = now()): number {
 
 /**
  * The AI app a user connected from (alias `u`): their first tool call's client, else the client on a live token (they
- * connected but haven't called a tool). Tokens go on disconnect, so a disconnected user with no calls reads NULL.
+ * connected but haven't called a tool), else the client they signed up through (users.signup_client_id, since 2026-10-23:
+ * an app that dropped the sign-in before taking its token). Earlier users with none of these read NULL.
  */
 const cameFrom = `coalesce(
   (SELECT json_extract(cl.info, '$.client_name') FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id
     WHERE c.user_id = u.id ORDER BY c.at LIMIT 1),
   (SELECT json_extract(cl.info, '$.client_name') FROM tokens t JOIN clients cl ON cl.client_id = t.client_id
-    WHERE t.user_id = u.id LIMIT 1))`;
+    WHERE t.user_id = u.id LIMIT 1),
+  (SELECT json_extract(cl.info, '$.client_name') FROM clients cl WHERE cl.client_id = u.signup_client_id))`;
+
+/**
+ * Connects by app, one row per app: "Claude Code (camberstack)" is Claude Code, the parenthesis being the server name
+ * the user typed into it, so its rows merge with the bare name's.
+ */
+function byApp<R extends { app: string | null; connected: number; in_window: number; used_real: number; applied: number }>(rows: R[]): R[] {
+  const out = new Map<string | null, R>();
+  for (const r of rows) {
+    const app = r.app?.replace(/\s*\(.*\)$/, "") || null, m = out.get(app);
+    if (!m) { out.set(app, { ...r, app }); continue; }
+    m.connected += r.connected; m.in_window += r.in_window; m.used_real += r.used_real; m.applied += r.applied;
+  }
+  return [...out.values()].sort((a, b) => Number(a.app === null) - Number(b.app === null) || b.connected - a.connected);
+}
 
 export function buildReport(db: DB, o: ReportOptions) {
   const since = windowStart(o.days);
@@ -99,12 +115,12 @@ export function buildReport(db: DB, o: ReportOptions) {
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
-    sources: q<{ app: string | null; connected: number; in_window: number; used_real: number; applied: number }>(
+    sources: byApp(q<{ app: string | null; connected: number; in_window: number; used_real: number; applied: number }>(
       `SELECT ${cameFrom} app, count(*) connected,
          sum(u.created_at >= ?) in_window,
          sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL AND c.customer_id != '${DEMO_CID}')) used_real,
          sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}')) applied
-       FROM {U} u GROUP BY 1 ORDER BY app IS NULL, connected DESC`, since),
+       FROM {U} u GROUP BY 1 ORDER BY app IS NULL, connected DESC`, since)),
     adConversions: q<{ recorded: number; uploaded: number; failing: number; last_error: string | null }>(
       `SELECT count(*) recorded, count(a.uploaded_at) uploaded, sum(a.uploaded_at IS NULL AND a.error IS NOT NULL) failing,
          (SELECT f.error FROM ad_conversions f JOIN {U} fu ON fu.id = f.user_id WHERE f.uploaded_at IS NULL AND f.error IS NOT NULL

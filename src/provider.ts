@@ -192,7 +192,7 @@ export class CamberstackProvider implements OAuthServerProvider {
       back.searchParams.set("error_description", "This Camberstack server is private. Connect https://camberstack.io/mcp instead.");
       return { to: back.toString() };
     }
-    const { user, created } = this.upsertUser(sub, email, g.refresh_token, g.scope);
+    const { user, created } = this.upsertUser(sub, email, g.refresh_token, g.scope, pending.client_id);
 
     const code = randomToken();
     this.db.prepare(`INSERT INTO auth_codes
@@ -204,7 +204,7 @@ export class CamberstackProvider implements OAuthServerProvider {
     return { to: back.toString(), userId: user.id, created };
   }
 
-  private upsertUser(sub: string, email: string, refreshToken?: string, scope?: string): { user: UserRow; created: boolean } {
+  private upsertUser(sub: string, email: string, refreshToken?: string, scope?: string, clientId?: string): { user: UserRow; created: boolean } {
     const existing = this.db.prepare("SELECT * FROM users WHERE google_sub = ?").get(sub) as UserRow | undefined;
     const enc = refreshToken ? encrypt(this.opts.encryptionKey, refreshToken) : null;
     if (existing) {
@@ -215,8 +215,8 @@ export class CamberstackProvider implements OAuthServerProvider {
     }
     if (!enc) throw new Error("Google did not return a refresh token; remove Camberstack at myaccount.google.com/permissions and connect again.");
     const id = randomUUID();
-    this.db.prepare("INSERT INTO users (id, google_sub, email, enc_refresh, google_scopes, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(id, sub, email, enc, scope ?? null, now(), now());
+    this.db.prepare("INSERT INTO users (id, google_sub, email, enc_refresh, google_scopes, created_at, last_seen_at, signup_client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, sub, email, enc, scope ?? null, now(), now(), clientId ?? null);
     return { user: this.db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow, created: true };
   }
 

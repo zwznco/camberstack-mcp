@@ -80,6 +80,17 @@ describe("came from", () => {
     expect(r.sources.map((s) => [s.app, s.connected])).toEqual([["ChatGPT", 2], [null, 1]]);
     expect(userDetail(db, "called")!.user.came_from).toBe("ChatGPT");
     expect(userDetail(db, "none")!.user.came_from).toBeNull();
+    // An app that dropped the sign-in before taking its token is still named, from the client it signed up through;
+    // "Claude Code (camberstack)" counts as Claude Code.
+    client.run("cx", JSON.stringify({ client_name: "Codex" }));
+    client.run("cc1", JSON.stringify({ client_name: "Claude Code" }));
+    client.run("cc2", JSON.stringify({ client_name: "Claude Code (camberstack)" }));
+    for (const [id, c] of [["dropped", "cx"], ["cc-a", "cc1"], ["cc-b", "cc2"]]) {
+      user.run(id, id, `${id}@example.com`, now() - 60);
+      db.prepare("UPDATE users SET signup_client_id = ? WHERE id = ?").run(c, id);
+    }
+    expect(buildReport(db, { days: 7, exclude: [] }).sources.map((s) => [s.app, s.connected]))
+      .toEqual([["ChatGPT", 2], ["Claude Code", 2], ["Codex", 1], [null, 1]]);
   });
 });
 

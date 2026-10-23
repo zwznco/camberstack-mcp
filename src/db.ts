@@ -194,6 +194,9 @@ export function openDb(dataDir: string): DB {
   for (const c of ["ads_accounts", "ads_managers", "ads_accounts_at"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} INTEGER`);
   // Which manager accounts, as a JSON array of IDs (2026-10-22): logins under one manager are how Free could be multiplied (report.ts sharing).
   if (!cols.has("ads_manager_ids")) db.exec("ALTER TABLE users ADD COLUMN ads_manager_ids TEXT");
+  // The registered MCP client the account was created through (provider.ts, 2026-10-23): names the app for a connect the
+  // app never finished (a Codex sign-in that never swapped its code for a token left no call or token to name it).
+  if (!cols.has("signup_client_id")) db.exec("ALTER TABLE users ADD COLUMN signup_client_id TEXT");
   // First-touch utm source (2026-10-16 → 10-22) tagged 2 of 34 users; the AI app a user connected from (report.ts) replaced it.
   for (const c of ["src_source", "src_campaign", "src_content", "src_click"]) if (cols.has(c)) db.exec(`ALTER TABLE users DROP COLUMN ${c}`);
   // run_gaql's query shape (2026-10-15): which fields custom queries ask for, never the values in them.
