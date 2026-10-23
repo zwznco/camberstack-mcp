@@ -71,6 +71,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     db, baseUrl: cfg.baseUrl, mail: cfg.mail, fetch: overrides.mailFetch, internalEmails,
     signingKey: lifecycleSigningKey(cfg.encryptionKey),
     upgradeLink: (userId) => billing.link("upgrade", userId),
+    agencyLink: (userId) => billing.link("agency", userId),
   });
   const announcements = new Announcements({ db, lifecycle, internalEmails, canSend: !!cfg.mail });
   const info = (title: string, body: string) => infoPage(cfg.baseUrl, title, body);

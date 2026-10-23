@@ -78,6 +78,38 @@ describe("lifecycle emails", () => {
     expect(await lc.run()).toBe(0);
   });
 
+  it("sends switch_wanted once to a Free user stopped before a switch, with the plan that covers all their accounts", async () => {
+    const { db, sent, user, call } = setup();
+    const lc = new Lifecycle({ db, clock: () => MORNING, baseUrl: "https://camberstack.io", signingKey: Buffer.alloc(32, 7),
+      mail: { apiKey: "re_test", from: "Adam at Camberstack <adam@camberstack.io>", replyTo: "adam@camberstack.io" },
+      internalEmails: new Set(), upgradeLink: (u) => `https://camberstack.io/upgrade?t=${u}.sig`,
+      agencyLink: (u) => `https://camberstack.io/upgrade?t=${u}.sig&plan=agency`,
+      fetch: (async (_url: string, init: RequestInit) => { sent.push(JSON.parse(String(init.body))); return new Response("{}", { status: 200 }); }) as any });
+    // As 0.19.0 logs it: ok, no account, the notice's text in error.
+    const notice = (userId: string, daysAgo: number, cid = "2223334444") =>
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'account_overview', 1, ?, 10, 10)")
+        .run(now() - daysAgo * DAY, userId, `Account switch: using ${cid} spends this plan's one switch per 30 days. 1112223333 would lock until 2026-11-22.`);
+    const visible = (id: string, n: number) => db.prepare("UPDATE users SET ads_accounts = ? WHERE id = ?").run(n, id);
+    user("few", "few@example.com", 1); call("few", "account_overview"); notice("few", 0.3); visible("few", 5);
+    user("many", "many@example.com", 1); call("many", "account_overview"); notice("many", 0.3); visible("many", 12);
+    user("soon", "soon@example.com", 1); notice("soon", 0.1);                                  // under 6 hours ago
+    user("spent", "spent@example.com", 1); notice("spent", 0.5);                               // then said yes to the switch
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes) VALUES (?, 'spent', 'switch_account', '2223334444', 1, 10, 10)").run(now() - 0.4 * DAY);
+    user("pro", "pro@example.com", 1, "pro"); notice("pro", 0.3);
+    expect(await lc.run()).toBe(2);
+    const by = Object.fromEntries(sent.map((m) => [m.to[0], m]));
+    expect(Object.keys(by).sort()).toEqual(["few@example.com", "many@example.com"]);
+    expect(by["few@example.com"].subject).toBe("Working on more than one Google Ads account?");
+    expect(by["few@example.com"].text).toContain("You have 5 Google Ads accounts. If you want to manage all of them, try Camberstack Pro: up to 5 accounts");
+    expect(by["few@example.com"].text).toContain("https://camberstack.io/upgrade?t=few.sig\n");
+    expect(by["many@example.com"].text).toContain("try Camberstack Agency: up to 25 accounts");
+    expect(by["many@example.com"].text).toContain("plan=agency");
+    expect(by["few@example.com"].text).not.toContain("2223334444");  // counts, never account ids
+    // One upgrade email per user: limit_reached later doesn't follow it.
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'few', 'account_overview', 0, 'Plan limit: x; the next opens 2026-11-13.', 10, 10)").run(now() - 0.3 * DAY);
+    expect(await lc.run()).toBe(0);
+  });
+
   it("sends check_in once, 2+ days after the first change applied to a real account", async () => {
     const { lc, sent, user, call, applied } = setup();
     const used = (id: string) => call(id, "account_overview");   // keeps first_steps out of the way
