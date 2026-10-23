@@ -5,12 +5,12 @@ import { MAX_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice } from "./plans.js";
 import { isDemo, type Account, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.18.0";
+export const SERVER_VERSION = "0.19.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -105,19 +105,27 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       const cid = lookup ? undefined : (a as { customer_id?: unknown } | undefined)?.customer_id;
       let out: ReturnType<typeof ok> | ReturnType<typeof fail>;
       let release = () => {};
+      let notice: string | null = null;
       try {
         if (GATED.has(name) && typeof cid === "string")
           // Only switch_account may spend the plan's switch: the read tools stay free of side effects.
           release = await session().checkAccount(cid, name === "switch_account");
         out = ok(await fn(a));
       } catch (e) {
-        out = fail(e);
-        if (isUnexpected(e)) reportError(e, name);
+        if (e instanceof SwitchNotice) {
+          // A question for the user, not a failure: a normal result (plans.ts SwitchNotice).
+          notice = e.message;
+          out = ok({ notice: e.message, ...e.detail });
+        } else {
+          out = fail(e);
+          if (isUnexpected(e)) reportError(e, name);
+        }
       }
       try {
         log({
-          tool: name, customerId: typeof cid === "string" ? cid.replace(/-/g, "") : null,
-          ok: !("isError" in out), error: "isError" in out ? out.content[0]!.text.slice(7, 1007) : null,
+          // A notice logs as ok but with no account, since none was used (session.ts usage); its text stays in error.
+          tool: name, customerId: typeof cid === "string" && !notice ? cid.replace(/-/g, "") : null,
+          ok: !("isError" in out), error: "isError" in out ? out.content[0]!.text.slice(7, 1007) : notice?.slice(0, 1000) ?? null,
           ms: Date.now() - t0, bytes: out.content[0]!.text.length,
           queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
         });
@@ -162,6 +170,15 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           : `This ${ACCOUNT_WINDOW_DAYS}-day switch is used; locked accounts open up from ${st.switchOpens}`
             + (s.chatgpt || s.planName === "agency" ? "." : s.isPro ? ", or on Agency, which covers more (the billing tool has the switch link)."
               : ", or on Pro or Agency, which cover more (the billing tool has the upgrade links)."),
+      } } : {}),
+      // Before the limit, the first accounts any tool touches become the plan's, unasked: a Free user with 5 accounts was
+      // given whichever the AI overviewed first (2026-10-23). With more accounts than the plan has room for, ask first.
+      ...(!st.full && accounts.filter((a) => counted(a) && !st.used.includes(a.customerId)).length > s.accountLimit - st.used.length ? { plan: {
+        plan: s.planName, accounts_included: s.accountLimit, active_accounts: st.active,
+        choosing: `This plan covers ${s.accountLimit} Google Ads account${s.accountLimit === 1 ? "" : "s"} at a time, and the first `
+          + `${s.accountLimit === 1 ? "account" : "accounts"} a tool is used on become${s.accountLimit === 1 ? "s" : ""} the plan's `
+          + `(after that, one switch per ${ACCOUNT_WINDOW_DAYS} days). This login has more, so ask the user which to work on before `
+          + "calling any tool with a customer_id, and don't survey several. The demo account never counts.",
       } } : {}),
       ...(s.lastUnreadable.length ? { unreadable: s.lastUnreadable } : {}),
       // Google Ads wasn't granted (connected for Search Console only): one link adds it, nothing to reconnect.

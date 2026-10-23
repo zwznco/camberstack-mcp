@@ -1151,12 +1151,16 @@ describe("OAuth + MCP end to end", () => {
     const uid = (db.prepare("SELECT id FROM users WHERE email = 'owner@example.com'").get() as { id: string }).id;
     // One account in use: a new one is the switch. The first call only says what spending it would lock, and uses nothing.
     const ask = await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 });
-    expect(ask.isError).toBe(true);
-    expect(ask.text).toContain("Account switch: using 2223334444 spends this plan's one switch per 30 days. 1112223333 would lock until ");
+    // Not an error: nothing failed, and errors count against the directory's reliability metrics.
+    expect(ask.isError).toBe(false);
     expect(ask.text).not.toContain("Plan limit:");  // a notice, not a refusal: no limit_reached email
-    const notice = JSON.parse(ask.text.slice(ask.text.indexOf("\n") + 1));
-    expect(notice).toMatchObject({ error: "switch_confirmation_needed", switch_to: "2223334444", locks_account: "1112223333",
+    const notice = ask.json;
+    expect(notice.notice).toContain("Account switch: using 2223334444 spends this plan's one switch per 30 days. 1112223333 would lock until ");
+    expect(notice).toMatchObject({ status: "switch_confirmation_needed", switch_to: "2223334444", locks_account: "1112223333",
       keep_both: { plan: "pro", accounts_included: 5 } });
+    // Logged as ok with no account: the notice used nothing, so it neither counts as an error nor toward the plan.
+    expect(db.prepare("SELECT tool, customer_id, ok, substr(error, 1, 15) e FROM tool_calls WHERE user_id = ? ORDER BY id DESC LIMIT 1").get(uid))
+      .toEqual({ tool: "account_overview", customer_id: null, ok: 1, e: "Account switch:" });
     expect(notice.keep_both.upgrade_url).toContain("/upgrade?t=");
     expect(notice.to_go_ahead).toContain("call switch_account with customer_id 2223334444");
     // A field lookup reads Google's catalog, not the account it names: no switch, and the account isn't logged as used.
@@ -1231,6 +1235,34 @@ describe("OAuth + MCP end to end", () => {
     const list = (await call(token, "list_accounts")).json;
     expect(list.plan).toBeUndefined();
     expect(list.accounts.find((a: any) => a.customerId === "1112223333").plan_status).toBe("active");
+  });
+
+  it("asks which account to start on when the login has more than the plan covers", async () => {
+    const uid = (db.prepare("SELECT id FROM users WHERE email = 'owner@example.com'").get() as { id: string }).id;
+    const saved = db.prepare("SELECT * FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").all(uid);
+    db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
+    const fresh = token;
+    // One account: nothing to choose.
+    expect((await call(fresh, "list_accounts")).json.plan).toBeUndefined();
+    const realSearch = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
+      ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
+      : realSearch(cid, q);
+    try {
+      const list = (await call(fresh, "list_accounts")).json;
+      expect(list.plan).toMatchObject({ plan: "free", accounts_included: 1, active_accounts: [] });
+      expect(list.plan.choosing).toContain("ask the user which to work on");
+      // Once one is in use the plan is full, and list_accounts says what a switch would cost instead.
+      await call(fresh, "account_overview", { customer_id: "111-222-3333", days: 30 });
+      const after = (await call(fresh, "list_accounts")).json;
+      expect(after.plan.choosing).toBeUndefined();
+      expect(after.plan.switching).toContain("One switch per 30 days");
+    } finally {
+      ads.search = realSearch;
+      db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
+      const put = db.prepare("INSERT OR REPLACE INTO tool_calls (id, at, user_id, client_id, tool, customer_id, ok, error, ms, bytes) VALUES (@id, @at, @user_id, @client_id, @tool, @customer_id, @ok, @error, @ms, @bytes)");
+      for (const r of saved) put.run(r);
+    }
   });
 
   it("surfaces Google's refusal instead of reporting no accounts", async () => {

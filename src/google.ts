@@ -166,6 +166,11 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
     case "CHANGE_DATE_RANGE_INFINITE":
       return "change_event needs both ends of the window, within the last 30 days, plus a LIMIT (at most 10000): WHERE change_event.change_date_time "
         + ">= 'YYYY-MM-DD' AND change_event.change_date_time <= 'YYYY-MM-DD' … LIMIT 1000. For changes made through Camberstack, use change_history.";
+    case "START_DATE_TOO_OLD":
+      // DURING LAST_30_DAYS on change_event, 2026-10-23: the window starts at midnight 30 days back, just past the limit.
+      return "change_event reaches back 30 days to the second (change_status 90), and DURING LAST_30_DAYS starts just past that. "
+        + "Start a day inside the limit with explicit dates: WHERE change_event.change_date_time >= 'YYYY-MM-DD' (29 days ago) "
+        + "AND change_event.change_date_time <= 'YYYY-MM-DD' … LIMIT 1000.";
     case "MISALIGNED_DATE_FOR_FILTER":
       return "keep segments.week/month/quarter in SELECT but filter on segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' instead: rows "
         + "still come back per week/month/quarter. (Filtering segments.week itself needs a Monday; segments.month the 1st.)";

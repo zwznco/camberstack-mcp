@@ -29,6 +29,7 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select or filter on the following segments: 'segments.geo_target_city'(could not support requested resources: 'CAMPAIGN'), since segment is incompatible with the resource in the FROM clause or other selected segmenting resources", undefined, "FROM geographic_view"],
     [{ queryError: "BAD_ENUM_CONSTANT" }, "Invalid enum values cannot be included in WHERE clause: 'LOCATION', 'AFFILIATE_LOCATION'.", undefined, "FROM campaign_asset_set"],
     [{ changeEventError: "CHANGE_DATE_RANGE_INFINITE" }, "The change_event request is missing filters on change_event.change_date_time or is filtering on change_event.change_date_time with an infinite range.", undefined, "both ends of the window"],
+    [{ changeEventError: "START_DATE_TOO_OLD" }, "The requested start date is too old. It cannot be older than 30 days.", undefined, "29 days ago"],
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized field in the query: 'metrics.video_views'.", undefined, "metrics.video_trueview_views"],
     [{ queryError: "UNEXPECTED_INPUT" }, "Error in query: unexpected input OR.", undefined, "no parentheses or OR"],
     [{ queryError: "PROHIBITED_SEGMENT_WITH_METRIC_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select the following segments because at least one unsupported metric is found in SELECT or WHERE clause: 'segments.conversion_action_name'(unsupported metrics: 'cost_micros').", undefined, "second one without the segment"],

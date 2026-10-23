@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, accountsLabel, isPaid, type Plan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, isPaid, type Plan } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -345,10 +345,10 @@ export class UserSession {
     const last = this.usage().find((u) => u.c === locks)?.last ?? now();
     const reopens = new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
     const next = this.nextPlan();
-    throw new PlanLimitError(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one switch per ${ACCOUNT_WINDOW_DAYS} days. `
+    throw new SwitchNotice(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one switch per ${ACCOUNT_WINDOW_DAYS} days. `
       + `${locks} would lock until ${reopens}, including switching back to it. Nothing has been used yet. `
       + `Ask the user; if they want to go ahead, call switch_account with customer_id ${cid}, then this tool again.`,
-      { error: "switch_confirmation_needed", plan: this.planName, switch_to: cid, locks_account: locks,
+      { status: "switch_confirmation_needed", plan: this.planName, switch_to: cid, locks_account: locks,
         locked_until: reopens, accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
         to_go_ahead: `once the user agrees, call switch_account with customer_id ${cid}, then this tool again`,
         ...(next ? { keep_both: { ...next, pricing_page: next.upgrade_url ? null : `${this.deps.baseUrl}/#pricing` } } : {}) });

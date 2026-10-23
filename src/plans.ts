@@ -13,7 +13,7 @@ export const isPaid = (plan: string | null | undefined) => plan === "pro" || pla
 export const ACCOUNT_WINDOW_DAYS = 30;
 /** Error text the account gate starts with; lifecycle.ts finds blocked users by it in tool_calls. */
 export const PLAN_LIMIT_PREFIX = "Plan limit:";
-/** Error text of the notice before a plan's one switch is spent (session.ts admit). Not a refusal: lifecycle.ts doesn't match it. */
+/** Text of the notice before a plan's one switch is spent (session.ts admit, SwitchNotice). Not a refusal: lifecycle.ts doesn't match it. */
 export const SWITCH_NOTICE_PREFIX = "Account switch:";
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
@@ -26,3 +26,9 @@ export const accountsLabel = (n: number) => `${n} Google Ads account${n === 1 ? 
 export class PlanLimitError extends Error {
   constructor(message: string, readonly detail: Record<string, unknown>) { super(message); }
 }
+
+/**
+ * The notice before a plan's switch is spent (SWITCH_NOTICE_PREFIX). Thrown to stop the tool, but returned as a normal
+ * result, not isError: nothing failed, and an error here counted against the directory's reliability metrics.
+ */
+export class SwitchNotice extends PlanLimitError {}

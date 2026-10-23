@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.19.0", date: "2026-10-23",
+    summary: "Pick your account first, and an account switch is a question, not an error.",
+    items: [
+      "**With more Google Ads accounts than your plan covers, your assistant asks which to start on** before using any of them, instead of the plan taking whichever it opened first.",
+      "**Asking about a new account on a full plan now answers with what a switch would lock and until when**, as a normal reply rather than an error. Nothing is spent until you agree.",
+      "**A clearer fix for change history older than Google allows:** `change_event` reaches back 30 days to the second, so the assistant starts a day inside it.",
+    ],
+  },
+  {
     version: "0.18.0", date: "2026-10-22",
     summary: "Clear Google's EU political ads block from the chat, and fewer failed retries.",
     items: [
