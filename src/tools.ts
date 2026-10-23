@@ -395,7 +395,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       metrics: z.array(z.string().regex(/^[A-Za-z][\w:]*$/)).min(1).max(10).describe("GA4 metric names"),
       filter: z.object({ dimension: z.string().regex(/^[A-Za-z][\w:]*$/), contains: z.string().min(1).max(200) }).optional()
         .describe("Only rows whose dimension contains this text (case-insensitive)"),
-      order_by: z.string().optional().describe("Metric to sort by, highest first; defaults to the first metric"),
+      order_by: z.string().optional().describe("A requested metric (highest first) or dimension (A to Z, dates oldest first); defaults to the first metric"),
       limit: z.number().int().min(1).max(1000).default(50).describe("Most rows to return") },
     annotations: read,
   }, ({ property_id, ...o }: GaWindow & { property_id: string; dimensions: string[]; metrics: string[];
