@@ -36,6 +36,7 @@ describe("AdsApiError fix hints", () => {
     [{ assetError: "DUPLICATE_ASSET" }, "Assets are duplicated across operations.", "mutate_operations.ad_group_ad_operation.create.ad.responsive_search_ad.headlines", "ignores spacing but not capitals"],
     [{ euPoliticalAdvertisingError: "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED" }, "Mutates are generally not allowed if the customer contains non-exempt campaigns without the EU political advertising declaration.", undefined, "campaign.missing_eu_political_advertising_declaration = TRUE"],
     [{ dateError: "MISALIGNED_DATE_FOR_FILTER" }, "Dates in conditions should be the start of week/month/quarter if the filtered field is segments.week/segments.month/segments.quarter.", undefined, "filter on segments.date BETWEEN"],
+    [{ authorizationError: "METRIC_ACCESS_DENIED" }, "The developer doesn't have access to metrics: ''auction_insight_search_impression_share', 'auction_insight_search_overlap_rate''.", undefined, "Auction insights report"],
     [{ imageError: "ASPECT_RATIO_NOT_ALLOWED" }, "The aspect ratio of the image does not match the expected aspect ratios provided in the asset spec.", "logo_images", "1.91:1"],
   ])("%j → hint", (code, message, field, hint) => {
     const e = new AdsApiError(400, body(code, message, field));

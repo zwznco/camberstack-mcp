@@ -161,6 +161,13 @@ const NO_OR = "GAQL has no parentheses or OR: WHERE conditions can only be joine
 
 function adsErrorFix(code: string, message: string, field: string): string | null {
   switch (code) {
+    case "METRIC_ACCESS_DENIED":
+      // Auction insights for a ChatGPT user, 2026-10-23: no query can get these, so say so instead of inviting a retry.
+      return (message.includes("auction_insight")
+        ? "Google gives auction insights metrics only to developer tokens it has approved for them, and Camberstack's isn't one, so no query "
+          + "here can return them. The user can see competitors in Google Ads' Auction insights report; for the account's own share, "
+          + "metrics.search_impression_share and metrics.search_top_impression_share work."
+        : "Google restricts these metrics to developer tokens it has approved for them, and Camberstack's isn't one: drop them from the query.");
     case "EXPECTED_FILTERS_ON_DATE_RANGE":
       return "add a finite range to WHERE: segments.date DURING LAST_30_DAYS, or segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'.";
     case "CHANGE_DATE_RANGE_INFINITE":
