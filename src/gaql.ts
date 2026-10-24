@@ -153,8 +153,14 @@ export function checkGaql(query: string, cat: Catalog): string[] {
         // A segment the FROM resource carries as its own field (segments.search_term FROM campaign_search_term_view): name
         // that field first. Pointing at the other resources alone sent a user to the insight views instead (2026-10-16).
         const own = f.category === "SEGMENT" ? cat.get(`${p.from}.${name.slice("segments.".length)}`) : undefined;
+        // A date segment FROM a resource with its own dates (segments.date FROM call_view): filter on those. Pointing at
+        // campaign/customer instead would drop the per-call rows the query was after (prod, 2026-10-24).
+        const dates = f.category === "SEGMENT" && f.dataType === "DATE" ? ownDates(cat, p.from) : [];
         issues.push(own && usable(own) && own.selectable !== false
           ? `${name} can't be used FROM ${p.from}: select ${own.name} instead, its own field.`
+          : dates.length
+            ? `${name} can't be used FROM ${p.from}: filter on its own date instead, ${dates.join(" or ")} `
+              + `(${dates[0]} >= 'YYYY-MM-DD' AND ${dates[0]} <= 'YYYY-MM-DD').`
           : `${name} can't be used FROM ${p.from}${whereFrom(f, cat, p.from, [...p.select, ...p.where])}.`);
       }
     }
@@ -187,6 +193,13 @@ function fromAllows(from: FieldMeta, f: FieldMeta): boolean {
   if (f.category === "SEGMENT") return (from.segments ?? []).includes(f.name);
   const res = f.name.split(".")[0]!;
   return res === from.name || (from.attributeResources ?? []).includes(res) || (from.segments ?? []).includes(res);
+}
+
+/** A resource's own filterable DATE fields (call_view.start_call_date_time), not nested ones. */
+function ownDates(cat: Catalog, from: string): string[] {
+  return [...cat.values()].filter((x) => x.category === "ATTRIBUTE" && x.dataType === "DATE" && x.filterable !== false
+    && x.name.split(".").length === 2 && x.name.startsWith(`${from}.`)).map((x) => x.name)
+    .sort((a, b) => Number(b.includes("start")) - Number(a.includes("start")));
 }
 
 /** The most telling word of a field's last part (url_expansion_opt_out → expansion), to look it up by. */

@@ -141,6 +141,15 @@ describe("checkGaql against Google's field catalog", () => {
     expect(checkGaql("SELECT campaign.name, segments.geo_target_city FROM campaign", cat)[0])
       .toMatch(/segments\.geo_target_city can't be used FROM campaign; query it FROM .*geographic_view/);
   });
+  it("points segments.date FROM call_view at call_view's own dates, not at campaign (prod, 2026-10-24)", () => {
+    expect(checkGaql("SELECT call_view.call_status, call_view.start_call_date_time, campaign.name FROM call_view "
+      + "WHERE segments.date BETWEEN '2026-10-01' AND '2026-10-24'", cat))
+      .toEqual(["segments.date can't be used FROM call_view: filter on its own date instead, call_view.start_call_date_time or "
+        + "call_view.end_call_date_time (call_view.start_call_date_time >= 'YYYY-MM-DD' AND call_view.start_call_date_time <= 'YYYY-MM-DD')."]);
+    // A resource with no dates of its own still gets the resources that take it.
+    expect(checkGaql("SELECT ad_group_criterion.criterion_id FROM ad_group_criterion WHERE segments.date DURING LAST_7_DAYS", cat)[0])
+      .toMatch(/segments\.date can't be used FROM ad_group_criterion; query it FROM /);
+  });
   it("names an unknown FROM", () => {
     expect(checkGaql("SELECT campaign.id FROM campaigns", cat)[0]).toContain("Closest: campaign");
   });
