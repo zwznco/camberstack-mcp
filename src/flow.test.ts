@@ -1858,8 +1858,10 @@ describe("OAuth + MCP end to end", () => {
     await call(token, "apply_changes", { proposal_id: pause.proposal_id });
     expect(ads.campaignStatus).toBe("PAUSED");
 
-    // Pausing again is already in place: refused, nothing stored.
-    await expect(propose([{ type: "pause_campaign", campaign_id: "10" }])).rejects.toThrow("already in place");
+    // Pausing again is already in place: a plain answer, not an error, and nothing stored.
+    const again = await propose([{ type: "pause_campaign", campaign_id: "10" }]);
+    expect(again.status).toBe("already in place");
+    expect(again.proposal_id).toBeUndefined();
 
     const enable = await propose([{ type: "enable_campaign", campaign_id: "10" }]);
     expect(enable.summary).toContain("⚠ it starts spending again, up to an average of 20.00/day");
@@ -1897,7 +1899,7 @@ describe("OAuth + MCP end to end", () => {
     expect(ads.campaignStatus).toBe("ENABLED");
 
     // Setting the same date again is already in place.
-    await expect(propose([{ type: "set_end_date", campaign_id: "10", end_date: "2030-01-31" }])).rejects.toThrow("already in place");
+    expect((await propose([{ type: "set_end_date", campaign_id: "10", end_date: "2030-01-31" }])).status).toBe("already in place");
 
     // Undo pauses, restores the budget and removes the end date (Google's 2037-12-30 stand-in).
     const u = await call(token, "undo_changes", { proposal_id: test.proposal_id });

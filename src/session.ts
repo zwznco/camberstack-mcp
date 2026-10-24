@@ -138,6 +138,8 @@ type AnyChange = Change | GaChange;
 type AnyResolved = ResolvedChange | GaResolved;
 /** `note`: something the user must do next, e.g. a new GA4 property's tag. */
 type Outcome = { describe: string; ok: boolean; error?: string; note?: string; inverse?: AnyChange };
+type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[] };
+type AlreadyInPlace = { status: "already in place"; changes: 0; skipped: string[]; note: string };
 /** What the AI (and the account page) sees of an applied proposal's outcomes. */
 const publicResults = (outcomes: Outcome[]) => outcomes.map(({ describe, ok, error, note }) =>
   ({ change: describe, ok, ...(error ? { error } : {}), ...(note ? { note } : {}) }));
@@ -917,7 +919,7 @@ export class UserSession {
 
   // ---------------------------------------------------------------- write
 
-  async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<{ proposal_id: string; summary: string; changes: number; skipped: string[] }> {
+  async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<Proposed | AlreadyInPlace> {
     const ga = customerId === GA_TARGET;
     const a = ga ? { customerId: GA_TARGET, loginCustomerId: null } : await this.account(customerId);
     const changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : ChangeSchema).parse(c));
@@ -934,7 +936,11 @@ export class UserSession {
     // Resolving only reads, and `pending` already carries what sibling changes set, so the changes resolve in parallel.
     const resolved = await mapLimited(changes, (c) => this.resolve(a.customerId, a.loginCustomerId, c, pending));
     const live = resolved.filter((r) => r.operations.length);
-    if (!live.length) throw new Error("Nothing to change: every requested change is already in place.");
+    // Not an error: the account already reads as asked, and that is the answer.
+    if (!live.length) {
+      return { status: "already in place", changes: 0, skipped: resolved.map((r) => r.describe),
+        note: "Nothing to propose: every requested change is already in place in the account, so there's nothing to approve or apply." };
+    }
     // Dry run against Google so problems surface now, not after the user approves.
     await mapLimited(live, (r) => this.write(a.customerId, a.loginCustomerId, r, true))
       .catch((e) => this.explainEuBlock(e, a.customerId, a.loginCustomerId));
@@ -1051,7 +1057,8 @@ export class UserSession {
       return { proposal_id: p.id, status: "already in place",
         note: "Nothing was applied: every change in this proposal is already in place in the account, so there's nothing left to do." };
     }
-    const fresh = await this.propose(p.customer_id, live.map((r) => r.change), p.undo_of ?? undefined);
+    // `live` is non-empty, so this stores a proposal.
+    const fresh = await this.propose(p.customer_id, live.map((r) => r.change), p.undo_of ?? undefined) as Proposed;
     return { proposal_id: fresh.proposal_id, status: "needs approval", replaces: p.id, summary: fresh.summary, skipped: fresh.skipped,
       note: `Nothing was applied: the account changed since ${p.id} was proposed, so it no longer matches what was approved. `
         + `Show the user this updated summary and call apply_changes with ${fresh.proposal_id} only after they approve it.` };
