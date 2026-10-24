@@ -15,6 +15,8 @@ export const ACCOUNT_WINDOW_DAYS = 30;
 export const PLAN_LIMIT_PREFIX = "Plan limit:";
 /** Text of the notice before a plan's one switch is spent (session.ts admit, SwitchNotice). Not a refusal: lifecycle.ts doesn't match it. */
 export const SWITCH_NOTICE_PREFIX = "Account switch:";
+/** Text of the notice before a plan's first account is taken (session.ts admit): a choice, not a switch, so no switch_wanted email. */
+export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number) => `${n} Google Ads account${n === 1 ? "" : "s"}`;

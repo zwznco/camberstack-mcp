@@ -199,6 +199,7 @@ ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="bt
 <p class="muted">Every tool, with unlimited applied changes, on ${plan.accounts_included} Google Ads account.
 ${used.length ? `In use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on an account yet."}
 Pro covers up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
+<p class="muted">To move to a different account, ask your AI to switch to it: Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.</p>
 ${!by && "upgrade_url" in plan && plan.upgrade_url ? `<a class="btn" href="${esc(plan.upgrade_url)}">Upgrade to Pro · ${PRO_PRICE_LABEL}</a>` : ""}
 ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="btn" href="${esc(plan.agency_upgrade_url)}">Agency · ${AGENCY_PRICE_LABEL}</a>` : ""}</div>`;
       })();

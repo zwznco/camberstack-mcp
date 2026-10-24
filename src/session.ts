@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, isPaid, type Plan } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, isPaid, type Plan } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -305,6 +305,12 @@ export class UserSession {
   private async admit(cid: string, confirmSwitch: boolean): Promise<() => void> {
     if (isDemo(cid)) return () => {};
     let st = this.planState(new Set());
+    // Nothing used yet and the login has more accounts than the plan covers: the user picks, not whichever call lands
+    // first (2026-10-23: a Free user's AI overviewed 3 of 5 accounts at once and the first took the plan).
+    if (!st.used.length && !confirmSwitch) {
+      const counted = (await this.accounts().catch(() => [] as Account[])).filter((a) => !a.manager && !isDemo(a.customerId));
+      if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) this.noticeChoice(counted);
+    }
     // A new account on a full plan is the switch: it passes only once the user has said yes to spending it.
     const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
     if (isSwitch() && !confirmSwitch) {
@@ -338,6 +344,17 @@ export class UserSession {
       if (n > 0) mine.set(cid, n); else mine.delete(cid);
       if (!mine.size && inFlight.get(this.user.id) === mine) inFlight.delete(this.user.id);
     };
+  }
+
+  /** Stop before the plan's first account is taken: the user says which, then switch_account takes it. */
+  private noticeChoice(accounts: Account[]): never {
+    const n = this.accountLimit, one = n === 1;
+    throw new SwitchNotice(`${ACCOUNT_CHOICE_PREFIX} this plan covers ${n} Google Ads account${one ? "" : "s"} at a time and this login has `
+      + `${accounts.length}. The first ${one ? "account" : "accounts"} used become${one ? "s" : ""} the plan's, so nothing has been used yet. `
+      + `Ask the user which to work on; then call switch_account with that customer_id, then this tool again.`,
+      { status: "account_choice_needed", plan: this.planName, accounts_included: n,
+        accounts: accounts.map((a) => ({ customer_id: a.customerId, name: a.name })),
+        to_go_ahead: "once the user picks, call switch_account with that customer_id, then this tool again" });
   }
 
   /** Stop before the switch is spent: what it locks, until when, and how to go ahead. */

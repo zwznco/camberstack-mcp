@@ -1293,8 +1293,30 @@ describe("OAuth + MCP end to end", () => {
       const list = (await call(fresh, "list_accounts")).json;
       expect(list.plan).toMatchObject({ plan: "free", accounts_included: 1, active_accounts: [] });
       expect(list.plan.choosing).toContain("ask the user which to work on");
+      // An AI that goes ahead anyway, even on several at once, is stopped: none of them takes the plan, and nothing is spent.
+      const since = (db.prepare("SELECT coalesce(max(id), 0) m FROM tool_calls").get() as { m: number }).m;
+      const tries = await Promise.all(["111-222-3333", "222-333-4444"].map((c) => call(fresh, "account_overview", { customer_id: c, days: 30 })));
+      for (const t of tries) {
+        expect(t.isError).toBe(false);
+        expect(t.json.notice).toContain("Account choice: this plan covers 1 Google Ads account at a time and this login has 2.");
+        expect(t.json).toMatchObject({ status: "account_choice_needed", accounts_included: 1 });
+        expect(t.json.accounts.map((a: any) => a.customer_id).sort()).toEqual(["1112223333", "2223334444"]);
+      }
+      // Logged as ok with no account, and not as a switch notice, so no switch_wanted email.
+      expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").get(uid)).toEqual({ n: 0 });
+      expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND id > ? AND error LIKE 'Account choice:%' AND ok = 1").get(uid, since)).toEqual({ n: 2 });
+      expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND id > ? AND error LIKE 'Account switch:%'").get(uid, since)).toEqual({ n: 0 });
+      // The demo never counts, so it stays open while choosing.
+      expect((await call(fresh, "account_overview", { customer_id: "0000000001", days: 30 })).text).not.toContain("Account choice:");
+      // The user picks: switch_account takes it without spending the switch, and the plan is full from there.
+      const pick = await call(fresh, "switch_account", { customer_id: "111-222-3333" });
+      expect(pick.json).toMatchObject({ switched_to: "1112223333", active_accounts: ["1112223333"] });
+      const now = await call(fresh, "account_overview", { customer_id: "111-222-3333", days: 30 });
+      expect(now.text).not.toContain("Account choice:");
+      expect(now.text).not.toContain("Account switch:");
+      // Another account now is the ordinary switch, which is still unspent.
+      expect((await call(fresh, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).toContain("Account switch:");
       // Once one is in use the plan is full, and list_accounts says what a switch would cost instead.
-      await call(fresh, "account_overview", { customer_id: "111-222-3333", days: 30 });
       const after = (await call(fresh, "list_accounts")).json;
       expect(after.plan.choosing).toBeUndefined();
       expect(after.plan.switching).toContain("One switch per 30 days");

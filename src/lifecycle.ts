@@ -298,7 +298,7 @@ ${stopped}
 
 ${pro}${upgrade ? `\n${upgrade}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
 
-${free}: ${base}/account
+${free} Your plan: ${base}/account
 
 This is the only email about it. Questions? Just reply.
 
@@ -306,7 +306,7 @@ Adam
 Camberstack`,
     html: wrap(p("Hi,") + p(stopped) + p(pro)
       + `<p style="margin:0 0 18px"><a href="${upgrade ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">Upgrade to Pro</a></p>`
-      + p(`${free}, on <a href="${base}/account">your account page</a>.`)
+      + p(`${free} Your plan is on <a href="${base}/account">your account page</a>.`)
       + p("This is the only email about it. Questions? Just reply.") + p("Adam<br>Camberstack")),
   };
 }
@@ -318,7 +318,9 @@ function switchWanted(base: string, accounts: number, plan: "pro" | "agency", up
     + "covers one at a time, and nothing was locked.";
   const fits = `You have ${accounts} Google Ads accounts. If you want to manage all of them, try Camberstack ${name}: `
     + `up to ${covers} accounts at once, for ${price}. Cancel any time.`;
-  const free = `Staying on Free is fine too: your active account keeps every tool and unlimited changes, with one switch every ${ACCOUNT_WINDOW_DAYS} days`;
+  // How to switch, not just that you can: the account page has no switch, only the AI does (switch_account).
+  const free = "Staying on Free is fine too: your active account keeps every tool and unlimited changes. To move to a different "
+    + `account, ask your AI to switch to it; Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.`;
   return {
     subject: "Working on more than one Google Ads account?",
     text: `Hi,
@@ -327,7 +329,7 @@ ${asked}
 
 ${fits}${upgrade ? `\n${upgrade}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
 
-${free}: ${base}/account
+${free} Your plan: ${base}/account
 
 This is the only email about it. Questions? Just reply.
 
@@ -335,7 +337,7 @@ Adam
 Camberstack`,
     html: wrap(p("Hi,") + p(asked) + p(fits)
       + `<p style="margin:0 0 18px"><a href="${upgrade ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">Upgrade to ${name}</a></p>`
-      + p(`${free}, on <a href="${base}/account">your account page</a>.`)
+      + p(`${free} Your plan is on <a href="${base}/account">your account page</a>.`)
       + p("This is the only email about it. Questions? Just reply.") + p("Adam<br>Camberstack")),
   };
 }
