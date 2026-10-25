@@ -94,7 +94,7 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
             body: { eventName: change.event_name, countingMethod: change.counting } }],
           describe: `Mark "${change.event_name}" as a key event in GA4 property "${name}" (counted ${change.counting === "ONCE_PER_SESSION" ? "once per session" : "every time"})`
             + (k ? " (already a key event)" : "")
-            + ". To bid on it in Google Ads, import it there next (the import_ga4_key_event change; the property must be linked to the Ads account)" };
+            + ". To bid on it in Google Ads, import it there once this is applied (the import_ga4_key_event change; the property must be linked to the Ads account)" };
       }
       // GA4's built-in key events (purchase) refuse deletion at write, which would roll back everything proposed with them.
       // Google omits false booleans, so a built-in one comes back with no deletable field at all (seen live 2026-10-22).

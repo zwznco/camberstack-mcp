@@ -1013,7 +1013,7 @@ describe("OAuth + MCP end to end", () => {
       { type: "link_google_ads", property_id: "321", customer_id: "111-222-3333" }] });
     if (p.isError) throw new Error(p.text);
     expect(p.json.summary).toContain('Mark "generate_lead" as a key event in GA4 property "Example" (counted once per session)');
-    expect(p.json.summary).toContain("import it there next (the import_ga4_key_event change");
+    expect(p.json.summary).toContain("import it there once this is applied (the import_ga4_key_event change");
     expect(p.json.summary).toContain('Link GA4 property "Example" to Google Ads account 111-222-3333');
     expect(ga.keyEvents).toHaveLength(0);  // proposing writes nothing
 
@@ -2286,6 +2286,12 @@ describe("OAuth + MCP end to end", () => {
     ads.ga4Lead = { status: "HIDDEN", primaryForGoal: false };
     delete ads.goals.SUBMIT_LEAD_FORM; delete ads.acctGoals.SUBMIT_LEAD_FORM;
     await expect(propose([{ type: "import_ga4_key_event", property_id: "321", event_name: "sign_up" }])).rejects.toThrow(/no conversion action for "sign_up".*link_google_ads/);
+    // Marked as a key event but never applied (ChatGPT, prod 2026-10-25): the error names the open proposal to apply first.
+    const mark = await call(token, "propose_analytics_changes", { changes: [{ type: "mark_key_event", property_id: "321", event_name: "sign_up" }] });
+    if (mark.isError) throw new Error(mark.text);
+    await expect(propose([{ type: "import_ga4_key_event", property_id: "321", event_name: "sign_up" }]))
+      .rejects.toThrow(`Proposal ${mark.json.proposal_id} would do that but hasn't been applied`);
+    await call(token, "discard_proposal", { proposal_id: mark.json.proposal_id });
   });
 
   it("uploads one conversion for a first connection that came from our ad, and none otherwise", async () => {

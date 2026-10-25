@@ -951,7 +951,8 @@ export class UserSession {
     if (count > MAX_CHANGES) throw new Error(`At most ${MAX_CHANGES} changes per proposal (got ${count}). Split it.`);
     const pending = pendingOf(changes as Change[]);
     // Resolving only reads, and `pending` already carries what sibling changes set, so the changes resolve in parallel.
-    const resolved = await mapLimited(changes, (c) => this.resolve(a.customerId, a.loginCustomerId, c, pending));
+    const resolved = await mapLimited(changes, (c) => this.resolve(a.customerId, a.loginCustomerId, c, pending))
+      .catch((e) => this.explainUnappliedGa4(e, changes));
     const live = resolved.filter((r) => r.operations.length);
     // Not an error: the account already reads as asked, and that is the answer.
     if (!live.length) {
@@ -1079,6 +1080,25 @@ export class UserSession {
     return { proposal_id: fresh.proposal_id, status: "needs approval", replaces: p.id, summary: fresh.summary, skipped: fresh.skipped,
       note: `Nothing was applied: the account changed since ${p.id} was proposed, so it no longer matches what was approved. `
         + `Show the user this updated summary and call apply_changes with ${fresh.proposal_id} only after they approve it.` };
+  }
+
+  /**
+   * An import fails until its key event is marked and the property linked. ChatGPT proposed mark_key_event, never applied
+   * it, and tried the import 18 minutes later (prod, 2026-10-25). If an open GA4 proposal would make the import work,
+   * name it, so the AI asks the user to approve it instead of retrying or giving up.
+   */
+  private explainUnappliedGa4(e: unknown, changes: AnyChange[]): never {
+    if (!(e instanceof Error) || !e.message.startsWith("Google Ads has no conversion action for")) throw e;
+    const imports = changes.filter((c): c is Extract<Change, { type: "import_ga4_key_event" }> => c.type === "import_ga4_key_event");
+    const open = this.deps.db.prepare(`SELECT id, changes FROM proposals WHERE user_id = ? AND customer_id = ? AND status = 'proposed'
+        ORDER BY created_at DESC`).all(this.user.id, GA_TARGET) as { id: string; changes: string }[];
+    const waiting = open.filter((p) => (JSON.parse(p.changes) as GaChange[]).some((g) => imports.some((i) => (g.type === "link_google_ads"
+      && g.property_id === i.property_id) || (g.type === "mark_key_event" && g.property_id === i.property_id && g.event_name === i.event_name))));
+    if (!waiting.length) throw e;
+    const ids = waiting.map((p) => p.id).join(", ");
+    e.message += ` Proposal ${ids} would do that but hasn't been applied: show the user its summary, call apply_changes with it `
+      + `once they approve, then propose this import again.`;
+    throw e;
   }
 
   /**
