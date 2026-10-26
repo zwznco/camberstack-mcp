@@ -166,6 +166,13 @@ CREATE TABLE IF NOT EXISTS feedback (
   message  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS feedback_email_at ON feedback (email, at);
+
+-- Stuck-user alerts already mailed (alerts.ts): per user + tool + error, the last tool_calls.id mailed, so no error is mailed twice.
+CREATE TABLE IF NOT EXISTS error_alerts (
+  k        TEXT PRIMARY KEY,      -- user_id|tool family|error key
+  last_id  INTEGER NOT NULL,      -- tool_calls.id
+  at       INTEGER NOT NULL       -- when it was mailed (rows go after 30 days)
+);
 `;
 
 export function openDb(dataDir: string): DB {

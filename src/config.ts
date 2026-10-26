@@ -54,6 +54,8 @@ export interface Config {
   matomo?: { url: string; siteId: string; token: string };
   /** Where /feedback notifications go (feedback.ts); unset = the mail reply-to address. */
   feedbackTo?: string;
+  /** Where stuck-user alerts go (alerts.ts); FEEDBACK_TO when unset. */
+  alertTo?: string;
   gitSha: string;
   gitCommitDate: string;
 }
@@ -91,6 +93,7 @@ export function loadConfig(): Config {
     allowedEmails: emails(process.env.ALLOWED_EMAILS),
     glamaClaim: process.env.GLAMA_CLAIM || undefined,
     feedbackTo: process.env.FEEDBACK_TO || undefined,
+    alertTo: process.env.ALERT_TO || undefined,
     openaiAppsChallenge: process.env.OPENAI_APPS_CHALLENGE || undefined,
     ga4MeasurementId: /^G-[A-Z0-9]{4,20}$/.test(process.env.GA4_MEASUREMENT_ID ?? "") ? process.env.GA4_MEASUREMENT_ID : undefined,
     mail: process.env.RESEND_API_KEY

@@ -30,6 +30,7 @@ import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
 import { teeToFile } from "./logfile.js";
+import { ErrorAlerts } from "./alerts.js";
 const DRAIN_FILE = "/tmp/drain";
 
 /** brand/ sits beside src/ and dist/ at the package root. */
@@ -389,9 +390,16 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   });
 
   app.use((_req, res) => { res.status(404).type("html").send(errorPage(cfg.baseUrl, "Page not found.")); });
-  // A route that threw: report it, then let express answer 500 as before.
-  app.use((e: unknown, _req: express.Request, _res: express.Response, next: express.NextFunction) => { reportError(e, "http"); next(e); });
+  // A route that threw: report it, then let express answer as before. A 4xx error is the client's (body-parser's 400
+  // for a body that isn't JSON: coda-agent-runtime POSTs "not-json" to /register every few hours, 2026-10-23 →), not a bug.
+  app.use((e: unknown, _req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    const status = (e as { status?: unknown })?.status;
+    if (!(typeof status === "number" && status >= 400 && status < 500)) reportError(e, "http");
+    next(e);
+  });
 
+  const errorAlerts = new ErrorAlerts({ db, internalEmails, mail: cfg.mail, adminUrl: cfg.adminUrl,
+    to: cfg.alertTo ?? cfg.feedbackTo ?? cfg.mail?.replyTo ?? "adam@camberstack.io", fetch: overrides.mailFetch });
   const every = (ms: number, name: string, job: () => unknown) => {
     const run = async () => { try { await job(); } catch (e) { console.error(`${name}: ${(e as Error).message}`); reportError(e, name); } };
     setInterval(run, ms).unref();
@@ -402,6 +410,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     void every(HOUR, "billing sweep", () => billing.sweep())();  // also at boot: a restart mustn't delay a downgrade an hour
     every(HOUR, "lifecycle", () => lifecycle.run());
     every(60_000, "transactional mail", () => lifecycle.transactional());
+    every(15 * 60_000, "error alerts", () => errorAlerts.run());
     every(HOUR, "ad conversions", () => adConversions.flush());
     every(HOUR, "retention", () => retain({ db, encryptionKey: cfg.encryptionKey, internalEmails }));
     // Pages new or changed since the last boot. Production only: a dev or test origin isn't ours to submit.
