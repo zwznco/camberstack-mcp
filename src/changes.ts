@@ -21,6 +21,8 @@ import { fetchImage } from "./fetch-safe.js";
 import { micros, toMicros, type AdsClient } from "./google.js";
 
 export const MAX_CHANGES = 50;
+/** conversion_action.type values imported from an analytics tool, whose counting the tool decides. */
+const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTICS|UNIVERSAL_ANALYTICS)/;
 
 const id = z.string().regex(/^\d+$/, "numeric id");
 const campaignId = id.describe("Campaign id, digits only (campaign_id from account_overview or run_gaql)");
@@ -987,8 +989,19 @@ export async function resolveChange(
       };
     }
     case "set_conversion_counting": {
-      const [a] = await q(`SELECT conversion_action.name, conversion_action.counting_type FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
+      const [a] = await q(`SELECT conversion_action.name, conversion_action.counting_type, conversion_action.type FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
       if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
+      // An analytics import takes its counting from where it's imported from, and Google refuses the change outright: a paying
+      // user's proposal got MUTATE_NOT_ALLOWED + IMMUTABLE_FIELD + INVALID_VALUE at once, and stopped there (2026-10-26).
+      const type = String(a.conversionAction.type ?? "");
+      if (ANALYTICS_IMPORT.test(type)) {
+        const ga4 = type.startsWith("GOOGLE_ANALYTICS_4");
+        throw new Error(`Conversion action "${a.conversionAction.name}" is imported (${type}), so it counts the way ${ga4 ? "GA4" : "its source"} does: `
+          + "neither Camberstack nor Google Ads can change that. "
+          + (ga4 ? "In GA4: Admin → Data display → Key events → the event's ⋮ → Change counting method (once per event, or once per session). "
+            : "Change it in the app that sends it (Firebase or the analytics tool). ")
+          + "Or count with a different conversion action. Nothing was proposed.");
+      }
       const before = a.conversionAction.countingType as "ONE_PER_CLICK" | "MANY_PER_CLICK";
       return {
         change, service: "conversionActions",

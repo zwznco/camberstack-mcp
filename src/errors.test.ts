@@ -16,6 +16,7 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized fields in the query: 'recommendation.impact.base_metrics.clicks', 'recommendation.impact.potential_metrics.clicks'.", undefined, "SELECT recommendation.impact"],
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized field in the query: 'campaign.maximize_clicks.cpc_bid_ceiling_micros'.", undefined, "campaign.target_spend.cpc_bid_ceiling_micros"],
     [{ mutateError: "MUTATE_NOT_ALLOWED" }, "Mutates are not allowed for the requested resource.", "operations", "set_bidding_strategy can still move campaigns off it"],
+    [{ mutateError: "MUTATE_NOT_ALLOWED" }, "Mutates are not allowed for the requested resource.", "operations.update.type", "type is managed by Google"],
     [{ queryError: "BAD_FIELD_NAME" }, "Error in WHERE clause: invalid field name '('.", undefined, "no parentheses or OR"],
     [{ queryError: "EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE" }, "The following field must be present in SELECT clause: 'campaign.id'.", undefined, "add that field to SELECT"],
     [{ queryError: "EXPECTED_FILTERS_ON_DATE_RANGE" }, "Expects filters on the following field to limit a finite date range: 'segments.date'.", undefined, "finite range"],
