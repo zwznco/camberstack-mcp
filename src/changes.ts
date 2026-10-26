@@ -21,6 +21,7 @@ import { fetchImage } from "./fetch-safe.js";
 import { micros, toMicros, type AdsClient } from "./google.js";
 
 export const MAX_CHANGES = 50;
+const SOURCE_LABEL = { UPLOAD_CLICKS: "uploaded click ids", WEBPAGE: "website tag", AD_CALL: "calls from ads", WEBSITE_CALL: "calls from the website" } as const;
 /** conversion_action.type values imported from an analytics tool, whose counting the tool decides. */
 const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTICS|UNIVERSAL_ANALYTICS)/;
 
@@ -270,8 +271,11 @@ export const PUBLIC_CHANGES = [
   z.object({ type: z.literal("create_conversion_action"),
     name: z.string().min(1).max(100),
     category: goalCategory,
-    source: z.enum(["UPLOAD_CLICKS", "WEBPAGE"]).default("UPLOAD_CLICKS")
-      .describe("UPLOAD_CLICKS: your server uploads ad click ids (no Google tag). WEBPAGE: Google gives you a tag to put on the page"),
+    source: z.enum(["UPLOAD_CLICKS", "WEBPAGE", "AD_CALL", "WEBSITE_CALL"]).default("UPLOAD_CLICKS")
+      .describe("UPLOAD_CLICKS: your server uploads ad click ids (no Google tag). WEBPAGE: Google gives you a tag to put on the page. "
+        + "AD_CALL: calls from the phone number in ads (call assets). WEBSITE_CALL: calls to a Google forwarding number on the site (needs Google's tag)"),
+    call_min_seconds: z.number().int().min(0).max(10000).optional()
+      .describe("AD_CALL and WEBSITE_CALL only: how long a call must last to count (default 60)"),
     counting: z.enum(["ONE_PER_CLICK", "MANY_PER_CLICK"]).default("ONE_PER_CLICK").describe("ONE_PER_CLICK for sign-ups and leads; MANY_PER_CLICK for purchases"),
     primary: z.boolean().default(true).describe("Primary actions count in Conversions and can steer bidding"),
     default_value: z.number().min(0).max(1_000_000).optional().describe("Value per conversion when none is sent"),
@@ -977,13 +981,17 @@ export async function resolveChange(
     case "create_conversion_action": {
       const dup = await q(`SELECT conversion_action.id FROM conversion_action WHERE conversion_action.name = '${gaqlStr(change.name)}' AND conversion_action.status != 'REMOVED'`);
       if (dup.length) throw new Error(`A conversion action named "${change.name}" already exists (id ${dup[0].conversionAction.id}).`);
+      const call = change.source === "AD_CALL" || change.source === "WEBSITE_CALL";
+      if (!call && change.call_min_seconds !== undefined) throw new Error("call_min_seconds is only for AD_CALL and WEBSITE_CALL conversion actions.");
       return {
         change, service: "conversionActions",
         operations: [{ create: {
           name: change.name, category: change.category, type: change.source, status: "ENABLED", countingType: change.counting, primaryForGoal: change.primary,
-          valueSettings: { defaultValue: change.default_value ?? 0, alwaysUseDefaultValue: false },
+          // A call carries no value of its own: Google 400s (INVALID_VALUE) unless it always uses the default (dry run, 2026-10-26).
+          valueSettings: { defaultValue: change.default_value ?? 0, alwaysUseDefaultValue: call },
+          ...(call ? { phoneCallDurationSeconds: String(change.call_min_seconds ?? 60) } : {}),
         } }],
-        describe: `Create conversion action "${change.name}" (${change.category}, ${change.source === "UPLOAD_CLICKS" ? "uploaded click ids" : "website tag"}, ` +
+        describe: `Create conversion action "${change.name}" (${change.category}, ${SOURCE_LABEL[change.source]}${call ? ` lasting ${change.call_min_seconds ?? 60}s or more` : ""}, ` +
           `${change.counting === "ONE_PER_CLICK" ? "one per click" : "every conversion"}, ${change.primary ? "primary" : "secondary"})` +
           (change.primary ? " ⚠ a primary action counts toward every campaign that uses account-default goals; scope campaigns with set_conversion_goal" : ""),
       };
@@ -996,8 +1004,8 @@ export async function resolveChange(
       const type = String(a.conversionAction.type ?? "");
       if (ANALYTICS_IMPORT.test(type)) {
         const ga4 = type.startsWith("GOOGLE_ANALYTICS_4");
-        throw new Error(`Conversion action "${a.conversionAction.name}" is imported (${type}), so it counts the way ${ga4 ? "GA4" : "its source"} does: `
-          + "neither Camberstack nor Google Ads can change that. "
+        throw new Error(`Conversion action "${a.conversionAction.name}" is imported (${type}), so its counting comes from ${ga4 ? "GA4" : "its source"}, `
+          + "and Google won't change it through the API. "
           + (ga4 ? "In GA4: Admin → Data display → Key events → the event's ⋮ → Change counting method (once per event, or once per session). "
             : "Change it in the app that sends it (Firebase or the analytics tool). ")
           + "Or count with a different conversion action. Nothing was proposed.");

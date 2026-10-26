@@ -2253,6 +2253,12 @@ describe("OAuth + MCP end to end", () => {
 
     const ca = await propose([{ type: "create_conversion_action", name: "Provider signup", category: "SIGNUP" }]);
     expect(ca.summary).toContain('Create conversion action "Provider signup" (SIGNUP, uploaded click ids, one per click, primary) ⚠');
+    // Calls from ads: what a clinic's user built by hand when Google's own call action couldn't be recounted (2026-10-26).
+    const calls = await propose([{ type: "create_conversion_action", name: "Calls from ads", category: "PHONE_CALL_LEAD", source: "AD_CALL" }]);
+    expect(calls.summary).toContain('Create conversion action "Calls from ads" (PHONE_CALL_LEAD, calls from ads lasting 60s or more, one per click, primary)');
+    expect(ads.mutations.at(-1)!.operations[0].create).toMatchObject({ type: "AD_CALL", phoneCallDurationSeconds: "60", countingType: "ONE_PER_CLICK", valueSettings: { alwaysUseDefaultValue: true } });
+    expect((await call(token, "propose_changes", { customer_id: "1112223333", changes: [{ type: "create_conversion_action", name: "x", category: "SIGNUP", call_min_seconds: 30 }] })).text)
+      .toContain("only for AD_CALL and WEBSITE_CALL");
     const cnt = await propose([{ type: "set_conversion_counting", conversion_action_id: "77", counting: "ONE_PER_CLICK" }]);
     expect(cnt.summary).toContain('"Signup" to count one conversion per click (was MANY_PER_CLICK)');
     // A GA4 import's counting is GA4's: refused before Google is asked, with where to change it.
