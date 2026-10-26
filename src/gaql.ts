@@ -117,6 +117,7 @@ export function checkGaql(query: string, cat: Catalog): string[] {
   }
   const usable = (f: FieldMeta) => fromAllows(from, f);
   const seen = new Set<string>();
+  const unknown = new Set<string>();
   for (const [clause, names] of [["SELECT", p.select], ["WHERE", p.where], ["ORDER BY", p.orderBy]] as const) {
     for (const name of names) {
       if (seen.has(`${clause}:${name}`)) continue;
@@ -135,10 +136,14 @@ export function checkGaql(query: string, cat: Catalog): string[] {
         // Prefer suggestions this FROM can use; fall back to any field; with none close, the lookup that finds it.
         const pool = [...cat.values()].filter((x) => x.category !== "RESOURCE");
         const near = closest(name, pool.filter(usable).map((x) => x.name));
-        const anywhere = near.length ? [] : closest(name, pool.map((x) => x.name));
+        // Another resource's field only when it's the same field under another path (performance_label): a looser match
+        // offered segments.webpage for conversion_action.webpage_code, and the model dropped the whole query (prod, 2026-10-26).
+        const leaf = name.split(".").at(-1);
+        const anywhere = near.length ? [] : closest(name, pool.map((x) => x.name)).filter((c) => c.split(".").at(-1) === leaf);
         issues.push(`${name} doesn't exist${near.length ? `. Closest usable FROM ${p.from}: ${near.join(", ")}.`
           : anywhere.length ? `. Closest: ${anywhere.join(", ")} (not usable FROM ${p.from}).`
-          : `. Find the name with run_gaql: ${lookupQuery(keyWord(name))}`}`);
+          : `. Drop it, or find the name with run_gaql: ${lookupQuery(keyWord(name))}`}`);
+        unknown.add(issues.at(-1)!);
         continue;
       }
       if (f.category === "RESOURCE") {
@@ -166,7 +171,12 @@ export function checkGaql(query: string, cat: Catalog): string[] {
     }
   }
   // The same field in SELECT and ORDER BY gave the same line twice.
-  return [...new Set([...issues, ...enumIssues(query, cat)])];
+  const all = [...new Set([...issues, ...enumIssues(query, cat)])];
+  // One unknown field and nothing else: say the rest stands. The model dropped a valid query over one bad field (prod, 2026-10-26).
+  if (all.length === 1 && unknown.has(all[0]!) && p.select.length > 1) {
+    all[0] = all[0]!.replace(/\. (Drop it|Closest)/, (_, w: string) => `, and nothing else in this query is flagged: without it, the rest runs. ${w}`);
+  }
+  return all;
 }
 
 /** An enum literal in WHERE that isn't one of the field's values (Google only says BAD_ENUM_CONSTANT): name the values it takes. */

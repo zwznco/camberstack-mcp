@@ -86,14 +86,30 @@ describe("checkGaql against Google's field catalog", () => {
   it("offers no unrelated names for a field that doesn't exist, but the lookup that finds it (2026-10-15 prod errors)", () => {
     // Was: "Closest usable FROM campaign: campaign.campaign_group, campaign.campaign_budget, campaign.optimization_score".
     expect(checkGaql("SELECT campaign.name, campaign.url_expansion_opt_out FROM campaign", cat)).toEqual([
-      "campaign.url_expansion_opt_out doesn't exist. Find the name with run_gaql: SELECT name, category, selectable, filterable WHERE name LIKE '%expansion%'"]);
+      "campaign.url_expansion_opt_out doesn't exist, and nothing else in this query is flagged: without it, the rest runs. "
+      + "Drop it, or find the name with run_gaql: SELECT name, category, selectable, filterable WHERE name LIKE '%expansion%'"]);
     // Was: "conversion_action.status, conversion_action.name".
     const [i] = checkGaql("SELECT conversion_action.name, conversion_action.all_conversions_settings FROM conversion_action", cat);
     expect(i).not.toMatch(/conversion_action\.(status|name)\b/);
-    expect(i).toContain("Find the name with run_gaql: ");
+    expect(i).toContain("find the name with run_gaql: ");
     // Real near misses still come through.
     expect(checkGaql("SELECT campaign.id, campaign.target_spend.cpc_bid_ceiling_micro FROM campaign", cat)[0])
       .toContain("Closest usable FROM campaign: campaign.target_spend.cpc_bid_ceiling_micros");
+  });
+  it("names another resource's field only when it's the same field, and says the rest of the query stands (prod, 2026-10-26)", () => {
+    // Was: "Closest: segments.webpage (not usable FROM conversion_action)", and the model dropped the whole query.
+    const live: Catalog = new Map(cat);
+    live.set("segments.webpage", { name: "segments.webpage", category: "SEGMENT", dataType: "RESOURCE_NAME", selectable: true, filterable: true });
+    const [i] = checkGaql("SELECT conversion_action.name, conversion_action.status, conversion_action.webpage_code FROM conversion_action", live);
+    expect(i).not.toContain("segments.webpage");
+    expect(i).toContain("conversion_action.webpage_code doesn't exist, and nothing else in this query is flagged: without it, the rest runs. Drop it, or find the name");
+    // The same field under another resource still comes through, as for asset_group_asset.performance_label.
+    live.set("ad_group_ad.performance_label", { name: "ad_group_ad.performance_label", category: "ATTRIBUTE", dataType: "ENUM", selectable: true, filterable: true });
+    expect(checkGaql("SELECT conversion_action.performance_label FROM conversion_action", live)[0])
+      .toContain("Closest: ad_group_ad.performance_label (not usable FROM conversion_action).");
+    // With a second problem in the query, no claim that the rest runs.
+    expect(checkGaql("SELECT conversion_action.name, conversion_action.webpage_code FROM conversion_action WHERE conversion_action.status = 'BOGUS'", live)
+      .join(" ")).not.toContain("the rest runs");
   });
   it("never sends the AI to another tool, which its app may not have", () => {
     for (const q of [
