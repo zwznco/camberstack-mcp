@@ -201,6 +201,9 @@ export function openDb(dataDir: string): DB {
   for (const c of ["ads_accounts", "ads_managers", "ads_accounts_at"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} INTEGER`);
   // Which manager accounts, as a JSON array of IDs (2026-10-22): logins under one manager are how Free could be multiplied (report.ts sharing).
   if (!cols.has("ads_manager_ids")) db.exec("ALTER TABLE users ADD COLUMN ads_manager_ids TEXT");
+  // How many of those ad accounts spent in the last 30 days, and when that was read (session.ts spendActivity, 2026-10-26):
+  // only a count, read while the user lists or picks accounts. NULL = never fully read.
+  for (const c of ["ads_active", "ads_active_at"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} INTEGER`);
   // The registered MCP client the account was created through (provider.ts, 2026-10-23): names the app for a connect the
   // app never finished (a Codex sign-in that never swapped its code for a token left no call or token to name it).
   if (!cols.has("signup_client_id")) db.exec("ALTER TABLE users ADD COLUMN signup_client_id TEXT");

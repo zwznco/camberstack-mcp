@@ -149,11 +149,12 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   tool("list_accounts", {
     title: "List Google Ads accounts",
     description: "Lists every Google Ads account this login can reach, including client accounts under a manager (MCC). Start here. "
+      + "spentLast30Days says whether an account had ad spend in the last 30 days (show it when the user picks one). "
       + "When the user's plan is at its limit, each account also says whether the plan covers it (plan_status: active, switch or locked).",
     annotations: read,
   }, async () => {
     const s = session();
-    const accounts = await s.accounts({ fresh: true });
+    const accounts = await s.withActivity(await s.accounts({ fresh: true }));
     const demo = accounts.some((a) => isDemo(a.customerId));
     const grantUrl = s.lastUnreadable.find((u) => u.grant_url)?.grant_url;
     // Only a plan at its limit says anything: until then every account is open, and there's nothing to explain.

@@ -69,6 +69,8 @@ class FakeAds {
       selectableWith: Array.from({ length: 650 }, (_, i) => `resource_${i}`) }];
   }
   async search(_cid: string, q: string): Promise<any[]> {
+    // 30-day spend per account (session.ts spendActivity): 2223334444 is the dormant one.
+    if (q.includes("metrics.cost_micros FROM customer WHERE segments.date")) return [{ metrics: { costMicros: _cid === "2223334444" ? "0" : "5000000" } }];
     if (q.includes("missing_eu_political_advertising_declaration = TRUE")) return (this.euBlock ?? []).map((c) => ({ campaign: c }));
     if (q.endsWith("FROM customer")) return [{ customer: { containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING" } }];
     // Google's rule: a field in WHERE or ORDER BY must be in SELECT too.
@@ -1294,6 +1296,10 @@ describe("OAuth + MCP end to end", () => {
       const list = (await call(fresh, "list_accounts")).json;
       expect(list.plan).toMatchObject({ plan: "free", accounts_included: 1, active_accounts: [] });
       expect(list.plan.choosing).toContain("ask the user which to work on");
+      // Which accounts are live, so the user doesn't spend Free's one account on a dormant one; only the count is stored.
+      expect(list.accounts.filter((a: any) => !a.manager).map((a: any) => [a.customerId, a.spentLast30Days]))
+        .toEqual(expect.arrayContaining([["1112223333", true], ["2223334444", false]]));
+      expect(db.prepare("SELECT ads_accounts, ads_active FROM users WHERE id = ?").get(uid)).toEqual({ ads_accounts: 2, ads_active: 1 });
       // An AI that goes ahead anyway, even on several at once, is stopped: none of them takes the plan, and nothing is spent.
       const since = (db.prepare("SELECT coalesce(max(id), 0) m FROM tool_calls").get() as { m: number }).m;
       const tries = await Promise.all(["111-222-3333", "222-333-4444"].map((c) => call(fresh, "account_overview", { customer_id: c, days: 30 })));
@@ -1301,7 +1307,8 @@ describe("OAuth + MCP end to end", () => {
         expect(t.isError).toBe(false);
         expect(t.json.notice).toContain("Account choice: this plan covers 1 Google Ads account at a time and this login has 2.");
         expect(t.json).toMatchObject({ status: "account_choice_needed", accounts_included: 1 });
-        expect(t.json.accounts.map((a: any) => a.customer_id).sort()).toEqual(["1112223333", "2223334444"]);
+        expect(t.json.accounts.map((a: any) => [a.customer_id, a.spent_last_30_days]).sort()).toEqual([["1112223333", true], ["2223334444", false]]);
+        expect(t.json.note).toContain("may be dormant");
       }
       // Logged as ok with no account, and not as a switch notice, so no switch_wanted email.
       expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").get(uid)).toEqual({ n: 0 });

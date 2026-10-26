@@ -30,6 +30,8 @@ export interface Account {
   loginCustomerId: string | null;
   /** The account's IANA time zone, e.g. "America/New_York". */
   timeZone?: string;
+  /** Whether it spent anything in the last 30 days (spendActivity); absent when not checked or Google didn't answer. */
+  spentLast30Days?: boolean;
 }
 
 const tokenCache = new Map<string, { token: string; exp: number }>();
@@ -41,6 +43,12 @@ const tokenCache = new Map<string, { token: string; exp: number }>();
 type Unreadable = { customerId: string; error: string; grant_url?: string };
 const accountsCache = new Map<string, { at: number; list: Account[]; unreadable: Unreadable[] }>();
 const ACCOUNTS_TTL_MS = 10 * 60_000;
+/** Which accounts spent in the last 30 days, per user: shown when the user picks an account (2026-10-26). */
+const activityCache = new Map<string, { at: number; spent: boolean }>();  // keyed user|customer
+const ACTIVITY_TTL_MS = 6 * 3600_000;
+/** Accounts checked per listing, and how long a listing waits for Google before showing what it has. */
+const ACTIVITY_MAX = 25;
+const ACTIVITY_WAIT_MS = 4000;
 /** Drop a user's cached Google token and account list: on disconnect, and on reconnect (the old token may be revoked). */
 export function clearGoogleCache(userId: string): void {
   tokenCache.delete(userId);
@@ -309,7 +317,7 @@ export class UserSession {
     // first (2026-10-23: a Free user's AI overviewed 3 of 5 accounts at once and the first took the plan).
     if (!st.used.length && !confirmSwitch) {
       const counted = (await this.accounts().catch(() => [] as Account[])).filter((a) => !a.manager && !isDemo(a.customerId));
-      if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) this.noticeChoice(counted);
+      if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) this.noticeChoice(await this.withActivity(counted));
     }
     // A new account on a full plan is the switch: it passes only once the user has said yes to spending it.
     const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
@@ -353,7 +361,9 @@ export class UserSession {
       + `${accounts.length}. The first ${one ? "account" : "accounts"} used become${one ? "s" : ""} the plan's, so nothing has been used yet. `
       + `Ask the user which to work on; then call switch_account with that customer_id, then this tool again.`,
       { status: "account_choice_needed", plan: this.planName, accounts_included: n,
-        accounts: accounts.map((a) => ({ customer_id: a.customerId, name: a.name })),
+        accounts: accounts.map((a) => ({ customer_id: a.customerId, name: a.name,
+          ...(a.spentLast30Days === undefined ? {} : { spent_last_30_days: a.spentLast30Days }) })),
+        ...(accounts.some((a) => a.spentLast30Days === false) ? { note: "spent_last_30_days false: the account had no ad spend in the last 30 days, so it may be dormant. Show this to the user when they pick." } : {}),
         to_go_ahead: "once the user picks, call switch_account with that customer_id, then this tool again" });
   }
 
@@ -497,6 +507,39 @@ export class UserSession {
     this.lastUnreadable = unreadable;
     accountsCache.set(this.user.id, { at: Date.now(), list, unreadable });
     return list;
+  }
+
+  /**
+   * Whether each ad account spent anything in the last 30 days, so the user picks a live account rather than a dormant
+   * one by name (on Free that pick holds for 30 days). Only when the user is listing or choosing accounts, one small
+   * query per account (up to ACTIVITY_MAX), never more than ACTIVITY_WAIT_MS. An account Google doesn't answer for is
+   * left out, never guessed. Stores only the count (users.ads_active), for the admin site's opportunities.
+   */
+  async spendActivity(list: Account[]): Promise<Map<string, boolean>> {
+    const all = list.filter((a) => !a.manager && !isDemo(a.customerId));
+    const ads = all.slice(0, ACTIVITY_MAX);
+    const key = (c: string) => `${this.user.id}|${c}`;
+    const fresh = (c: string) => { const h = activityCache.get(key(c)); return h && Date.now() - h.at < ACTIVITY_TTL_MS ? h : undefined; };
+    const checks = mapLimited(ads.filter((a) => !fresh(a.customerId)), (a) => this.ads.search(a.customerId,
+      "SELECT metrics.cost_micros FROM customer WHERE segments.date DURING LAST_30_DAYS", a.loginCustomerId)
+      .then((rows) => { activityCache.set(key(a.customerId), { at: Date.now(), spent: rows.some((r) => Number(r.metrics?.costMicros ?? 0) > 0) }); }, () => {}));
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([checks, new Promise((r) => { timer = setTimeout(r, ACTIVITY_WAIT_MS); })]);
+    clearTimeout(timer);
+    const done = new Map<string, boolean>();
+    for (const a of ads) { const h = fresh(a.customerId); if (h) done.set(a.customerId, h.spent); }
+    // The count only when every account answered: a partial one would read as fewer live accounts than there are.
+    if (all.length && done.size === all.length) {
+      this.deps.db.prepare("UPDATE users SET ads_active = ?, ads_active_at = ? WHERE id = ?")
+        .run([...done.values()].filter(Boolean).length, now(), this.user.id);
+    }
+    return done;
+  }
+
+  /** `list` with spentLast30Days set where it's known. */
+  async withActivity(list: Account[]): Promise<Account[]> {
+    const spent = await this.spendActivity(list);
+    return list.map((a) => (spent.has(a.customerId) ? { ...a, spentLast30Days: spent.get(a.customerId) } : a));
   }
 
   async account(customerId: string): Promise<Account> {

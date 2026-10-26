@@ -8,6 +8,7 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
+import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, SWITCH_NOTICE_PREFIX } from "./plans.js";
 
 export interface ReportOptions {
   days: number;
@@ -145,6 +146,26 @@ export function buildReport(db: DB, o: ReportOptions) {
          FROM {U} u, json_each(u.ads_manager_ids) m
          GROUP BY m.value HAVING count(DISTINCT u.id) > 1
        ORDER BY last DESC`),
+    /**
+     * Who might need a bigger plan: reaches more ad accounts than Pro covers (Agency-sized), is using every account their
+     * plan covers, or ran into the account gate. `active` (accounts that spent in the last 30 days) beats `reach`, since a
+     * login often reaches dormant accounts (2026-10-26: of 4 users reaching 2, all used 1). Newest signal first.
+     */
+    opportunities: q<{ id: string; email: string; plan: string; reach: number | null; managers: number | null; active: number | null;
+        used30: number; gate_hits: number; last_hit: number | null; last_seen: number | null }>(
+      `SELECT u.id, u.email, u.plan, u.ads_accounts reach, u.ads_managers managers, u.ads_active active, u.last_seen_at last_seen,
+         (SELECT count(DISTINCT c.customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL
+            AND c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}') AND c.at >= ?) used30,
+         (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND (c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%')) gate_hits,
+         (SELECT max(c.at) FROM tool_calls c WHERE c.user_id = u.id AND (c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%')) last_hit
+       FROM {U} u WHERE u.plan != 'agency'`, now() - ACCOUNT_WINDOW_DAYS * 86400)
+      .map((o) => ({ ...o, why: [
+        (o.active ?? o.reach ?? 0) > PRO_ACCOUNTS ? `Agency-sized: ${o.active !== null ? `${o.active} active` : `${o.reach} reachable`}` : "",
+        o.plan === "pro" && o.used30 >= PRO_ACCOUNTS ? `at Pro's ${PRO_ACCOUNTS}` : "",
+        o.gate_hits ? `hit the account gate ${o.gate_hits}×` : "",
+      ].filter(Boolean) }))
+      .filter((o) => o.why.length)
+      .sort((a, b) => Math.max(b.last_hit ?? 0, b.last_seen ?? 0) - Math.max(a.last_hit ?? 0, a.last_seen ?? 0)),
     recent: q<{ at: number; email: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
       `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id

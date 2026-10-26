@@ -32,6 +32,22 @@ describe("buildReport", () => {
     expect(buildReport(seed(), { days: 1, exclude: [] }).errorsInWindow).toBe(2);
   });
 
+  it("flags plan opportunities by active accounts, Pro's cap and gate hits, not by reach alone", () => {
+    const db = seed();
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, ads_accounts, ads_managers, ads_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    u.run("agency", "g3", "a@x.com", "free", now(), 22, 1, null);   // reach only: still Agency-sized
+    u.run("dormant", "g4", "d@x.com", "free", now(), 9, 0, 1);      // reaches 9, but 1 spends: not
+    u.run("capped", "g5", "c@x.com", "pro", now(), 15, 1, 12);
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes) VALUES (?, ?, 'run_gaql', ?, ?, ?, 1, 1)");
+    for (const cid of ["1", "2", "3", "4", "5"]) c.run(now() - 60, "capped", cid, 1, null);
+    c.run(now() - 60, "agency", "9", 0, "Plan limit: Camberstack has been used on 2 Google Ads accounts");
+    const o = buildReport(db, { days: 7, exclude: [] }).opportunities;
+    expect(Object.fromEntries(o.map((x) => [x.id, x.why]))).toEqual({
+      agency: ["Agency-sized: 22 reachable", "hit the account gate 1×"],
+      capped: ["Agency-sized: 12 active", "at Pro's 5"],
+    });
+  });
+
   it("counts only live subscriptions as paying", () => {
     const r = buildReport(seed(), { days: 7, exclude: [] });
     expect(r.paying).toBe(1);

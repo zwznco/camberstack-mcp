@@ -303,6 +303,7 @@ ${stat(`Tool errors · ${w}`, errs ? `<span class="n bad">${errs}</span>` : num(
 </div>
 ${callsChart(v)}
 ${sharingCard(v)}
+${opportunitiesCard(v)}
 <div class="grid2">
 ${card("Funnel", table(["stage", ["all time", "r"], "", [`new · ${w}`, "r"]], stages.map((k) => [k.replace(/_/g, " "), num(r.funnel.all[k]),
     `<div class="bar"><i style="width:${Math.round((100 * r.funnel.all[k]) / top)}%"></i></div>`, num(r.funnel.window[k])])))}
@@ -372,6 +373,18 @@ function sharingCard(v: View, always = false): string {
     return [s.kind, cid(s.customer_id), users.map((u) => `${userLink(v, u.id, u.email)} ${planBadge(u.plan, true)}`).join("<br>"),
       `<span class="r">${when(s.last)}</span>`];
   }), "No ad or manager account is shared by two logins."), `<small>ad account: tools run by 2+ users · manager: reachable by 2+</small>`);
+}
+
+/** Users who might need a bigger plan (report.ts opportunities). On the overview only when there is one. */
+function opportunitiesCard(v: View): string {
+  const rows = v.report.opportunities;
+  if (!rows.length) return "";
+  return card("Plan opportunities", table(["user", "why", ["reachable", "r"], ["active · 30d", "r"], ["used · 30d", "r"], ["last gate hit", "r"]], rows.map((o) => [
+    `${userLink(v, o.id, o.email)} ${planBadge(o.plan, true)}`, esc(o.why.join(" · ")),
+    `<span class="r">${o.reach === null ? "?" : num(o.reach)}${o.managers ? `<span class="dim"> +${o.managers}m</span>` : ""}</span>`,
+    `<span class="r">${o.active === null ? "?" : num(o.active)}</span>`, `<span class="r">${num(o.used30)}</span>`,
+    `<span class="r">${o.last_hit ? when(o.last_hit) : "—"}</span>`])),
+    `<small>active: ad accounts that spent in the last 30 days, read when the user lists or picks accounts ("?" until then)</small>`);
 }
 
 /** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls

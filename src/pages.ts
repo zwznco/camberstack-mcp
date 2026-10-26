@@ -993,6 +993,7 @@ Humans at Camberstack do not read your Google Ads data unless you ask us to for 
 <table>
 <tr><th>Data</th><th>Why</th><th>Kept until</th></tr>
 <tr><td>Google email and account ID</td><td>Identify you across connections</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
+<tr><td>How many Google Ads accounts your login can reach, how many of them had ad spend in the last 30 days, and which manager accounts they sit under (counts and IDs only, never names, amounts or other account data)</td><td>Show which accounts are active when you pick one, and size plans to how many accounts people use</td><td>The same as your email and account ID</td></tr>
 <tr><td>Google refresh token, encrypted (AES-256-GCM)</td><td>Call Google's APIs (Google Ads, and Search Console or Google Analytics if you granted them) when you use a tool</td><td>You disconnect or revoke access, or six months without use</td></tr>
 <tr><td>A sign-in session for the account page (a cookie; we store only its hash)</td><td>Keep you signed in to camberstack.io/account</td><td>7 days, or until you sign out</td></tr>
 <tr><td>A random value in a cookie while you connect an AI app</td><td>Check that the browser finishing the Google sign-in is the one that approved the connection</td><td>The sign-in finishes, or 1 hour</td></tr>
