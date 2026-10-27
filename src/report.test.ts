@@ -60,8 +60,9 @@ describe("buildReport", () => {
     expect(buildReport(db, { days: 1, exclude: [] }).signupsHourly).toEqual([{ hour: 11, n: 1 }]);
     expect(buildReport(db, { days: 30, exclude: [] }).signupsDaily.map((x) => x.n)).toEqual([1, 1]);
     const ret = buildReport(db, { days: 1, exclude: [] }).retention;
-    expect(ret.find((r) => r.weeks.length === 1)).toMatchObject({ users: 1, weeks: [0] });
-    expect(ret.find((r) => r.weeks.length > 1)?.weeks.slice(0, 3)).toEqual([1, 1, 0]);
+    // Weeks count from the signup, not the cohort's Monday: 15 days on is W2, still under way (done = 2).
+    expect(ret.find((r) => r.users === 1 && r.weeks.length === 1)).toMatchObject({ weeks: [0], done: 0 });
+    expect(ret.find((r) => r.weeks.length > 1)).toMatchObject({ weeks: [1, 1, 0], done: 2 });
   });
 
   it("counts only live subscriptions as paying", () => {

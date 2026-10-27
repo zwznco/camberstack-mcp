@@ -249,7 +249,7 @@ h1{font-size:18px;font-weight:600;margin:0;letter-spacing:-.2px}h2{font-size:13p
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;min-width:0}
 .card>header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
 .card>header{gap:12px}.card>header small{color:var(--dim);font-size:12px;text-align:right}
-.ret{display:inline-block;min-width:44px;padding:0 6px;border-radius:4px}.card>.pad{padding:14px}
+.ret{display:inline-block;min-width:44px;padding:0 6px;border-radius:4px}.ret.open{border:1px dashed var(--line);color:var(--dim)}.card>.pad{padding:14px}
 .mfoot{display:none}.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%}
 th{font-weight:500;color:var(--muted);font-size:12px;text-align:left;padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
 td{padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--hover)}
@@ -374,13 +374,15 @@ function signupsChart(v: View): string {
 /** Weekly cohorts (report.ts retention): the share of each signup week that made a tool call N weeks on. Not windowed. */
 function retentionCard(v: View): string {
   const rows = v.report.retention;
-  const cell = (n: number, of: number) => {
+  // A week still under way for someone in the cohort is outlined and dim: it can only go up, so it isn't a drop yet.
+  const cell = (n: number, of: number, open: boolean) => {
     const p = Math.round((100 * n) / Math.max(1, of));
-    return `<span class="ret" style="background:color-mix(in srgb,var(--bar) ${Math.round(p * 0.6)}%,transparent)" title="${n} of ${of}">${p}%</span>`;
+    return open ? `<span class="ret open" title="${n} of ${of} so far · week still under way">${p}%</span>`
+      : `<span class="ret" style="background:color-mix(in srgb,var(--bar) ${Math.round(p * 0.6)}%,transparent)" title="${n} of ${of}">${p}%</span>`;
   };
   return card("Retention", table(["signup week", ["users", "r"], ...Array.from({ length: RETENTION_WEEKS }, (_, n): [string, "r"] => [`W${n}`, "r"])],
-    rows.map((c) => [c.week, num(c.users), ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.weeks.length ? cell(c.weeks[n]!, c.users) : "")]),
-    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="W0 is the signup week; Wn counts a successful tool call 7n–7n+7 days after signing up">all time · tool call in week N</small>`);
+    rows.map((c) => [c.week, num(c.users), ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.weeks.length ? cell(c.weeks[n]!, c.users, n >= c.done) : "")]),
+    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="W0 is each user's first 7 days; Wn counts a successful tool call 7n–7n+7 days after their own signup. Outlined: still under way.">all time · tool call in week N</small>`);
 }
 
 function usersPage(v: View): string {
