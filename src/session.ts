@@ -547,7 +547,12 @@ export class UserSession {
     if (cid === DEMO_CID) return DEMO_ACCOUNT;  // anyone can try the demo by its id
     const a = (await this.accounts()).find((x) => x.customerId === cid)
       ?? (await this.accounts({ fresh: true })).find((x) => x.customerId === cid);
-    if (!a) throw new Error(`Account ${customerId} is not accessible with this Google login. Call list_accounts to see the ones that are.`);
+    // "Call list_accounts" alone sent a model that had already called it back in a loop, and the user gave up (2026-10-27).
+    // A user-typed id usually belongs to another Google login, so say which login this is and how to get access.
+    if (!a) throw new Error(`Account ${customerId} isn't one that ${this.user.email}, the Google login connected to Camberstack, can open. `
+      + `If the user gave this id, it most likely belongs to a different Google login: give ${this.user.email} access to it in Google Ads `
+      + "(Admin, then Access and security), or disconnect and connect again with the Google login that has it. "
+      + `list_accounts lists the accounts ${this.user.email} can open.`);
     if (a.manager) throw new Error(`${a.name} (${cid}) is a manager account; pick one of the client accounts under it.`);
     // The account they actually work on sets their time zone (lifecycle emails go out in their morning).
     if (a.timeZone) this.deps.db.prepare("UPDATE users SET time_zone = ? WHERE id = ? AND time_zone IS NOT ?").run(a.timeZone, this.user.id, a.timeZone);
