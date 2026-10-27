@@ -48,6 +48,22 @@ describe("buildReport", () => {
     });
   });
 
+  it("counts signups by hour today and by day otherwise, and retention by weeks since each user's own signup", () => {
+    const db = openDb(":memory:");
+    const t = now(), u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, 'free', ?)");
+    u.run("old", "g1", "o@x.com", t - 15 * 86400);
+    u.run("new", "g2", "n@x.com", t - 3600);
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, ms, bytes) VALUES (?, ?, 'run_gaql', ?, 1, 1)");
+    c.run(t - 15 * 86400 + 60, "old", 1);  // week 0
+    c.run(t - 6 * 86400, "old", 1);        // week 1
+    c.run(t - 86400, "old", 0);            // week 2, but failed
+    expect(buildReport(db, { days: 1, exclude: [] }).signupsHourly).toEqual([{ hour: 11, n: 1 }]);
+    expect(buildReport(db, { days: 30, exclude: [] }).signupsDaily.map((x) => x.n)).toEqual([1, 1]);
+    const ret = buildReport(db, { days: 1, exclude: [] }).retention;
+    expect(ret.find((r) => r.weeks.length === 1)).toMatchObject({ users: 1, weeks: [0] });
+    expect(ret.find((r) => r.weeks.length > 1)?.weeks.slice(0, 3)).toEqual([1, 1, 0]);
+  });
+
   it("counts only live subscriptions as paying", () => {
     const r = buildReport(seed(), { days: 7, exclude: [] });
     expect(r.paying).toBe(1);

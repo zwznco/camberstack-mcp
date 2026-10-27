@@ -8,7 +8,7 @@ import type { DB } from "./db.js";
 import type { GoogleCreds } from "./google.js";
 import { SignIn } from "./signin.js";
 import { startLoginAs } from "./account.js";
-import { buildReport, permissionLabels, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
+import { buildReport, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
 import { now } from "./db.js";
 import { esc } from "./pages.js";
 import { PRO_PRICE_LABEL } from "./plans.js";
@@ -248,7 +248,8 @@ h1{font-size:18px;font-weight:600;margin:0;letter-spacing:-.2px}h2{font-size:13p
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin-bottom:16px}.grid2>.card{margin-bottom:0}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;min-width:0}
 .card>header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
-.card>header small{color:var(--dim);font-size:12px}.card>.pad{padding:14px}
+.card>header{gap:12px}.card>header small{color:var(--dim);font-size:12px;text-align:right}
+.ret{display:inline-block;min-width:44px;padding:0 6px;border-radius:4px}.card>.pad{padding:14px}
 .mfoot{display:none}.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%}
 th{font-weight:500;color:var(--muted);font-size:12px;text-align:left;padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
 td{padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--hover)}
@@ -273,7 +274,11 @@ button{font:inherit;font-size:12px;background:none;border:1px solid var(--line);
 table.users thead{display:none}table.users tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:10px 14px;border-bottom:1px solid var(--line)}
 table.users tr:last-child{border-bottom:0}table.users td{padding:0;border:0}table.users td:first-child{flex-basis:100%}
 table.users td:nth-child(4),table.users td:nth-child(6),table.users td:nth-child(7),table.users td:nth-child(8),table.users td:nth-child(10){display:none}
-table.users td:nth-child(5){margin-left:auto;color:var(--dim);font-size:12px}}
+table.users td:nth-child(5){margin-left:auto;color:var(--dim);font-size:12px}
+table.opps thead{display:none}table.opps tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+table.opps tr:last-child{border-bottom:0}table.opps td{padding:0;border:0;white-space:normal}table.opps td:first-child{flex-basis:100%}
+table.opps td:nth-child(3),table.opps td:nth-child(4),table.opps td:nth-child(5){display:none}table.opps td:nth-child(6){margin-left:auto;color:var(--dim);font-size:12px}
+table.cohorts th,table.cohorts td{padding:7px 6px}table.cohorts .ret{min-width:38px;padding:0 3px}}
 </style></head><body><div class="app">
 <aside><div class="brand">camberstack<span>/admin</span></div><nav>${nav.map(([p, l, c]) =>
   `<a class="${p === path ? "on" : ""}" href="${p}${qs(v)}">${l}<em>${c}</em></a>`).join("")}</nav>
@@ -329,19 +334,8 @@ ${card("Top tools", table(["tool", ["calls", "r"], ["errors", "r"]], r.tools.sli
  * or for today one per UTC hour (hours still to come drawn empty).
  */
 function callsChart(v: View): string {
-  const r = v.report, start = windowStart(v.days), hourNow = new Date(now() * 1000).getUTCHours();
-  type Bar = { label: string; calls: number; users: number; errors: number; future?: boolean };
-  let bars: Bar[];
-  if (v.days === 1) {
-    const byHour = new Map(r.hourly.map((x) => [x.hour, x]));
-    bars = Array.from({ length: 24 }, (_, h) => ({ label: `${String(h).padStart(2, "0")}:00`, calls: 0, users: 0, errors: 0, ...byHour.get(h), future: h > hourNow }));
-  } else {
-    const byDay = new Map(r.daily.map((x) => [x.day, x]));
-    bars = Array.from({ length: v.days }, (_, i) => {
-      const day = new Date((start + i * 86400) * 1000).toISOString().slice(0, 10);
-      return { label: day, calls: 0, users: 0, errors: 0, ...byDay.get(day) };
-    });
-  }
+  const r = v.report;
+  const bars = slots(v, r.hourly, r.daily, { calls: 0, users: 0, errors: 0 });
   const per = v.days === 1 ? "hour" : "day", max = Math.max(1, ...bars.map((b) => b.calls));
   const body = r.daily.length
     ? `<div class="chart">${bars.map((b) => `<div class="${b.future ? "future" : ""}" style="height:${b.future ? 100 : Math.max(1, Math.round((100 * b.calls) / max))}%" title="${b.label}${
@@ -351,13 +345,51 @@ function callsChart(v: View): string {
   return card(`Calls per ${per}`, body, `<small>${lastW(v.days)} · UTC</small>`);
 }
 
+/** One bar per UTC day of the window, zeros included, or for today one per UTC hour (hours still to come marked future). */
+function slots<T extends object>(v: View, hourly: ({ hour: number } & T)[], daily: ({ day: string } & T)[], zero: T): ({ label: string; future?: boolean } & T)[] {
+  if (v.days === 1) {
+    const byHour = new Map(hourly.map((x) => [x.hour, x])), hourNow = new Date(now() * 1000).getUTCHours();
+    return Array.from({ length: 24 }, (_, h) => ({ ...zero, ...byHour.get(h), label: `${String(h).padStart(2, "0")}:00`, future: h > hourNow }));
+  }
+  const byDay = new Map(daily.map((x) => [x.day, x])), start = windowStart(v.days);
+  return Array.from({ length: v.days }, (_, i) => {
+    const day = new Date((start + i * 86400) * 1000).toISOString().slice(0, 10);
+    return { ...zero, ...byDay.get(day), label: day };
+  });
+}
+
+/** Signups over the window, drawn like callsChart. */
+function signupsChart(v: View): string {
+  const r = v.report;
+  const bars = slots(v, r.signupsHourly, r.signupsDaily, { n: 0 });
+  const per = v.days === 1 ? "hour" : "day", max = Math.max(1, ...bars.map((b) => b.n)), total = bars.reduce((a, b) => a + b.n, 0);
+  const body = total
+    ? `<div class="chart">${bars.map((b) => `<div class="${b.future ? "future" : ""}" style="height:${b.future ? 100 : Math.max(1, Math.round((100 * b.n) / max))}%" title="${b.label}${
+        v.days === 1 ? " UTC" : ""}: ${b.n} signups"></div>`).join("")}</div>
+<div class="axis"><span>${bars[0]!.label}</span><span>${total} total · peak ${max}/${per}</span><span>${bars.at(-1)!.label}${v.days === 1 ? " UTC" : ""}</span></div>`
+    : `<p class="empty">No signups in this window.</p>`;
+  return card(`Signups per ${per}`, body, `<small>${lastW(v.days)} · UTC</small>`);
+}
+
+/** Weekly cohorts (report.ts retention): the share of each signup week that made a tool call N weeks on. Not windowed. */
+function retentionCard(v: View): string {
+  const rows = v.report.retention;
+  const cell = (n: number, of: number) => {
+    const p = Math.round((100 * n) / Math.max(1, of));
+    return `<span class="ret" style="background:color-mix(in srgb,var(--bar) ${Math.round(p * 0.6)}%,transparent)" title="${n} of ${of}">${p}%</span>`;
+  };
+  return card("Retention", table(["signup week", ["users", "r"], ...Array.from({ length: RETENTION_WEEKS }, (_, n): [string, "r"] => [`W${n}`, "r"])],
+    rows.map((c) => [c.week, num(c.users), ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.weeks.length ? cell(c.weeks[n]!, c.users) : "")]),
+    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="W0 is the signup week; Wn counts a successful tool call 7n–7n+7 days after signing up">all time · tool call in week N</small>`);
+}
+
 function usersPage(v: View): string {
   const r = v.report, since = windowStart(v.days);
   // Users seen in the window (last seen, else signed up); ?all=1 keeps everyone, so users idle past 90d stay reachable.
   const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
   const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
   const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
-  return sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
+  return signupsChart(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
@@ -383,8 +415,8 @@ function opportunitiesCard(v: View): string {
     `${userLink(v, o.id, o.email)} ${planBadge(o.plan, true)}`, esc(o.why.join(" · ")),
     `<span class="r">${o.reach === null ? "?" : num(o.reach)}${o.managers ? `<span class="dim"> +${o.managers}m</span>` : ""}</span>`,
     `<span class="r">${o.active === null ? "?" : num(o.active)}</span>`, `<span class="r">${num(o.used30)}</span>`,
-    `<span class="r">${o.last_hit ? when(o.last_hit) : "—"}</span>`])),
-    `<small>active: ad accounts that spent in the last 30 days, read when the user lists or picks accounts ("?" until then)</small>`);
+    `<span class="r">${o.last_hit ? when(o.last_hit) : "—"}</span>`]), "", "opps"),
+    `<small title="Ad accounts that spent in the last 30 days, read when the user lists or picks accounts (&quot;?&quot; until then)">active = spent · 30d</small>`);
 }
 
 /** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls
