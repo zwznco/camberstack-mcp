@@ -30,7 +30,7 @@ import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
 import { teeToFile } from "./logfile.js";
-import { ErrorAlerts } from "./alerts.js";
+import { ErrorAlerts, stuckNow } from "./alerts.js";
 const DRAIN_FILE = "/tmp/drain";
 
 /** brand/ sits beside src/ and dist/ at the package root. */
@@ -247,7 +247,10 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     let session: UserSession | undefined;
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null);
-    }, [], { chatgpt });
+    }, [], { chatgpt, stuck: (tool, error) => (userId && stuckNow(db, userId, tool, error)
+      ? `This is the same error a third time. If you can't get the user what they asked for, tell them they can report it `
+        + `to Camberstack's maintainer at ${cfg.baseUrl}/feedback, saying what they were trying to get.`
+      : null) });
   };
   // 2026-07-28 traffic (server/discover, per-request _meta envelope). The SDK's own legacy leg would
   // answer 2025-era requests over SSE, so it is off and those keep the JSON-response wiring below.

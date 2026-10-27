@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { openDb } from "./db.js";
-import { ErrorAlerts, errorCode, findStuck, verdict } from "./alerts.js";
+import { ErrorAlerts, errorCode, findStuck, stuckNow, verdict } from "./alerts.js";
 
 const T = 2_000_000_000;
 const BAD_FIELD = "Google Ads API 400: UNRECOGNIZED_FIELD Unrecognized field in the query: 'x'.";
@@ -116,5 +116,36 @@ describe("ErrorAlerts.run", () => {
       mail: { apiKey: "k", from: "f" }, fetch: (async () => new Response("no", { status: 500 })) as any });
     await expect(failing.run()).rejects.toThrow(/Resend 500/);
     expect(await s.alerts().run()).toHaveLength(1);
+  });
+});
+
+describe("stuckNow", () => {
+  it("is true only on the third same error in a row with no success of that tool between", () => {
+    const s = setup();
+    s.user("u", "u@x.com");
+    s.call("u", 60, "run_gaql", BAD_FIELD);
+    expect(stuckNow(s.db, "u", "run_gaql", BAD_FIELD, T)).toBe(false);
+    s.call("u", 40, "list_accounts");             // another tool's success doesn't reset it
+    s.call("u", 30, "run_gaql", BAD_FIELD);
+    expect(stuckNow(s.db, "u", "run_gaql", BAD_FIELD, T)).toBe(false);
+    s.call("u", 20, "run_gaql", BAD_FIELD);
+    expect(stuckNow(s.db, "u", "run_gaql", BAD_FIELD, T)).toBe(true);
+    s.call("u", 10, "run_gaql", BAD_FIELD);       // shown once per episode
+    expect(stuckNow(s.db, "u", "run_gaql", BAD_FIELD, T)).toBe(false);
+  });
+  it("resets on a success, and skips errors with their own way forward or that no one can fix", () => {
+    const s = setup();
+    s.user("u", "u@x.com");
+    s.call("u", 50, "run_gaql", BAD_FIELD);
+    s.call("u", 40, "run_gaql");
+    s.call("u", 30, "run_gaql", BAD_FIELD);
+    s.call("u", 20, "run_gaql", BAD_FIELD);
+    expect(stuckNow(s.db, "u", "run_gaql", BAD_FIELD, T)).toBe(false);
+    const down = "Google Analytics API 503: The service is currently unavailable.";
+    for (const ago of [30, 20, 10]) s.call("u", ago, "analytics_report", down);
+    expect(stuckNow(s.db, "u", "analytics_report", down, T)).toBe(false);
+    const limit = "Plan limit: Free covers 1 account.";
+    for (const ago of [30, 20, 10]) s.call("u", ago, "account_overview", limit);
+    expect(stuckNow(s.db, "u", "account_overview", limit, T)).toBe(false);
   });
 });

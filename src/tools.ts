@@ -96,7 +96,7 @@ export interface ToolCall {
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { chatgpt?: boolean } = {}): McpServer {
+  o: { chatgpt?: boolean; stuck?: (tool: string, error: string) => string | null } = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
@@ -131,6 +131,14 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         });
       } catch { /* logging must never break a tool */ }
       release();  // after the log: the account now counts as used from tool_calls instead
+      // The same wall a third time: only the user knows what they were after, so give the model a line to pass on.
+      // After the log: stuckNow counts this error, and the log keeps it as Google or our code wrote it.
+      if ("isError" in out) {
+        try {
+          const extra = o.stuck?.(name, out.content[0]!.text.slice(7));
+          if (extra) out = { ...out, content: [{ type: "text" as const, text: `${out.content[0]!.text}\n\n${extra}` }] };
+        } catch { /* a hint must never break a tool */ }
+      }
       return out;
     };
   };

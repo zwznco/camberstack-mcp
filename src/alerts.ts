@@ -76,6 +76,26 @@ export function verdict(code: string, error: string, recoveredLater: boolean): {
   return { act: true, why: "Our own message, and the model didn't get past it. Check it says what to do next." };
 }
 
+/**
+ * Whether the error a call is about to return makes MIN_REPEATS in a row: the same tool and error code, with no success of
+ * that tool since. Only the call that reaches it, so one episode shows the feedback link once. Errors that carry their own
+ * way forward (a plan limit, a grant link) or that no one can fix (Google down, verdict() FYI) never count. Asked after
+ * the call is logged, so the error being returned is the latest row.
+ */
+export function stuckNow(db: DB, userId: string, tool: string, error: string, t = now()): boolean {
+  const code = errorCode(error);
+  if (error.startsWith(PLAN_LIMIT_PREFIX) || /access isn't part of this Google connection|needs its edit access/.test(error)) return false;
+  if (!verdict(code, error, false).act) return false;
+  const fam = family(tool);
+  const calls = db.prepare("SELECT tool, ok, error FROM tool_calls WHERE user_id = ? AND at >= ? ORDER BY id DESC").all(userId, t - RECOVERY) as Call[];
+  let same = 0;
+  for (const c of calls.filter((c) => family(c.tool) === fam)) {
+    if (c.ok || errorCode(c.error ?? "") !== code) break;
+    same++;
+  }
+  return same === MIN_REPEATS;
+}
+
 /** Unrecovered episodes in the last LOOKBACK, alert-worthy by the rules above. `mailed` maps an episode key to the last
  *  error already mailed for it; errors up to that one are left out. */
 export function findStuck(db: DB, internalEmails: Set<string>, t = now(), mailed = new Map<string, number>()): Episode[] {

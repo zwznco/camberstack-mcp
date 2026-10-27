@@ -660,6 +660,12 @@ describe("OAuth + MCP end to end", () => {
     expect(bad.text).toContain("UNRECOGNIZED_FIELD");   // Google's own words stay
     expect(bad.text).toContain("Google's field catalog: campaign.maximize_clicks.cpc_bid_ceiling_micros doesn't exist");
     expect(bad.text).toContain("campaign.target_spend.cpc_bid_ceiling_micros");
+    // The same error a third time in a row (the quota error above broke the run): the model gets the feedback link to pass on, once.
+    expect(bad.text).not.toContain("/feedback");
+    const again = () => call(token, "run_gaql", { customer_id: "1112223333", query: "SELECT campaign.id, campaign.maximize_clicks.cpc_bid_ceiling_micros FROM campaign" });
+    expect((await again()).text).not.toContain("/feedback");
+    expect((await again()).text).toContain("/feedback, saying what they were trying to get");
+    expect((await again()).text).not.toContain("/feedback");
   });
 
   it("reads an account overview", async () => {
