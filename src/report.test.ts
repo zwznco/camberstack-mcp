@@ -65,6 +65,17 @@ describe("buildReport", () => {
     expect(ret.find((r) => r.weeks.length > 1)).toMatchObject({ weeks: [1, 1, 0], done: 2 });
   });
 
+  it("counts applied changes by when they were applied, not by when the user signed up", () => {
+    const db = seed();
+    const p = db.prepare("INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at) VALUES (?, 'paid', ?, '[]', '', ?, ?, ?)");
+    p.run("old", "1", "applied", now() - 20 * 86400, now() - 20 * 86400);
+    p.run("new", "1", "applied", now() - 60, now() - 60);
+    p.run("new2", "2", "applied", now() - 30, now() - 30);
+    p.run("open", "1", "proposed", now() - 30, null);
+    expect(buildReport(db, { days: 1, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 2 });
+    expect(buildReport(db, { days: 30, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 3 });
+  });
+
   it("counts only live subscriptions as paying", () => {
     const r = buildReport(seed(), { days: 7, exclude: [] });
     expect(r.paying).toBe(1);

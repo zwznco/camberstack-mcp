@@ -76,6 +76,9 @@ export function buildReport(db: DB, o: ReportOptions) {
     excluded: ex.length,
     funnel: { window: stage(since), all: stage(0) },
     activeInWindow: n("SELECT count(DISTINCT c.user_id) n FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.at >= ? AND c.ok = 1", since),
+    // By when the change was applied, whenever the user signed up (the funnel's `applied` is by signup cohort). Real accounts only.
+    appliedInWindow: q<{ users: number; changes: number }>(`SELECT count(DISTINCT p.user_id) users, count(*) changes FROM proposals p
+        JOIN {U} u ON u.id = p.user_id WHERE p.status = 'applied' AND p.applied_at >= ? AND p.customer_id != '${DEMO_CID}'`, since)[0]!,
     // Paid Pro, counted here rather than from `users` (capped at 200). billing.ts drops a lapsed subscription to
     // plan 'free' but keeps its stripe_sub, so a stripe_sub alone is not a paying customer.
     paying: n("SELECT count(*) n FROM {U} u WHERE plan IN ('pro', 'agency') AND coalesce(stripe_sub, '') != ''"),

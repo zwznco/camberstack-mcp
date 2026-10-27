@@ -302,7 +302,7 @@ function overviewPage(v: View): string {
   return `<div class="stats">
 ${stat("Users", num(r.funnel.all.connected), `+${r.funnel.window.connected} ${inW(v.days)}`)}
 ${stat(`Active · ${w}`, num(r.activeInWindow), `${callsInWindow.toLocaleString("en-US")} calls`)}
-${stat("Applied a change", num(r.funnel.all.applied), `${Math.round((100 * r.funnel.all.applied) / top)}% of users`)}
+${stat(`Applied a change · ${w}`, num(r.appliedInWindow.users), `${r.appliedInWindow.changes} change${r.appliedInWindow.changes === 1 ? "" : "s"} · ${r.funnel.all.applied} all time`)}
 ${stat("Paying", num(paying), `$${paying * MRR_PER_PRO} MRR`)}
 ${stat(`Tool errors · ${w}`, errs ? `<span class="n bad">${errs}</span>` : num(0), callsInWindow ? `${((100 * errs) / callsInWindow).toFixed(1)}% of calls` : "")}
 </div>
