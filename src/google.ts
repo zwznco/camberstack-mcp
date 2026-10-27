@@ -246,6 +246,15 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
     case "PROHIBITED_SEGMENT_WITH_METRIC_IN_SELECT_OR_WHERE_CLAUSE":
       return "Google can't split the metrics it names by that segment. Drop them from this query and get them in a second one without the segment: "
         + "e.g. conversions by segments.conversion_action_name in one, cost per campaign in another.";
+    case "REQUIRES_FILTER_BY_SINGLE_RESOURCE": {
+      // Google names the fields and the id, but not the two steps. The model dropped one field at a time, kept
+      // segments.date in SELECT, and fell back to a view that has no Performance Max terms (prod, 2026-10-27).
+      const m = /^(.+?) can only be selected when filtering by a single '([a-z_.]+)'/.exec(message);
+      if (!m) return null;
+      const fields = m[1]!.replace(/"/g, "").split(",").map((s) => s.trim()).join(", ");
+      return `take ${fields} out of SELECT (a date range can stay in WHERE) and run it to list each ${m[2]}; then select them `
+        + `again in one query per ${m[2]}, with WHERE ${m[2]} = that value.`;
+    }
     case "DUPLICATE_ASSET":
       return "two texts in one ad or asset group are the same to Google, which ignores spacing but not capitals. Make every headline and "
         + "description different, and propose again.";

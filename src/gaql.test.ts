@@ -83,6 +83,16 @@ describe("checkGaql against Google's field catalog", () => {
     expect(checkGaql("SELECT campaign.id, segments.search_term, metrics.clicks FROM campaign_search_term_view WHERE segments.date DURING LAST_30_DAYS", cat))
       .toEqual(["segments.search_term can't be used FROM campaign_search_term_view: select campaign_search_term_view.search_term instead, its own field."]);
   });
+  it("points another resource's field at the FROM resource's own path to it (prod, 2026-10-27)", () => {
+    // Was: "ad.final_urls can't be used FROM ad_group_ad; query it FROM ad", and FROM ad can't filter by campaign.
+    const ads: Catalog = new Map(cat);
+    const attr = (name: string): FieldMeta => ({ name, category: "ATTRIBUTE", selectable: true, filterable: true, sortable: true });
+    ads.set("ad", { name: "ad", category: "RESOURCE", attributeResources: [], metrics: [], segments: [] });
+    ads.set("ad_group_ad", { name: "ad_group_ad", category: "RESOURCE", attributeResources: ["ad_group", "campaign", "customer"], metrics: [], segments: [] });
+    for (const n of ["ad.final_urls", "ad_group_ad.ad.final_urls", "ad_group_ad.status"]) ads.set(n, attr(n));
+    expect(checkGaql("SELECT ad_group.name, ad.final_urls, ad_group_ad.status FROM ad_group_ad WHERE campaign.id = 1", ads))
+      .toEqual(["ad.final_urls can't be used FROM ad_group_ad: select ad_group_ad.ad.final_urls instead, its own field."]);
+  });
   it("offers no unrelated names for a field that doesn't exist, but the lookup that finds it (2026-10-15 prod errors)", () => {
     // Was: "Closest usable FROM campaign: campaign.campaign_group, campaign.campaign_budget, campaign.optimization_score".
     expect(checkGaql("SELECT campaign.name, campaign.url_expansion_opt_out FROM campaign", cat)).toEqual([

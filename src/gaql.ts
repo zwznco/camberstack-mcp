@@ -155,9 +155,11 @@ export function checkGaql(query: string, cat: Catalog): string[] {
       if (clause === "WHERE" && f.filterable === false) issues.push(`${name} can't be used in WHERE.`);
       if (clause === "ORDER BY" && f.sortable === false) issues.push(`${name} can't be used in ORDER BY.`);
       if (!usable(f)) {
-        // A segment the FROM resource carries as its own field (segments.search_term FROM campaign_search_term_view): name
-        // that field first. Pointing at the other resources alone sent a user to the insight views instead (2026-10-16).
-        const own = f.category === "SEGMENT" ? cat.get(`${p.from}.${name.slice("segments.".length)}`) : undefined;
+        // A field the FROM resource carries as its own (segments.search_term FROM campaign_search_term_view is
+        // campaign_search_term_view.search_term; ad.final_urls FROM ad_group_ad is ad_group_ad.ad.final_urls): name that
+        // field first. Pointing at the other resources sent one user to the insight views (2026-10-16), and another
+        // to FROM ad, which can't filter by campaign, so it never got the URLs (prod, 2026-10-27).
+        const own = cat.get(`${p.from}.${f.category === "SEGMENT" ? name.slice("segments.".length) : name}`);
         // A date segment FROM a resource with its own dates (segments.date FROM call_view): filter on those. Pointing at
         // campaign/customer instead would drop the per-call rows the query was after (prod, 2026-10-24).
         const dates = f.category === "SEGMENT" && f.dataType === "DATE" ? ownDates(cat, p.from) : [];
