@@ -815,7 +815,7 @@ export async function resolveChange(
     }
     case "set_bidding_strategy": {
       const [c] = await q(`SELECT campaign.name, campaign.bidding_strategy_type, campaign.bidding_strategy, campaign.target_spend.cpc_bid_ceiling_micros,
-          campaign.maximize_conversions.target_cpa_micros
+          campaign.maximize_conversions.target_cpa_micros, campaign.maximize_conversion_value.target_roas
         FROM campaign WHERE campaign.id = ${change.campaign_id}`);
       if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
       // On a shared (portfolio) strategy: this campaign moves onto its own strategy; undo puts it back on the shared one.
@@ -907,7 +907,8 @@ export async function resolveChange(
       const moved: { campaign_id: string; name: string; bidding: Record<string, unknown>; mask: string; label: string }[] = [];
       for (const cid of [...new Set(change.campaign_ids)]) {
         const [c] = await q(`SELECT campaign.name, campaign.status, campaign.bidding_strategy_type, campaign.bidding_strategy,
-            campaign.target_spend.cpc_bid_ceiling_micros, campaign.maximize_conversions.target_cpa_micros FROM campaign WHERE campaign.id = ${cid}`);
+            campaign.target_spend.cpc_bid_ceiling_micros, campaign.maximize_conversions.target_cpa_micros,
+            campaign.maximize_conversion_value.target_roas FROM campaign WHERE campaign.id = ${cid}`);
         if (!c) throw new Error(`Campaign ${cid} not found`);
         if (c.campaign.status === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
         const shared = c.campaign.biddingStrategy ? await sharedStrategy(q, c.campaign.biddingStrategy as string) : null;
@@ -1120,6 +1121,11 @@ function biddingOf(type: string, c: any): { bidding: Record<string, unknown>; ma
       const cpa = c.maximizeConversions?.targetCpaMicros;
       return { bidding: { maximizeConversions: cpa && Number(cpa) ? { targetCpaMicros: String(cpa) } : {} }, mask: "maximize_conversions.target_cpa_micros",
         label: `maximize conversions${cpa && Number(cpa) ? ` (target ${money(cpa)}/conversion)` : ""}` };
+    }
+    case "MAXIMIZE_CONVERSION_VALUE": {
+      const roas = c.maximizeConversionValue?.targetRoas;
+      return { bidding: { maximizeConversionValue: roas ? { targetRoas: roas } : {} }, mask: "maximize_conversion_value.target_roas",
+        label: `maximize conversion value${roas ? ` (target ROAS ${Math.round(roas * 100)}%)` : ""}` };
     }
     default:
       return null;

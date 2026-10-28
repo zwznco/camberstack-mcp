@@ -129,8 +129,8 @@ class FakeAds {
     }
     if (q.includes("FROM campaign")) {
       return [{ campaign: { id: "10", name: "Search", status: this.campaignStatus, endDateTime: this.campaignEnd, advertisingChannelType: "SEARCH",
-          ...(this.portfolio ? { biddingStrategyType: "TARGET_CPA", biddingStrategy: `customers/1112223333/biddingStrategies/${this.portfolio.id}` }
-            : { biddingStrategyType: "MANUAL_CPC", manualCpc: { enhancedCpcEnabled: false } }), finalUrlSuffix: "",
+          ...(this.bidding ?? (this.portfolio ? { biddingStrategyType: "TARGET_CPA", biddingStrategy: `customers/1112223333/biddingStrategies/${this.portfolio.id}` }
+            : { biddingStrategyType: "MANUAL_CPC", manualCpc: { enhancedCpcEnabled: false } })), finalUrlSuffix: "",
           containsEuPoliticalAdvertising: this.euPolitical },
         campaignBudget: { resourceName: "customers/1112223333/campaignBudgets/99", amountMicros: "20000000", explicitlyShared: false },
         metrics: { costMicros: "200000000", clicks: "80", impressions: "900", conversions: 4, conversionsValue: 400 } }];
@@ -173,6 +173,7 @@ class FakeAds {
   acctGoals: Record<string, boolean> = { PURCHASE: true, SIGNUP: false };
   /** When set, campaign 10 is on this shared (portfolio) Target CPA strategy, with campaign "Brand". */
   portfolio: { id: string; cpa: string } | undefined;
+  bidding: Record<string, unknown> | undefined;
   /** Campaigns a strategy-membership query returns; default: Search and Brand. */
   strategyCampaigns: { id: string; name: string }[] | undefined;
   agBid = "1000000";
@@ -2194,6 +2195,16 @@ describe("OAuth + MCP end to end", () => {
     expect(stratUndo.summary).toContain("back to manual CPC");
     await call(token, "apply_changes", { proposal_id: stratUndo.proposal_id });
     expect(last().operations[0]).toMatchObject({ update: { manualCpc: { enhancedCpcEnabled: false } }, updateMask: "manual_cpc.enhanced_cpc_enabled" });
+
+    // Off maximize conversion value: undo restores it with its target ROAS.
+    ads.bidding = { biddingStrategyType: "MAXIMIZE_CONVERSION_VALUE", maximizeConversionValue: { targetRoas: 4 } };
+    const mcv = await propose([{ type: "set_bidding_strategy", campaign_id: "10", strategy: "MAXIMIZE_CONVERSIONS" }]);
+    expect(mcv.summary).toContain("from maximize conversion value (target ROAS 400%) to maximize conversions");
+    const mcvUndo = await applyUndo(mcv.proposal_id);
+    expect(mcvUndo.summary).toContain("back to maximize conversion value (target ROAS 400%)");
+    await call(token, "apply_changes", { proposal_id: mcvUndo.proposal_id });
+    expect(last().operations[0]).toMatchObject({ update: { maximizeConversionValue: { targetRoas: 4 } }, updateMask: "maximize_conversion_value.target_roas" });
+    ads.bidding = undefined;
 
     // On a shared (portfolio) strategy: one campaign moves off it, and undo puts it back on.
     ads.portfolio = { id: "88", cpa: "30000000" };
