@@ -18,6 +18,15 @@ export const SWITCH_NOTICE_PREFIX = "Account switch:";
 /** Text of the notice before a plan's first account is taken (session.ts admit): a choice, not a switch, so no switch_wanted email. */
 export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
 
+/**
+ * Option C (projects/camberstack/PRICING-TEST.md), behind FREE_ONE_SERVICE=1: Free covers one Google service at a time,
+ * the most recently used one over ACCOUNT_WINDOW_DAYS; paid plans cover all three together. Off by default.
+ */
+export type Service = "ads" | "search_console" | "analytics";
+export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", search_console: "Search Console", analytics: "Google Analytics" };
+/** Error text the service gate starts with. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
+export const SERVICE_LIMIT_PREFIX = "Service limit:";
+
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number) => `${n} Google Ads account${n === 1 ? "" : "s"}`;
 

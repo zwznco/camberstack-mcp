@@ -9,13 +9,13 @@ import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createApp } from "./server.js";
-import { openDb } from "./db.js";
+import { now, openDb } from "./db.js";
 import type { Config } from "./config.js";
 import { decrypt, encrypt } from "./crypto.js";
 import { AdsApiError, NotGrantedError } from "./google.js";
 import { io, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
-import { SERVER_VERSION } from "./tools.js";
+import { SERVER_VERSION, servicesOf } from "./tools.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 
@@ -362,6 +362,7 @@ const adsConversionFetch: typeof fetch = async (url, init) => {
 let app: ReturnType<typeof createApp>["app"];
 let billing: ReturnType<typeof createApp>["billing"];
 let grants: ReturnType<typeof createApp>["grants"];
+let deps: ReturnType<typeof createApp>["deps"];
 let server: Server;
 let base = "";
 const ads = new FakeAds();
@@ -381,7 +382,7 @@ beforeAll(async () => {
   base = `http://localhost:${(server.address() as AddressInfo).port}`;
   server.close();
   server = await new Promise<Server>((resolve) => {
-    ({ app, billing, grants } = createApp({ ...cfg, baseUrl: base, adminUrl: base.replace("localhost", "127.0.0.1"), openaiAppsChallenge: "tok_test_123",
+    ({ app, billing, grants, deps } = createApp({ ...cfg, baseUrl: base, adminUrl: base.replace("localhost", "127.0.0.1"), openaiAppsChallenge: "tok_test_123",
       conversions: { opsUrl: "http://operations.test/v1/conversions", opsKey: "crk_ours", actionId: "555" } }, db, { fetch: googleFetch, stripeFetch, adsConversionFetch, adsFactory: () => ads as any, scFactory: () => sc, gaFactory: (u) => ({ summaries: () => ga.summaries(u.id), runReport: () => ga.runReport(), admin: (m, p, b) => ga.admin(m, p, b) }) }));
     const s = app.listen(Number(new URL(base).port), () => resolve(s));
   });
@@ -2516,6 +2517,65 @@ describe("OAuth + MCP end to end", () => {
     expect(logo.status).toBe(200);
     expect(logo.headers.get("content-type")).toContain("image/png");
   });
+
+  it("with FREE_ONE_SERVICE, covers one Google service on Free: the demo is free, another service waits or needs Pro", async () => {
+    googleUser.sub = "google-sub-one-service"; googleUser.email = "oneservice@example.com";
+    deps.freeOneService = true;
+    try {
+      const t = await connect();
+      const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-one-service") as { id: string }).id;
+      // The demo site uses no service, so it doesn't pick one.
+      expect((await call(t, "search_console_summary", { site_url: "sc-domain:northwind-plumbing.example", days: 28 })).isError).toBe(false);
+      expect((await call(t, "billing")).json).toMatchObject({ plan: "free", service_in_use: null, services_included: 1 });
+      // The first real service is the one Free covers.
+      expect((await call(t, "switch_account", { customer_id: "111-222-3333" })).isError).toBe(false);
+      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
+      const sc1 = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
+      expect(sc1.isError).toBe(true);
+      expect(sc1.text).toContain("Service limit: the Free plan covers one Google service at a time");
+      expect(sc1.text).toContain("this login uses it for Google Ads");
+      expect(sc1.text).toContain("Pro ($15/month) covers all three together");
+      // A refused call takes nothing: Ads still works, and billing names it.
+      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
+      const plan = (await call(t, "billing")).json;
+      expect(plan).toMatchObject({ service_in_use: "Google Ads" });
+      expect(plan.included).toContain("1 Google service at a time");
+      // A reset by hand clears it: Search Console becomes the one, and Ads waits.
+      db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = ?").run(now() + 1, uid);
+      await new Promise((r) => setTimeout(r, 1100));
+      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).isError).toBe(false);
+      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).toContain("this login uses it for Search Console");
+      // Paid plans cover all three.
+      db.prepare("UPDATE users SET plan = 'pro' WHERE id = ?").run(uid);
+      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
+    } finally {
+      deps.freeOneService = false;
+      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
+      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-one-service") as { id: string } | undefined;
+      // Every table keyed by user, so later tests see only the users they made.
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
+        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
+      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
+      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-one-service");
+    }
+  });
+
+  it("names the Google services a call uses: none for the demo, listings, lookups and proposal bookkeeping", () => {
+    expect(servicesOf("run_gaql", { customer_id: "111-222-3333", query: "SELECT campaign.id FROM campaign" })).toEqual(["ads"]);
+    expect(servicesOf("run_gaql", { customer_id: "0000000001", query: "SELECT campaign.id FROM campaign" })).toEqual([]);
+    expect(servicesOf("run_gaql", { customer_id: "111-222-3333", query: "SELECT name, category WHERE name LIKE 'campaign.%'" })).toEqual([]);
+    expect(servicesOf("search_console_sites", {})).toEqual([]);
+    expect(servicesOf("search_console_trend", { site_url: "sc-domain:acme.test" })).toEqual(["search_console"]);
+    expect(servicesOf("analytics_report", { property_id: "123" })).toEqual(["analytics"]);
+    expect(servicesOf("analytics_report", { property_id: "000000001" })).toEqual([]);
+    expect(servicesOf("analytics_properties", {})).toEqual([]);
+    expect(servicesOf("propose_mark_key_event", { property_id: "123" })).toEqual(["analytics"]);
+    expect(servicesOf("propose_analytics_changes", { changes: [{ type: "create_ga4_property" }] })).toEqual(["analytics"]);
+    expect(servicesOf("paid_organic_overlap", { customer_id: "111-222-3333", site_url: "sc-domain:acme.test" })).toEqual(["ads", "search_console"]);
+    for (const n of ["apply_changes", "undo_changes", "change_history", "list_accounts", "switch_account", "billing"])
+      expect(servicesOf(n, { customer_id: "111-222-3333" })).toEqual([]);
+  });
+
 });
 
 describe("crypto", () => {

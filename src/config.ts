@@ -27,6 +27,8 @@ export interface Config {
   freeAccounts: number;
   proAccounts: number;
   agencyAccounts: number;
+  /** FREE_ONE_SERVICE=1: Free covers one Google service at a time (plans.ts Service). Off unless set. */
+  freeOneService?: boolean;
   /** Pro subscription; unset = no upgrade links (free users stop at the limit with no way to pay). */
   /** agencyPriceId: STRIPE_AGENCY_PRICE_ID; unset = no Agency plan offered. */
   stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string };
@@ -80,6 +82,7 @@ export function loadConfig(): Config {
       developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN || undefined,
     },
     freeAccounts: Number(process.env.FREE_ACCOUNTS ?? 1),
+    freeOneService: process.env.FREE_ONE_SERVICE === "1",
     proAccounts: Number(process.env.PRO_ACCOUNTS ?? PRO_ACCOUNTS),
     agencyAccounts: Number(process.env.AGENCY_ACCOUNTS ?? AGENCY_ACCOUNTS),
     stripe: process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID

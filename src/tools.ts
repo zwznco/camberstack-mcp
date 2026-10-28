@@ -5,7 +5,9 @@ import { MAX_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice, type Service } from "./plans.js";
+import { DEMO_SITE } from "./demo.js";
+import { DEMO_PROPERTY } from "./ga4.js";
 import { isDemo, type Account, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
 
@@ -28,6 +30,25 @@ const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
 const GATED = new Set(["account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
   ...PUBLIC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
+
+const GA_PROPOSES = new Set(PUBLIC_GA_CHANGES.map((c) => `propose_${c.shape.type.value}`));
+/**
+ * The Google services a call uses on real data, for the one-service Free plan (session.ts checkService). Listing what a
+ * login can reach (list_accounts, search_console_sites, analytics_properties) and the demo account, site and property
+ * use none; nor do apply/undo/history, which act on a proposal the gate already let through.
+ */
+export function servicesOf(name: string, a: unknown): Service[] {
+  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; changes?: { property_id?: unknown }[] };
+  const realGa = (p: unknown) => p !== DEMO_PROPERTY;
+  if (name === "paid_organic_overlap")
+    return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(x.site_url !== DEMO_SITE ? ["search_console" as const] : [])];
+  if (GATED.has(name) && name !== "switch_account") return typeof x.customer_id === "string" && !isDemo(x.customer_id) && !isLookup(name, a) ? ["ads"] : [];
+  if (name.startsWith("search_console_") && name !== "search_console_sites") return x.site_url !== DEMO_SITE ? ["search_console"] : [];
+  if (["analytics_report", "analytics_landing_pages", "analytics_setup"].includes(name) || GA_PROPOSES.has(name)) return realGa(x.property_id) ? ["analytics"] : [];
+  // create_ga4_property has no property_id: a new property is real.
+  if (name === "propose_analytics_changes") return (x.changes ?? []).some((c) => realGa(c?.property_id)) ? ["analytics"] : [];
+  return [];
+}
 
 /** A run_gaql field lookup reads Google's field catalog, not the account named: no plan gate, and no account in the log. */
 const isLookup = (name: string, a: unknown) => {
@@ -90,6 +111,8 @@ export interface ToolCall {
   bytes: number;
   /** run_gaql only: gaql.ts queryShape, never the values. */
   queryShape?: string | null;
+  /** servicesOf, comma-joined, on a call that ran (null when it used none, or was refused). */
+  service?: string | null;
 }
 
 /** What the /tools page and llms.txt show about each tool; filled as buildServer registers them. */
@@ -106,10 +129,19 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       let out: ReturnType<typeof ok> | ReturnType<typeof fail>;
       let release = () => {};
       let notice: string | null = null;
+      const services = servicesOf(name, a);
       try {
-        if (GATED.has(name) && typeof cid === "string")
+        if (services.length) {
+          const done = session().checkService(services);
+          const prev = release;
+          release = () => { prev(); done(); };
+        }
+        if (GATED.has(name) && typeof cid === "string") {
           // Only switch_account may spend the plan's switch: the read tools stay free of side effects.
-          release = await session().checkAccount(cid, name === "switch_account");
+          const done = await session().checkAccount(cid, name === "switch_account");
+          const prev = release;
+          release = () => { prev(); done(); };
+        }
         out = ok(await fn(a));
       } catch (e) {
         if (e instanceof SwitchNotice) {
@@ -128,6 +160,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           ok: !("isError" in out), error: "isError" in out ? out.content[0]!.text.slice(7, 1007) : notice?.slice(0, 1000) ?? null,
           ms: Date.now() - t0, bytes: out.content[0]!.text.length,
           queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
+          service: services.length && !("isError" in out) && !notice ? services.join(",") : null,
         });
       } catch { /* logging must never break a tool */ }
       release();  // after the log: the account now counts as used from tool_calls instead

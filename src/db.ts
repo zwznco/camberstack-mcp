@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   error        TEXT,            -- first 1000 chars of the message shown to the AI (300 before 2026-10-15)
   ms           INTEGER NOT NULL,
   bytes        INTEGER NOT NULL, -- size of the result text
-  query_shape  TEXT              -- run_gaql only: the query with every value replaced by ? (gaql.ts queryShape)
+  query_shape  TEXT,             -- run_gaql only: the query with every value replaced by ? (gaql.ts queryShape)
+  service      TEXT              -- Google services a real (non-demo) call used, comma-joined (tools.ts servicesOf); plan gate for Option C
 );
 CREATE INDEX IF NOT EXISTS tool_calls_at ON tool_calls(at);
 
@@ -212,6 +213,8 @@ export function openDb(dataDir: string): DB {
   // run_gaql's query shape (2026-10-15): which fields custom queries ask for, never the values in them.
   const tc = new Set((db.prepare("PRAGMA table_info(tool_calls)").all() as { name: string }[]).map((c) => c.name));
   if (!tc.has("query_shape")) db.exec("ALTER TABLE tool_calls ADD COLUMN query_shape TEXT");
+  // Which Google service each call used (2026-10-28), for the one-service Free plan behind FREE_ONE_SERVICE.
+  if (!tc.has("service")) db.exec("ALTER TABLE tool_calls ADD COLUMN service TEXT");
   // The admin's email on an /account session opened through "Log in as user" (account.ts); NULL = the user's own.
   const ws = new Set((db.prepare("PRAGMA table_info(web_sessions)").all() as { name: string }[]).map((c) => c.name));
   if (!ws.has("impersonator")) db.exec("ALTER TABLE web_sessions ADD COLUMN impersonator TEXT");

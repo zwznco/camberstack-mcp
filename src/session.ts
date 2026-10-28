@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, isPaid, type Plan } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, isPaid, type Plan, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -61,6 +61,8 @@ const NOT_REPEATABLE = new Set<string>(["add_ad_group", "add_responsive_search_a
 /** Per user: the tail of their plan-gate checks (run one at a time), and the accounts with a call running. */
 const gateQueue = new Map<string, Promise<void>>();
 const inFlight = new Map<string, Map<string, number>>();
+/** Services a user's running calls use, so parallel calls can't take two services at once (checkService). */
+const servicesInFlight = new Map<string, Map<Service, number>>();
 
 /**
  * `fn` over `items`, at most `limit` at a time, results in input order. If any fail, throws the error of the
@@ -88,6 +90,8 @@ export interface SessionDeps {
   /** Google Ads accounts each plan covers, over ACCOUNT_WINDOW_DAYS (config.ts). */
   freeAccounts: number;
   proAccounts: number;
+  /** Option C (plans.ts Service): Free covers one Google service at a time. Off unless FREE_ONE_SERVICE=1. */
+  freeOneService?: boolean;
   /** Agency's accounts at a time; unset = no Agency plan (tests, and billing without STRIPE_AGENCY_PRICE_ID). */
   agencyAccounts?: number;
   proEmails: Set<string>;
@@ -254,6 +258,56 @@ export class UserSession {
     return this.usage().map((u) => u.c);
   }
 
+  /**
+   * Google services this user ran real calls on in the window, most recently used first (tool_calls.service; the demo,
+   * refused calls and calls before plan_reset_at don't count). With FREE_ONE_SERVICE, Free covers the first of these.
+   */
+  servicesInUse(): { s: Service; last: number }[] {
+    const rows = this.deps.db.prepare(`SELECT service, max(at) last, max(id) id FROM tool_calls WHERE user_id = ? AND ok = 1 AND service IS NOT NULL AND at >= ?
+        GROUP BY service ORDER BY last DESC, id DESC`)
+      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0)) as { service: string; last: number }[];
+    const out: { s: Service; last: number }[] = [];
+    for (const r of rows) for (const s of r.service.split(",") as Service[]) if (!out.some((o) => o.s === s)) out.push({ s, last: r.last });
+    return out;
+  }
+
+  /**
+   * The one-service gate (FREE_ONE_SERVICE, Free only): a call may use only the service the plan covers, which is the
+   * most recently used one, or, with none used yet, the one this call uses (a call needing two, paid_organic_overlap,
+   * needs a paid plan). Another service opens 30 days after the covered one was last used, or with plan_reset_at.
+   * Returns a release to call once the call is logged: until then its service counts as in use.
+   */
+  checkService(services: Service[]): () => void {
+    if (!this.deps.freeOneService || this.isPro) return () => {};
+    const running = [...(servicesInFlight.get(this.user.id)?.keys() ?? [])];
+    const used = this.servicesInUse();
+    const covered = running[0] ?? used[0]?.s ?? (services.length === 1 ? services[0]! : undefined);
+    const extra = services.filter((s) => s !== covered);
+    if (!covered || extra.length) {
+      const have = covered ? SERVICE_LABELS[covered] : null;
+      const want = extra.map((s) => SERVICE_LABELS[s]).join(" and ") || services.map((s) => SERVICE_LABELS[s]).join(" and ");
+      const last = used.find((u) => u.s === covered)?.last;
+      const opens = last ? new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10) : null;
+      const why = have ? `this login uses it for ${have}` : `${want} together need more than one`;
+      const head = `${SERVICE_LIMIT_PREFIX} the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and ${why}.`
+        + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
+      const common = { error: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
+      if (this.chatgpt) throw new PlanLimitError(`${head} Using several together needs a different plan.`, common);
+      const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+      throw new PlanLimitError(`${head} Pro (${PRO_PRICE_LABEL}) covers all three together, so ${want} works right away.`,
+        { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: "Google Ads, Search Console and Google Analytics together", cancel: "any time",
+          upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
+    }
+    const mine = servicesInFlight.get(this.user.id) ?? new Map<Service, number>();
+    servicesInFlight.set(this.user.id, mine);
+    mine.set(covered, (mine.get(covered) ?? 0) + 1);
+    return () => {
+      const n = (mine.get(covered) ?? 1) - 1;
+      if (n > 0) mine.set(covered, n); else mine.delete(covered);
+      if (!mine.size) servicesInFlight.delete(this.user.id);
+    };
+  }
+
   /** accountsInUse, most recently used first, with when each was last used. */
   private usage(): { c: string; last: number }[] {
     // max(id): a same-second tie goes to the later call, so switch_account's account is the active one.
@@ -415,11 +469,24 @@ export class UserSession {
         ...(agency ? { or_agency: { plan: "agency", price: AGENCY_PRICE_LABEL, accounts_included: this.deps.agencyAccounts, upgrade_url: agency } } : {}) });
   }
 
+  private freeIncluded(): string {
+    return this.deps.freeOneService
+      ? "every tool on 1 Google service at a time (Google Ads, Search Console or Google Analytics) and 1 Google Ads account, with unlimited applied changes; undo and history always work"
+      : "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work";
+  }
+
+  /** With FREE_ONE_SERVICE: which service Free covers now. Nothing otherwise, so plan() reads as before. */
+  private serviceUsage(): { service_in_use?: string | null; services_included?: number } {
+    if (!this.deps.freeOneService) return {};
+    const s = this.servicesInUse()[0]?.s;
+    return { service_in_use: s ? SERVICE_LABELS[s] : null, services_included: 1 };
+  }
+
   plan() {
     if (this.chatgpt) {
       const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
       return this.isPro ? { plan: this.planName, ...usage }
-        : { plan: "free", ...usage, included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
+        : { plan: "free", ...usage, ...this.serviceUsage(), included: this.freeIncluded(),
             note: "More accounts at a time need a different plan." };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
@@ -436,8 +503,8 @@ export class UserSession {
             : { complimentary: true, manage_billing: null }),
           // Pro → Agency switches on the billing page (Stripe's portal), with the difference prorated.
           ...(this.planName === "pro" ? agency : {}) }
-      : { plan: "free", account_page, ...usage,
-          included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
+      : { plan: "free", account_page, ...usage, ...this.serviceUsage(),
+          included: this.freeIncluded(),
           pro: `up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
   }

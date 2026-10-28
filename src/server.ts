@@ -58,6 +58,8 @@ export interface Service {
   startJobs(): void;
   /** Links that add one Google service to a connection, so tests can follow one. */
   grants: Grants;
+  /** What every session reads, so tests can flip a flag (freeOneService) without a second server. */
+  deps: SessionDeps;
 }
 
 export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Service {
@@ -86,14 +88,14 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     signingKey: deriveKey(cfg.encryptionKey, "grant-links"), forgetToken: clearGoogleCache, fetch: overrides.fetch });
   const deps: SessionDeps = {
     db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
-    freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails,
+    freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails, freeOneService: cfg.freeOneService ?? false,
     agencyAccounts: billing.agencyEnabled ? cfg.agencyAccounts : undefined,
     billingLink: (kind, userId) => billing.link(kind, userId), refreshPlan: (userId) => billing.refreshPlan(userId),
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };
   const mcpUrl = new URL(`${cfg.baseUrl}/mcp`);
-  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   const analytics = new Analytics({ matomoUrl: cfg.matomo?.url ?? "", siteId: cfg.matomo?.siteId ?? "",
     token: cfg.matomo?.token ?? "", site: cfg.baseUrl, fetch: overrides.analyticsFetch });
@@ -246,7 +248,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const chatgpt = isChatGpt(clientId);
     let session: UserSession | undefined;
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
-      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null);
+      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null);
     }, [], { chatgpt, stuck: (tool, error) => (userId && stuckNow(db, userId, tool, error)
       ? `This is the same error a third time. If you can't get the user what they asked for, tell them they can report it `
         + `to Camberstack's maintainer at ${cfg.baseUrl}/feedback, saying what they were trying to get.`
@@ -423,7 +425,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
         .catch((e) => console.error(`IndexNow: ${(e as Error).message}`));
     }
   };
-  return { app, billing, startJobs, grants };
+  return { app, billing, startJobs, grants, deps };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

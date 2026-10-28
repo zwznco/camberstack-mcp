@@ -13,7 +13,7 @@
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { esc } from "./pages.js";
-import { isPaid, PLAN_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, ACCOUNT_CHOICE_PREFIX } from "./plans.js";
+import { isPaid, PLAN_LIMIT_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, ACCOUNT_CHOICE_PREFIX } from "./plans.js";
 
 /** How long a later success of the same tool has to turn up before the error counts as unrecovered. */
 export const RECOVERY = 10 * 60;
@@ -63,6 +63,7 @@ const ACCOUNT_REFUSALS = /EU_POLITICAL_ADVERTISING|POLICY_FINDING|IMMUTABLE_FIEL
 export function verdict(code: string, error: string, recoveredLater: boolean): { act: boolean; why: string } {
   if (recoveredLater) return { act: false, why: "Recovered later (a success of this tool after the alert window). Nothing to do." };
   if (/^HTTP_5\d\d$/.test(code)) return { act: false, why: "Google was down (5xx). Transient; act only if it keeps happening (Bugsink tracks these)." };
+  if (error.startsWith(SERVICE_LIMIT_PREFIX)) return { act: true, why: "Service limit (Free covers one Google service): working as designed, but they wanted more." };
   if (error.startsWith(PLAN_LIMIT_PREFIX)) return { act: true, why: "Plan limit: working as designed, but they wanted more. An upgrade nudge may land." };
   if (error.startsWith(SWITCH_NOTICE_PREFIX) || error.startsWith(ACCOUNT_CHOICE_PREFIX))
     return { act: false, why: "Plan notice asking the user to choose. Working as designed unless it repeats with no choice made." };
