@@ -17,9 +17,10 @@ import type { DB } from "./db.js";
 import { now } from "./db.js";
 import type { Lifecycle } from "./lifecycle.js";
 import { esc } from "./pages.js";
+import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS } from "./plans.js";
 
 export type Audience = "all" | "free" | "pro";
-export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Pro plan" };
+export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Paid and complimentary plans (Plus, Pro, Agency)" };
 
 export interface Preset {
   id: string;
@@ -47,6 +48,35 @@ Camberstack can now read your Google Analytics 4 data, alongside your Google Ads
 New connections ask for Google Analytics on Google's sign-in screen, as an optional box. If you're already connected, the first time you ask, Camberstack gives you a link that adds it, no reconnecting. Changes to your Analytics settings still wait for your approval, and each one can be undone.
 
 Everything else that changed recently: https://camberstack.io/changelog
+
+Adam`,
+  },
+  {
+    id: "free-one-service",
+    plan: "Monday 2026-11-02, once FREE_ONE_SERVICE=2026-11-16 is set and the site shows the change (projects/camberstack/PRICING-TEST.md). "
+      + "Free users only: paid plans don't change. The date in the text is fixed, so a new date means a new commit. No price in it "
+      + "(announce.test.ts): an account update, not a promotion; /plans has the prices.",
+    audience: "free",
+    subject: "A change to Camberstack's Free plan on November 16",
+    body: `Hi,
+
+A change to Camberstack's Free plan, starting November 16.
+
+Today, Free covers one Google Ads account, with Search Console and Google Analytics included. From November 16, Free covers **one Google service at a time**: Google Ads, Search Console or Google Analytics.
+
+What stays the same on Free:
+
+- Every tool for that service, with unlimited changes, nothing applied until you approve it, and undo.
+- Google Ads covers one account, with one switch every ${ACCOUNT_WINDOW_DAYS} days, as now.
+- Undo and change history always work, including for everything you've done so far.
+
+How it works: the first time you use Camberstack from November 16, your AI asks which service you want. Another one opens ${ACCOUNT_WINDOW_DAYS} days after you last used the first.
+
+If you use them together, there's a new plan for that: Camberstack Plus covers Google Ads, Search Console and Google Analytics at once on one Google Ads account, including the tools that use them side by side (like finding searches you pay for that already rank). Pro does the same on up to ${PRO_ACCOUNTS} accounts. What each plan includes and costs: https://camberstack.io/plans
+
+Nothing changes for Pro and Agency.
+
+Questions or concerns? Just reply. I read every email.
 
 Adam`,
   },

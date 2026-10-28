@@ -86,7 +86,7 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
     case "unmark_key_event": {
       const name = await propertyName(change.property_id);
       const have = ((await ga.admin("GET", `properties/${change.property_id}/keyEvents?pageSize=200`)).keyEvents ?? []) as
-        { name: string; eventName: string; countingMethod: string }[];
+        { name: string; eventName: string; countingMethod: string; deletable?: boolean }[];
       const k = have.find((x) => x.eventName === change.event_name);
       if (change.type === "mark_key_event") {
         return { ...base,
@@ -94,7 +94,13 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
             body: { eventName: change.event_name, countingMethod: change.counting } }],
           describe: `Mark "${change.event_name}" as a key event in GA4 property "${name}" (counted ${change.counting === "ONCE_PER_SESSION" ? "once per session" : "every time"})`
             + (k ? " (already a key event)" : "")
-            + ". To bid on it in Google Ads, import it there next (the import_ga4_key_event change; the property must be linked to the Ads account)" };
+            + ". To bid on it in Google Ads, import it there once this is applied (the import_ga4_key_event change; the property must be linked to the Ads account)" };
+      }
+      // GA4's built-in key events (purchase) refuse deletion at write, which would roll back everything proposed with them.
+      // Google omits false booleans, so a built-in one comes back with no deletable field at all (seen live 2026-10-22).
+      if (k && k.deletable !== true) {
+        throw new Error(`"${change.event_name}" is a built-in key event in GA4 property "${name}" and Google Analytics won't remove it. `
+          + `Leave it out; to keep it out of Google Ads bidding, make its conversion action secondary there instead (import_ga4_key_event with primary false).`);
       }
       return { ...base,
         operations: k ? [{ method: "DELETE", path: k.name }] : [],

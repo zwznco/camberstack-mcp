@@ -5,13 +5,31 @@
 
 import type { Release } from "./changelog.js";
 import { z } from "zod";
-import { ACCOUNT_WINDOW_DAYS, PRO_PRICE_LABEL } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, ALL_THREE, ONE_SERVICE_FREE, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, dateLabel, freePlanChange, type FreePlan } from "./plans.js";
 import type { ToolDoc } from "./tools.js";
+
+/**
+ * Which Free the pages describe while they render (plans.ts FreePlan). server.ts renders each page once per phase of
+ * FREE_ONE_SERVICE (announced, then on) and serves the live one, so the copy flips at the date without a restart.
+ */
+let fp: FreePlan = { kind: "accounts" };
+export function withFreePlan<T>(plan: FreePlan, render: () => T): T {
+  const prev = fp;
+  fp = plan;
+  try { return render(); } finally { fp = prev; }
+}
+/** " From November 16, Free covers …" while announced; "" otherwise. Leading space, for the end of a paragraph. */
+const soon = () => (fp.kind === "upcoming" ? ` ${freePlanChange(fp)}` : "");
+/** Plus, in a sentence: from the date while announced. Empty before one-service Free is announced (Plus would equal Free). */
+const plusLine = () => fp.kind === "accounts" ? ""
+  : ` Plus (${PLUS_PRICE_LABEL}) covers all three together on 1 Google Ads account${fp.kind === "upcoming" ? `, from ${dateLabel(fp.from)}` : ""}.`;
+/** What Pro and Agency cover besides more accounts. */
+const paidCovers = () => (fp.kind === "accounts" ? "Everything in Free, on" : `${ALL_THREE}, on`);
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
-const PRIVACY_UPDATED = "2026-10-21";
-const TERMS_UPDATED = "2026-10-21";
+const PRIVACY_UPDATED = "2026-10-28";
+const TERMS_UPDATED = "2026-10-28";
 
 const CSS = `
 .linkish{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
@@ -289,21 +307,30 @@ const guideBody = (html: string) => `<section class="sec guide"><div class="wrap
 const closer = (title: string, sub: string, ctas: string) =>
   `<section class="closer"><div class="wrap"><h2>${title}</h2><p class="muted">${sub}</p><div class="ctas">${ctas}</div></div></section>`;
 
+/** The homepage's "What does Free cover?" once one-service Free is announced; nothing before. */
+const freeFaq = () => fp.kind === "accounts" ? "" : `<div><h3>What does Free cover?</h3>
+<p>${fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, every tool on 1 Google Ads account, with Search Console and Google Analytics included. From then, one` : "One"} Google service at a time: Google Ads (1 account), Search Console or Google Analytics, with every tool and unlimited
+changes. The first time, your AI asks which one; another opens ${ACCOUNT_WINDOW_DAYS} days after the current one was last used.${plusLine()} Pro and Agency cover all three on more accounts.</p></div>`;
+
 export function homePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
   return layout({
     baseUrl, path: "/", wide: true,
     title: "Camberstack: hosted Google Ads MCP for Claude and ChatGPT",
-    description: "A hosted Google Ads MCP server for Claude, ChatGPT and Cursor. Your AI proposes changes, you approve each one, and any applied change can be undone in one step. Free for 1 account with unlimited changes; $15/month for 10.",
+    description: `A hosted Google Ads MCP server for Claude, ChatGPT and Cursor. Your AI proposes changes, you approve each one, and any applied change can be undone in one step. Free for 1 account with unlimited changes; ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}.`,
     jsonLd: {
       "@context": "https://schema.org", "@type": "SoftwareApplication", name: "Camberstack",
       applicationCategory: "BusinessApplication", operatingSystem: "Web", url: baseUrl,
       description: "Hosted Google Ads MCP server for Claude, ChatGPT and other MCP apps: read-only queries, optional Search Console and Google Analytics 4 data, and approved changes with undo.",
       offers: [
         { "@type": "Offer", name: "Free", price: "0", priceCurrency: "USD",
-          description: "Every tool, with unlimited applied changes, on 1 Google Ads account." },
-        { "@type": "Offer", name: "Pro", price: "15", priceCurrency: "USD", description: "Every tool on up to 10 Google Ads accounts.",
+          description: fp.kind === "one_service" ? `Every tool, with unlimited applied changes, on ${ONE_SERVICE_FREE}.` : "Every tool, with unlimited applied changes, on 1 Google Ads account." },
+        ...(fp.kind === "one_service" ? [{ "@type": "Offer", name: "Plus", price: "7", priceCurrency: "USD", description: `${ALL_THREE}, on 1 Google Ads account.`,
+          priceSpecification: { "@type": "UnitPriceSpecification", price: "7", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } }] : []),
+        { "@type": "Offer", name: "Pro", price: "15", priceCurrency: "USD", description: fp.kind === "accounts" ? `Every tool on up to ${PRO_ACCOUNTS} Google Ads accounts.` : `${ALL_THREE}, on up to ${PRO_ACCOUNTS} Google Ads accounts.`,
           priceSpecification: { "@type": "UnitPriceSpecification", price: "15", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } },
+        { "@type": "Offer", name: "Agency", price: "49", priceCurrency: "USD", description: `Every tool on up to ${AGENCY_ACCOUNTS} Google Ads accounts.`,
+          priceSpecification: { "@type": "UnitPriceSpecification", price: "49", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } },
       ],
     },
     body: `
@@ -398,12 +425,22 @@ Changes there never reach Google, and the demo doesn't count as one of your plan
 </div></section>
 
 <section class="sec sec-tint" id="pricing"><div class="wrap">
-<div class="sec-head"><p class="kicker">Pricing</p><h2>Free for one account. ${PRO_PRICE_LABEL} for ten.</h2></div>
+<div class="sec-head"><p class="kicker">Pricing</p><h2>${fp.kind === "accounts" ? `Free for one account. ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}, ${AGENCY_PRICE_LABEL} for ${AGENCY_ACCOUNTS}.`
+  : `Free for one ${fp.kind === "one_service" ? "service" : "account"}. ${PLUS_PRICE_LABEL} for all three, ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS} accounts, ${AGENCY_PRICE_LABEL} for ${AGENCY_ACCOUNTS}.`}</h2></div>
 <div class="plans">
-<div class="plan"><h3>Free</h3><p class="price">$0</p><p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong>. No card.</p>
-<p class="plan-cta"><a class="btn btn-ghost" href="#setup">Connect for free</a></p></div>
-<div class="plan plan-pro"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>Everything in Free, on <strong>up to 10 Google Ads accounts</strong>, for agencies and anyone managing clients through a manager (MCC) account. Cancel any time; you keep Pro until the end of the month you paid for.</p>
-<p class="plan-cta"><a class="btn" href="/account?upgrade=1">Upgrade to Pro</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p></div>
+<div class="plan"><h3>Free</h3><p class="price">$0</p><p>${fp.kind === "one_service"
+  ? `Every tool, with unlimited applied changes and undo, on <strong>one Google service at a time</strong>: Google Ads (1 account), Search Console or Google Analytics. No card.`
+  : `Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong>. No card.`}</p>${fp.kind === "upcoming"
+  ? `<p class="muted small">From ${dateLabel(fp.from)}: one Google service at a time (Google Ads, Search Console or Google Analytics).</p>` : ""}
+<p class="plan-cta"><a class="btn btn-ghost" href="#setup">Connect for free</a></p></div>${fp.kind === "accounts" ? "" : `
+<div class="plan${fp.kind === "one_service" ? " plan-pro" : ""}"><h3>Plus</h3><p class="price">${PLUS_PRICE_LABEL}</p><p>Google Ads, Search Console and Google Analytics <strong>together, on 1 Google Ads account</strong>, for anyone who wants one connection for all of it. Cancel any time.</p>
+${fp.kind === "upcoming" ? `<p class="muted small">Available from ${dateLabel(fp.from)}.</p>`
+  // Once sold, Plus is the highlighted plan: most users have one Google Ads account (69% on 2026-10-28).
+  : `<p class="plan-cta"><a class="btn" href="/account?upgrade=plus">Get Plus</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p>`}</div>`}
+<div class="plan${fp.kind === "one_service" ? "" : " plan-pro"}"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>${paidCovers()} <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>, for owners with a few brands and freelancers with a few clients. Cancel any time; you keep Pro until the end of the month you paid for.</p>
+<p class="plan-cta"><a class="btn${fp.kind === "one_service" ? " btn-ghost" : ""}" href="/account?upgrade=1">Upgrade to Pro</a></p>${fp.kind === "one_service" ? "" : `<p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p>`}</div>
+<div class="plan"><h3>Agency</h3><p class="price">${AGENCY_PRICE_LABEL}</p><p>${paidCovers()} <strong>up to ${AGENCY_ACCOUNTS} Google Ads accounts</strong>, for agencies and anyone managing clients through a manager (MCC) account. Already on Pro? Switch from your account page; the difference is prorated.</p>
+<p class="plan-cta"><a class="btn btn-ghost" href="/account?upgrade=agency">Upgrade to Agency</a></p></div>
 </div>
 </div></section>
 
@@ -423,7 +460,7 @@ Reports and query results are not stored. Details in the <a href="/privacy">priv
 <p>Sign in at <a href="/account">camberstack.io/account</a> and choose <strong>Disconnect Google Ads</strong>, or remove Camberstack at
 <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. You can also ask your AI to use the <code>disconnect</code>
 tool, though some apps (ChatGPT, for one) block disconnect requests from chat.</p></div>
-<div><h3>What counts as an account?</h3>
+${freeFaq()}<div><h3>What counts as an account?</h3>
 <p>Each Google Ads account you actually use Camberstack on in the last ${ACCOUNT_WINDOW_DAYS} days, not every account your login can see.
 A manager (MCC) account and the demo account don't count. Free covers one account at a time, and you can switch to another once
 every ${ACCOUNT_WINDOW_DAYS} days: the new one becomes active and the old one is locked. Past that, a plan-limit error comes with a personal
@@ -483,7 +520,10 @@ since (a budget, a status, an end date), nothing is applied and ${app} shows you
 If everything in it is already in place, there's nothing left to apply. Proposals don't expire: an older one that still matches your account applies as approved.</p>
 <h3>"Plan limit"</h3>
 <p>The Free plan covers one Google Ads account at a time, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days. Past that, it asks you
-to upgrade, with a personal checkout link, and says when your next switch opens. Undo and change history always work. <a href="/#pricing">Plans</a>.</p>
+to upgrade, with a personal checkout link, and says when your next switch opens. Undo and change history always work. <a href="/#pricing">Plans</a>.</p>${fp.kind === "one_service" ? `
+<h3>"Service limit"</h3>
+<p>The Free plan covers one Google service at a time: Google Ads, Search Console or Google Analytics. The first time, your AI asks which one;
+another opens ${ACCOUNT_WINDOW_DAYS} days after the current one was last used. Plus covers all three together on one account, Pro and Agency on more. <a href="/#pricing">Plans</a>.</p>` : ""}
 <h3>"Search Console access isn't part of this Google connection"</h3>
 <p>The Search Console box was unticked on Google's sign-in screen, or you connected before the Search Console tools existed.
 The same message comes with a personal link: open it and Google adds Search Console to your connection, no reconnecting. The same goes for Google Ads.</p>
@@ -507,7 +547,8 @@ const commonQuestions = (app: string) => `<h3>Do I need a Google Ads developer t
 <h3>Does ${app} see my whole Google account?</h3>
 <p>No. It gets Google Ads access, your email address and, if you leave them ticked, read-only Search Console and Google Analytics (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
 <h3>What does it cost?</h3>
-<p>Free on one Google Ads account, with every tool and unlimited changes. <a href="/#pricing">Pro</a> covers up to 10 accounts for ${PRO_PRICE_LABEL}.</p>`;
+<p>${fp.kind === "one_service" ? `Free on ${ONE_SERVICE_FREE}, with every tool and unlimited changes. <a href="/#pricing">Plus</a> covers all three together on one account for ${PLUS_PRICE_LABEL}, Pro on up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.`
+  : `Free on one Google Ads account, with every tool and unlimited changes. <a href="/#pricing">Pro</a> covers up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.${soon()}`}</p>`;
 
 /**
  * Use-case page for "claude google ads" / "google ads claude" / "google ads mcp server" (keyword data:
@@ -653,7 +694,8 @@ ${guideTroubleshooting("ChatGPT",
 <p>No. The Google sign-in is Camberstack's, not ChatGPT's, and it shares only Google Ads, your email address and, if you leave them
 ticked, read-only Search Console and Google Analytics (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
 <h3>Does it need a paid Camberstack plan?</h3>
-<p>No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to 10.</p>
+<p>${fp.kind === "one_service" ? `No. Free covers ${ONE_SERVICE_FREE}, with every tool; <a href="/#pricing">Plus</a> covers all three together on one account, Pro on up to ${PRO_ACCOUNTS} accounts, and Agency up to ${AGENCY_ACCOUNTS}.`
+  : `No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to ${PRO_ACCOUNTS}, and Agency up to ${AGENCY_ACCOUNTS}.${soon()}`}</p>
 <h3>Using Claude too?</h3>
 <p>Camberstack is in Claude's connector directory as well: see <a href="/google-ads-claude">the Claude guide</a>.</p>
 `)}
@@ -745,13 +787,15 @@ runs that part for you: one Google sign-in, and it works the same in Claude on t
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>The Search Console tools are free and don't count toward a plan. Plans count Google Ads accounts only: <a href="/#pricing">Free covers one, Pro ten</a>.</p>
+<p>${fp.kind === "accounts" ? `The Search Console tools are free and don't count toward a plan. Plans count Google Ads accounts only: <a href="/#pricing">Free covers one, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}</a>.`
+  : fp.kind === "upcoming" ? `The Search Console tools are free. Until ${dateLabel(fp.from)} they don't count toward a plan; from then, Free covers one Google service at a time, and Search Console can be that one. Using it together with Google Ads or Analytics needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`
+  : `The Search Console tools are free on their own: Free covers one Google service at a time, and Search Console can be that one. Using it together with Google Ads or Analytics needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`}</p>
 <h3>Which Search Console permission do I need?</h3>
 <p>Any user of the property can read its performance data. Only the sites your Google login can see in Search Console are listed.</p>
 <h3>Do you store my search data?</h3>
 <p>No. Camberstack fetches it when your AI asks and passes it on; reports and query results aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
 `)}
-${closer("Ask your AI how your site is doing in Google Search.", "Free and read-only. It doesn't count toward a plan.",
+${closer("Ask your AI how your site is doing in Google Search.", fp.kind === "accounts" ? "Free and read-only. It doesn't count toward a plan." : "Free and read-only.",
   `<a class="btn btn-lg" href="/#setup">Connect Search Console</a><a class="btn btn-lg btn-ghost" href="/tools#search_console_sites">See the tools</a>`)}
 `,
   });
@@ -926,8 +970,11 @@ changes there never reach Google, and it doesn't count toward your plan. Ask <em
 
 <h2 id="plans">Plans and limits</h2>
 <table><tr><th>Plan</th><th>Covers</th></tr>
-<tr><td>Free</td><td>Every tool, unlimited applied changes, on 1 Google Ads account. No card.</td></tr>
-<tr><td>Pro, ${PRO_PRICE_LABEL}</td><td>The same, on up to 10 Google Ads accounts. Cancel any time.</td></tr></table>
+<tr><td>Free</td><td>${fp.kind === "one_service" ? `Every tool, unlimited applied changes, on ${ONE_SERVICE_FREE}. No card.`
+  : `Every tool, unlimited applied changes, on 1 Google Ads account. No card.${soon()}`}</td></tr>
+${fp.kind === "accounts" ? "" : `<tr><td>Plus, ${PLUS_PRICE_LABEL}</td><td>${ALL_THREE}, on 1 Google Ads account.${fp.kind === "upcoming" ? ` From ${dateLabel(fp.from)}.` : ""} Cancel any time.</td></tr>
+`}<tr><td>Pro, ${PRO_PRICE_LABEL}</td><td>${fp.kind === "accounts" ? "The same" : ALL_THREE}, on up to ${PRO_ACCOUNTS} Google Ads accounts. Cancel any time.</td></tr>
+<tr><td>Agency, ${AGENCY_PRICE_LABEL}</td><td>${fp.kind === "accounts" ? "The same" : ALL_THREE}, on up to ${AGENCY_ACCOUNTS} Google Ads accounts. Cancel any time; switching from Pro is prorated.</td></tr></table>
 <p>An account counts when you use Camberstack on it; it stops counting ${ACCOUNT_WINDOW_DAYS} days after its last use. Manager (MCC) accounts and the demo don't count.
 Each plan also gets one switch every ${ACCOUNT_WINDOW_DAYS} days: a new account becomes active and the least recently used one is locked.
 Using one more account than your plan covers returns a <code>plan_limit</code> error listing the accounts in use, when one frees up, and, on Free,
@@ -988,17 +1035,21 @@ Humans at Camberstack do not read your Google Ads data unless you ask us to for 
 <h2>What we store</h2>
 <table>
 <tr><th>Data</th><th>Why</th><th>Kept until</th></tr>
-<tr><td>Google email and account ID</td><td>Identify you across connections</td><td>You ask us to delete it</td></tr>
-<tr><td>Google refresh token, encrypted (AES-256-GCM)</td><td>Call Google's APIs (Google Ads, and Search Console, Google Analytics or Merchant Center if you granted them) when you use a tool</td><td>You disconnect or revoke access</td></tr>
+<tr><td>Google email and account ID</td><td>Identify you across connections</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
+<tr><td>How many Google Ads accounts your login can reach, how many of them had ad spend in the last 30 days, and which manager accounts they sit under (counts and IDs only, never names, amounts or other account data)</td><td>Show which accounts are active when you pick one, and size plans to how many accounts people use</td><td>The same as your email and account ID</td></tr>
+<tr><td>Google refresh token, encrypted (AES-256-GCM)</td><td>Call Google's APIs (Google Ads, and Search Console, Google Analytics or Merchant Center if you granted them) when you use a tool</td><td>You disconnect or revoke access, or six months without use</td></tr>
 <tr><td>A sign-in session for the account page (a cookie; we store only its hash)</td><td>Keep you signed in to camberstack.io/account</td><td>7 days, or until you sign out</td></tr>
 <tr><td>A random value in a cookie while you connect an AI app</td><td>Check that the browser finishing the Google sign-in is the one that approved the connection</td><td>The sign-in finishes, or 1 hour</td></tr>
 <tr><td>A random value in a cookie while you add a Google service (Google Ads, Search Console, Google Analytics or Merchant Center) to your connection</td><td>Check that the browser finishing Google's consent is the one that opened your link</td><td>The consent finishes, or 10 minutes</td></tr>
 <tr><td>Tokens we issue to your AI app (stored as hashes)</td><td>Authenticate your AI app</td><td>Expiry (1 hour access, 90 days refresh) or disconnect</td></tr>
-<tr><td>Proposals: the changes requested, their summary and results</td><td>Show what changed and let you undo it</td><td>You ask us to delete them</td></tr>
+<tr><td>Proposals: the changes requested, their summary and results</td><td>Show what changed and let you undo it</td><td>You ask us to delete them, or two years without use (not while on a paid plan)</td></tr>
 <tr><td>Feedback you send from camberstack.io/feedback: your message, what it's about, and the Google email you signed in with</td><td>Read it and reply to you</td><td>You ask us to delete it</td></tr>
 <tr><td>A sign-in session for the feedback page (a cookie; we store only its hash)</td><td>Know who a message is from, so we can reply and keep spam out</td><td>1 day, or until you sign out</td></tr>
-<tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it</td></tr>
+<tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
 </table>
+<p>"Without use" means no tool call from your AI app and no new connection. After six months of it we revoke and delete your
+Google token (Google stops honoring an unused one after six months anyway); connect again to carry on. After two years we delete your account,
+proposals and usage log.</p>
 <p>Reports, search-term lists, query results, Google Analytics reports and Merchant Center product statuses and reports are computed on request and returned to your AI assistant. We do not store them.
 When a proposed ad uses an image URL, we download that image only to upload it to your Google Ads account as an image asset; we do not keep the file.
 Standard web server logs (IP address, time, path) are kept for a limited period for security and then deleted.
@@ -1011,8 +1062,9 @@ When the server hits a bug, the error and where in the code it happened go to an
 <p>Camberstack runs on infrastructure we operate in the United States. We use no third-party analytics on your Google data.</p>
 
 <h2>Emails</h2>
-<p>We may send you two short emails about using Camberstack: one if you connect but don't try it within a couple of days,
-and one if you try Camberstack on more Google Ads accounts than the Free plan covers. Each is sent once. We may also send occasional one-time announcements
+<p>We may send you a few short emails about using Camberstack: a welcome when you connect, a note if you connect but don't try it within a
+couple of days, a note asking how it went after your first applied change, one if you try Camberstack on more Google Ads accounts or more
+Google services than the Free plan covers, and a confirmation if you upgrade. Each is sent once. We may also send occasional one-time announcements
 about changes to your account or to Camberstack's features. All of them come from adam@camberstack.io, to the email address of the Google account
 you connected, and never contain your Google Ads data. Every email has an unsubscribe link, and replies reach a person.</p>
 
@@ -1049,6 +1101,42 @@ Changes are validated with Google before you approve them and are limited to the
   });
 }
 
+/**
+ * What each plan includes, as facts only: no upgrade buttons and no checkout links. The one plans page a ChatGPT connection
+ * may link to (its guidelines allow "an informational page describing available plans", not a page that "explicitly
+ * initiates the process to upgrade"; the homepage #pricing has upgrade buttons). Follows FREE_ONE_SERVICE, so it describes
+ * whichever Free is live.
+ */
+export function plansPage(baseUrl: string): string {
+  const free = fp.kind === "one_service"
+    ? `<p>Every tool, with unlimited applied changes and undo, on <strong>one Google service at a time</strong>: Google Ads
+(1 account), Search Console or Google Analytics. Your AI asks which one before the first is used; another opens
+${ACCOUNT_WINDOW_DAYS} days after the current one was last used.</p>`
+    : `<p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong> at a time, with one switch
+to another account every ${ACCOUNT_WINDOW_DAYS} days. Search Console and Google Analytics are included and don't count.${soon()}</p>`;
+  const all = paidCovers();
+  return layout({
+    baseUrl, path: "/plans",
+    title: "Plans | Camberstack",
+    description: "What each of Camberstack's plans includes.",
+    body: `<div class="legal">
+<h1>Plans</h1>
+<h2>Free · $0</h2>
+${free}
+${fp.kind === "accounts" ? "" : `<h2>Plus · ${PLUS_PRICE_LABEL}</h2>
+<p>${ALL_THREE}, on <strong>1 Google Ads account</strong>.${fp.kind === "upcoming" ? ` From ${dateLabel(fp.from)}.` : ""} Cancel any time.</p>
+`}<h2>Pro · ${PRO_PRICE_LABEL}</h2>
+<p>${all} <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>. Cancel any time.</p>
+<h2>Agency · ${AGENCY_PRICE_LABEL}</h2>
+<p>${all} <strong>up to ${AGENCY_ACCOUNTS} Google Ads accounts</strong>. Cancel any time.</p>
+<h2>On every plan</h2>
+<p>Nothing changes until you approve the proposal, every applied change can be undone, and undo and change history always
+work. Plans count Google Ads accounts used in the last ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) accounts and the demo account never count.</p>
+<p class="muted">Your current plan is on your account page at camberstack.io/account.</p>
+</div>`,
+  });
+}
+
 export function termsPage(baseUrl: string): string {
   return layout({
     baseUrl, path: "/terms",
@@ -1061,9 +1149,9 @@ export function termsPage(baseUrl: string): string {
 <p>Camberstack lets an AI assistant read your Google Ads account and, when you approve a specific proposal, change it.
 If you add them to your connection, it can also read your Search Console data (read-only), your Merchant Center data
 and your Google Analytics data, and change your Google Analytics setup and your Merchant Center products when you approve a specific proposal.
-There is a free plan and a paid Pro plan, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
-<h2>Pro subscription</h2>
-<p>Pro is billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; Pro continues until the end of the period you paid for, and we don't refund partial months. If we change the price we will email you at least 30 days before it applies to you.</p>
+There is a free plan and paid plans, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
+<h2>Paid subscriptions</h2>
+<p>Paid plans are billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; your plan continues until the end of the period you paid for, and we don't refund partial months. Switching between Pro and Agency takes effect right away, and Stripe prorates the difference. If we change the price we will email you at least 30 days before it applies to you.</p>
 <h2>You stay in control, and responsible</h2>
 <p>Recommendations are generated from your account data and may be wrong. You decide what to approve, and you are responsible
 for changes you approve, for your Google Ads spend, and for the tracking and consent on any website you measure with Google Analytics. Review proposals before approving them.</p>
@@ -1244,7 +1332,8 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - Writes (each one proposed, approved, then applied; every applied change can be undone): negative keywords; pause/enable campaign, ad group, keyword or ad; daily budget; end date; build a Search, Display, Demand Gen (YouTube video) or Performance Max campaign (created paused); add ad groups, keywords, ads, sitelinks; bids; bid strategy; location/language targeting; URL suffix; conversion actions and goals.
 - Search Console (optional, read-only scope): site totals, query/page performance, period-over-period trends, ranking opportunities, URL Inspection (index status), sitemap status, and paid vs organic overlap with the Ads account.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
-- Pricing: Free plan covers 1 Google Ads account (every tool, unlimited applied changes); Pro ${PRO_PRICE_LABEL} covers up to 10. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) and demo accounts don't count. Undo is always free.
+- Pricing: ${fp.kind === "one_service" ? `Free plan covers ${ONE_SERVICE_FREE} (every tool, unlimited applied changes); Plus ${PLUS_PRICE_LABEL} covers all three together on 1 Google Ads account; Pro and Agency cover all three on more accounts.`
+  : `Free plan covers 1 Google Ads account (every tool, unlimited applied changes).${soon()}`} Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) and demo accounts don't count. Undo is always free.
 - [Documentation](${baseUrl}/docs)
 - [Setup](${baseUrl}/#setup)
 - [Pricing](${baseUrl}/#pricing)

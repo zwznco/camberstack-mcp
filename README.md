@@ -9,7 +9,7 @@ proposal, and every applied change can be undone in one call, on every plan.** R
 more than doubling a budget or bid, switching bid strategy) are flagged in the proposal before you approve. A demo
 account lets anyone try every tool first.
 
-Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time with one switch a month, every tool, unlimited changes; Pro $15/mo: up to 10 accounts).
+Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes on 1 Google Ads account at a time, with one switch a month; from November 16, Free covers one Google service at a time: Google Ads, Search Console or Google Analytics. Plus $7/mo: all three together on 1 account; Pro $15/mo: all three on up to 5 accounts; Agency $49/mo: up to 25).
 
 **Setup guides, with screenshots and troubleshooting:** [Connect Google Ads to Claude](https://camberstack.io/google-ads-claude) ·
 [Connect Google Ads to ChatGPT](https://camberstack.io/google-ads-chatgpt) · [every tool](https://camberstack.io/tools) ·
@@ -100,7 +100,8 @@ What a proposal can do:
   Images are existing image assets or https URLs, which are downloaded SSRF-safe (`src/fetch-safe.ts`) and
   uploaded. A proposal can also add an ad group, keywords, an ad or sitelinks to an existing campaign.
 - **Tune:** keyword and ad group bids, bid strategy, location and language targeting, presence-only location
-  mode, final URL suffix.
+  mode, final URL suffix, and a campaign's EU political advertising declaration (Google refuses every change to an
+  account while any campaign lacks one).
 - **Measure:** create a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 - **Connect:** link or unlink a Merchant Center account (`productLinks:create`/`:remove`; neither dry-runs: create has
   none and remove's always answers 500, so propose checks the account is reachable and not a test account, which Google won't link).
@@ -141,9 +142,11 @@ BASE_URL=https://your.host npm run dev
 | `GOOGLE_ADS_DEVELOPER_TOKEN` | sent when set |
 | `BASE_URL` | public origin, the OAuth issuer (default `https://camberstack.io`) |
 | `DATA_DIR` | SQLite location (default `./data`) |
-| `FREE_ACCOUNTS` / `PRO_ACCOUNTS` / `PRO_EMAILS` | Google Ads accounts each plan covers at a time, counted as distinct accounts used in the last 30 days plus one switch per 30 days, manager and demo accounts excluded (defaults 1 / 10) / emails treated as Pro |
+| `FREE_ACCOUNTS` / `PRO_ACCOUNTS` / `PRO_EMAILS` | Google Ads accounts each plan covers at a time, counted as distinct accounts used in the last 30 days plus one switch per 30 days, manager and demo accounts excluded (defaults 1 / 5) / emails treated as Pro |
+| `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console or GA4: the most recently used, over 30 days); paid plans cover all three. `YYYY-MM-DD` = announced until that day, 08:00 UTC (midnight Pacific): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
 | `MERCHANT_PUBLIC` | `1` lists the Merchant Center tools for everyone; unset = internal users only (while the scope awaits Google's verification) |
+| `STRIPE_AGENCY_PRICE_ID` / `AGENCY_ACCOUNTS` | the Agency plan's price (its own product) / accounts it covers (default 25); unset price = no Agency offered. Which plan a user is on follows their subscription's price, so a Pro ↔ Agency switch in Stripe's billing portal (which must list both prices) moves it within the hour |
 
 The hosted HTTP server is `npm run start:http` (the Docker image runs `node dist/server.js`).
 `npm start` is a stdio mode that needs no env, database or Google login: it lists every tool for

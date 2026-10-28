@@ -30,11 +30,38 @@ describe("queryShape, for the usage log", () => {
 });
 
 describe("checkGaql against Google's field catalog", () => {
+  // Which metrics a segment can split isn't in the catalog, so errors.ts's hint for this one stands alone (prod, 2026-10-22).
+  it("finds nothing in a segment/metric clash, which only Google can see", () => {
+    // The trimmed fixture lacks this segment; the live catalog has it, usable FROM campaign.
+    const live: Catalog = new Map(cat);
+    live.set("segments.conversion_action_name", { name: "segments.conversion_action_name", category: "SEGMENT", dataType: "STRING", selectable: true, filterable: true });
+    live.set("campaign", { ...cat.get("campaign")!, segments: [...cat.get("campaign")!.segments!, "segments.conversion_action_name"] });
+    expect(checkGaql("SELECT campaign.name, segments.conversion_action_name, metrics.conversions, metrics.cost_micros FROM campaign "
+      + "WHERE segments.date BETWEEN '2026-10-01' AND '2026-10-21'", live)).toEqual([]);
+  });
   // The mistakes users' assistants actually made (tool_calls.error, 2026-10).
   it("suggests the real field for a guessed path", () => {
     const [i] = checkGaql("SELECT campaign.id, campaign.maximize_clicks.cpc_bid_ceiling_micros FROM campaign", cat);
     expect(i).toContain("campaign.maximize_clicks.cpc_bid_ceiling_micros doesn't exist");
     expect(i).toContain("campaign.target_spend.cpc_bid_ceiling_micros");
+  });
+  it("points criterion metrics at the view that keeps the criterion, once per field", () => {
+    const i = checkGaql("SELECT ad_group_criterion.keyword.text, ad_group_criterion.type, metrics.impressions, metrics.clicks FROM ad_group_criterion "
+      + "WHERE campaign.id = 1 AND segments.date DURING LAST_30_DAYS ORDER BY metrics.impressions DESC LIMIT 50", cat);
+    expect(i).toContain("metrics.impressions can't be used FROM ad_group_criterion; query it FROM keyword_view, "
+      + "which keeps one row per ad_group_criterion, with its fields.");
+    expect(i.filter((x) => x.startsWith("metrics.impressions"))).toHaveLength(1);
+  });
+  it("names keyword_view before display_keyword_view, and first when the query names no criterion type", () => {
+    const live: Catalog = new Map(cat);
+    for (const v of ["display_keyword_view", "age_range_view", "ad_group_audience_view", "content_criterion_view"])
+      live.set(v, { ...cat.get("keyword_view")!, name: v });
+    const [kw] = checkGaql("SELECT ad_group_criterion.keyword.text, metrics.clicks FROM ad_group_criterion", live);
+    expect(kw).toContain("query it FROM keyword_view or FROM display_keyword_view, each keeping");
+    const [id] = checkGaql("SELECT ad_group_criterion.criterion_id, metrics.clicks FROM ad_group_criterion", live);
+    expect(id).toMatch(/query it FROM keyword_view or FROM /);
+    const [age] = checkGaql("SELECT ad_group_criterion.age_range.type, metrics.clicks FROM ad_group_criterion", live);
+    expect(age).toContain("query it FROM age_range_view, which keeps");
   });
   it("points a sub-field of a message at the message", () => {
     const [i] = checkGaql("SELECT recommendation.type, recommendation.impact.base_metrics.clicks FROM recommendation", cat);
@@ -56,17 +83,43 @@ describe("checkGaql against Google's field catalog", () => {
     expect(checkGaql("SELECT campaign.id, segments.search_term, metrics.clicks FROM campaign_search_term_view WHERE segments.date DURING LAST_30_DAYS", cat))
       .toEqual(["segments.search_term can't be used FROM campaign_search_term_view: select campaign_search_term_view.search_term instead, its own field."]);
   });
+  it("points another resource's field at the FROM resource's own path to it (prod, 2026-10-27)", () => {
+    // Was: "ad.final_urls can't be used FROM ad_group_ad; query it FROM ad", and FROM ad can't filter by campaign.
+    const ads: Catalog = new Map(cat);
+    const attr = (name: string): FieldMeta => ({ name, category: "ATTRIBUTE", selectable: true, filterable: true, sortable: true });
+    ads.set("ad", { name: "ad", category: "RESOURCE", attributeResources: [], metrics: [], segments: [] });
+    ads.set("ad_group_ad", { name: "ad_group_ad", category: "RESOURCE", attributeResources: ["ad_group", "campaign", "customer"], metrics: [], segments: [] });
+    for (const n of ["ad.final_urls", "ad_group_ad.ad.final_urls", "ad_group_ad.status"]) ads.set(n, attr(n));
+    expect(checkGaql("SELECT ad_group.name, ad.final_urls, ad_group_ad.status FROM ad_group_ad WHERE campaign.id = 1", ads))
+      .toEqual(["ad.final_urls can't be used FROM ad_group_ad: select ad_group_ad.ad.final_urls instead, its own field."]);
+  });
   it("offers no unrelated names for a field that doesn't exist, but the lookup that finds it (2026-10-15 prod errors)", () => {
     // Was: "Closest usable FROM campaign: campaign.campaign_group, campaign.campaign_budget, campaign.optimization_score".
     expect(checkGaql("SELECT campaign.name, campaign.url_expansion_opt_out FROM campaign", cat)).toEqual([
-      "campaign.url_expansion_opt_out doesn't exist. Find the name with run_gaql: SELECT name, category, selectable, filterable WHERE name LIKE '%expansion%'"]);
+      "campaign.url_expansion_opt_out doesn't exist, and nothing else in this query is flagged: without it, the rest runs. "
+      + "Drop it, or find the name with run_gaql: SELECT name, category, selectable, filterable WHERE name LIKE '%expansion%'"]);
     // Was: "conversion_action.status, conversion_action.name".
     const [i] = checkGaql("SELECT conversion_action.name, conversion_action.all_conversions_settings FROM conversion_action", cat);
     expect(i).not.toMatch(/conversion_action\.(status|name)\b/);
-    expect(i).toContain("Find the name with run_gaql: ");
+    expect(i).toContain("find the name with run_gaql: ");
     // Real near misses still come through.
     expect(checkGaql("SELECT campaign.id, campaign.target_spend.cpc_bid_ceiling_micro FROM campaign", cat)[0])
       .toContain("Closest usable FROM campaign: campaign.target_spend.cpc_bid_ceiling_micros");
+  });
+  it("names another resource's field only when it's the same field, and says the rest of the query stands (prod, 2026-10-26)", () => {
+    // Was: "Closest: segments.webpage (not usable FROM conversion_action)", and the model dropped the whole query.
+    const live: Catalog = new Map(cat);
+    live.set("segments.webpage", { name: "segments.webpage", category: "SEGMENT", dataType: "RESOURCE_NAME", selectable: true, filterable: true });
+    const [i] = checkGaql("SELECT conversion_action.name, conversion_action.status, conversion_action.webpage_code FROM conversion_action", live);
+    expect(i).not.toContain("segments.webpage");
+    expect(i).toContain("conversion_action.webpage_code doesn't exist, and nothing else in this query is flagged: without it, the rest runs. Drop it, or find the name");
+    // The same field under another resource still comes through, as for asset_group_asset.performance_label.
+    live.set("ad_group_ad.performance_label", { name: "ad_group_ad.performance_label", category: "ATTRIBUTE", dataType: "ENUM", selectable: true, filterable: true });
+    expect(checkGaql("SELECT conversion_action.performance_label FROM conversion_action", live)[0])
+      .toContain("Closest: ad_group_ad.performance_label (not usable FROM conversion_action).");
+    // With a second problem in the query, no claim that the rest runs.
+    expect(checkGaql("SELECT conversion_action.name, conversion_action.webpage_code FROM conversion_action WHERE conversion_action.status = 'BOGUS'", live)
+      .join(" ")).not.toContain("the rest runs");
   });
   it("never sends the AI to another tool, which its app may not have", () => {
     for (const q of [
@@ -114,6 +167,15 @@ describe("checkGaql against Google's field catalog", () => {
     expect(checkGaql("SELECT campaign.name, segments.geo_target_city FROM campaign", cat)[0])
       .toMatch(/segments\.geo_target_city can't be used FROM campaign; query it FROM .*geographic_view/);
   });
+  it("points segments.date FROM call_view at call_view's own dates, not at campaign (prod, 2026-10-24)", () => {
+    expect(checkGaql("SELECT call_view.call_status, call_view.start_call_date_time, campaign.name FROM call_view "
+      + "WHERE segments.date BETWEEN '2026-10-01' AND '2026-10-24'", cat))
+      .toEqual(["segments.date can't be used FROM call_view: filter on its own date instead, call_view.start_call_date_time or "
+        + "call_view.end_call_date_time (call_view.start_call_date_time >= 'YYYY-MM-DD' AND call_view.start_call_date_time <= 'YYYY-MM-DD')."]);
+    // A resource with no dates of its own still gets the resources that take it.
+    expect(checkGaql("SELECT ad_group_criterion.criterion_id FROM ad_group_criterion WHERE segments.date DURING LAST_7_DAYS", cat)[0])
+      .toMatch(/segments\.date can't be used FROM ad_group_criterion; query it FROM /);
+  });
   it("names an unknown FROM", () => {
     expect(checkGaql("SELECT campaign.id FROM campaigns", cat)[0]).toContain("Closest: campaign");
   });
@@ -159,6 +221,10 @@ describe("gaql_fields lookup (unlisted; apps that hold it still call it)", () =>
     // …and still nothing for names nothing resembles.
     expect(top("campaign.url_expansion_opt_out")).toEqual([]);
     expect(top("conversion_action.all_conversions_settings")).toEqual([]);
+  });
+  it("offers the resource's own <resource>_<leaf> before other resources' fields", () => {
+    // experiment.id got only customer.id, the one .id usable FROM experiment (2026-10-23).
+    expect(closest("experiment.id", ["customer.id", "experiment.experiment_id", "experiment.name"])[0]).toBe("experiment.experiment_id");
   });
   it("ranks the shared last part first", () => {
     expect(closest("campaign.max_clicks.cpc_bid_ceiling_micros", ["campaign.target_spend.cpc_bid_ceiling_micros", "campaign.max_clicks"])[0])

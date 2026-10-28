@@ -10,7 +10,7 @@
  * Surface: negatives, pause/enable keyword, ad group or campaign, daily budget, campaign end date, and
  * building: a whole Search, Display, Demand Gen or Performance Max campaign (always created PAUSED, so
  * building and spending are two separate approvals), ad groups, keywords, responsive search ads,
- * sitelinks, which conversion category a campaign bids on, a campaign's bid strategy (including moving it off a shared one),
+ * sitelinks, which conversion category a campaign bids on, a campaign's EU political advertising declaration, a campaign's bid strategy (including moving it off a shared one),
  * a shared (portfolio) strategy's targets, and creating a shared strategy (undo moves its campaigns back, then removes it). YouTube is Demand Gen with video ads: the
  * API refuses to create VIDEO campaigns (MUTATE_NOT_ALLOWED, checked against v23 on 2026-10-12). Nothing
  * a user built is ever deleted: the only removals are undos of things this service created.
@@ -21,6 +21,9 @@ import { fetchImage } from "./fetch-safe.js";
 import { micros, toMicros, type AdsClient } from "./google.js";
 
 export const MAX_CHANGES = 50;
+const SOURCE_LABEL = { UPLOAD_CLICKS: "uploaded click ids", WEBPAGE: "website tag", AD_CALL: "calls from ads", WEBSITE_CALL: "calls from the website" } as const;
+/** conversion_action.type values imported from an analytics tool, whose counting the tool decides. */
+const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTICS|UNIVERSAL_ANALYTICS)/;
 
 const id = z.string().regex(/^\d+$/, "numeric id");
 const campaignId = id.describe("Campaign id, digits only (campaign_id from account_overview or run_gaql)");
@@ -29,6 +32,19 @@ const criterionId = id.describe("Keyword criterion id, digits only (ad_group_cri
 const matchType = z.enum(["EXACT", "PHRASE", "BROAD"]);
 const bid = z.number().positive().max(1000);
 const url = z.string().url().regex(/^https?:\/\//, "http(s) URL").max(2048);
+/**
+ * Ad texts, refused when two would be the same asset to Google (DUPLICATE_ASSET). It compares them with spacing trimmed
+ * and collapsed, but not case: "Free Trial" and "free trial" are both accepted (dry-run against v23, 2026-10-22).
+ * Checked here so the AI hears which text repeats; Google only names the field, and retries made it worse.
+ */
+const distinctTexts = <T extends z.ZodArray<z.ZodString>>(xs: T) => xs.superRefine((texts, ctx) => {
+  const seen = new Set<string>();
+  for (const t of texts) {
+    const key = t.trim().replace(/\s+/g, " ");
+    if (seen.has(key)) ctx.addIssue({ code: "custom", message: `"${key}" is in this list twice. Google refuses repeated text in one ad (spacing doesn't make it different; capitals do): make every entry different` });
+    seen.add(key);
+  }
+});
 
 const keywordSpec = z.object({
   text: z.string().min(1).max(80).describe("The keyword, e.g. \"cleaning invoice template\""),
@@ -36,8 +52,8 @@ const keywordSpec = z.object({
   max_cpc: bid.optional().describe("Max cost per click for this keyword in the account's currency (manual CPC only); omit to use the ad group's"),
 });
 const adSpec = z.object({
-  headlines: z.array(z.string().min(1).max(30)).min(3).max(15).describe("3 to 15 headlines, each at most 30 characters"),
-  descriptions: z.array(z.string().min(1).max(90)).min(2).max(4).describe("2 to 4 descriptions, each at most 90 characters"),
+  headlines: distinctTexts(z.array(z.string().min(1).max(30)).min(3).max(15).describe("3 to 15 headlines, each at most 30 characters")),
+  descriptions: distinctTexts(z.array(z.string().min(1).max(90)).min(2).max(4).describe("2 to 4 descriptions, each at most 90 characters")),
   final_url: url.describe("The landing page"),
   path1: z.string().min(1).max(15).optional().describe("Display path part 1, at most 15 characters"),
   path2: z.string().min(1).max(15).optional().describe("Display path part 2, at most 15 characters"),
@@ -62,9 +78,9 @@ const image = z.string().min(1).max(2048)
   .describe("An https URL of a PNG, JPEG or GIF (at most 5120 KB), or the id of an image asset already in the account (asset.id from run_gaql WHERE asset.type = 'IMAGE')");
 const images = (what: string, min: number, max: number) => z.array(image).min(min).max(max).describe(what);
 const displayAdSpec = z.object({
-  headlines: z.array(z.string().min(1).max(30)).min(1).max(5).describe("1 to 5 short headlines, each at most 30 characters"),
+  headlines: distinctTexts(z.array(z.string().min(1).max(30)).min(1).max(5).describe("1 to 5 short headlines, each at most 30 characters")),
   long_headline: z.string().min(1).max(90).describe("One long headline, at most 90 characters"),
-  descriptions: z.array(z.string().min(1).max(90)).min(1).max(5).describe("1 to 5 descriptions, each at most 90 characters"),
+  descriptions: distinctTexts(z.array(z.string().min(1).max(90)).min(1).max(5).describe("1 to 5 descriptions, each at most 90 characters")),
   business_name: z.string().min(1).max(25).describe("The advertiser's name, at most 25 characters"),
   final_url: url.describe("The landing page"),
   marketing_images: images("1 to 15 landscape images, 1.91:1 (e.g. 1200×628, at least 600×314)", 1, 15),
@@ -81,9 +97,9 @@ const youtubeVideo = z.string().min(1).max(200)
   .describe("A YouTube video id (e.g. dQw4w9WgXcQ) or its youtube.com / youtu.be URL. The video must be public or unlisted");
 const demandGenVideoAdSpec = z.object({
   videos: z.array(youtubeVideo).min(1).max(5).describe("1 to 5 YouTube videos"),
-  headlines: z.array(z.string().min(1).max(40)).min(1).max(5).describe("1 to 5 headlines, each at most 40 characters"),
-  long_headlines: z.array(z.string().min(1).max(90)).min(1).max(5).describe("1 to 5 long headlines, each at most 90 characters"),
-  descriptions: z.array(z.string().min(1).max(90)).min(1).max(5).describe("1 to 5 descriptions, each at most 90 characters"),
+  headlines: distinctTexts(z.array(z.string().min(1).max(40)).min(1).max(5).describe("1 to 5 headlines, each at most 40 characters")),
+  long_headlines: distinctTexts(z.array(z.string().min(1).max(90)).min(1).max(5).describe("1 to 5 long headlines, each at most 90 characters")),
+  descriptions: distinctTexts(z.array(z.string().min(1).max(90)).min(1).max(5).describe("1 to 5 descriptions, each at most 90 characters")),
   business_name: z.string().min(1).max(25).describe("The advertiser's name, at most 25 characters"),
   logo_image: image.describe("A square 1:1 logo (e.g. 1200×1200, at least 128×128): an https URL, or an image asset id from the account"),
   final_url: url.describe("The landing page"),
@@ -98,9 +114,9 @@ const demandGenAdGroupSpec = z.object({
 const assetGroupSpec = z.object({
   name: z.string().min(1).max(255),
   final_url: url.describe("The landing page (Google may also send people to other pages on the same site)"),
-  headlines: z.array(z.string().min(1).max(30)).min(3).max(15).describe("3 to 15 headlines, each at most 30 characters"),
-  long_headlines: z.array(z.string().min(1).max(90)).min(1).max(5).describe("1 to 5 long headlines, each at most 90 characters"),
-  descriptions: z.array(z.string().min(1).max(90)).min(2).max(5).describe("2 to 5 descriptions, each at most 90 characters; Google recommends one of 60 or fewer"),
+  headlines: distinctTexts(z.array(z.string().min(1).max(30)).min(3).max(15).describe("3 to 15 headlines, each at most 30 characters")),
+  long_headlines: distinctTexts(z.array(z.string().min(1).max(90)).min(1).max(5).describe("1 to 5 long headlines, each at most 90 characters")),
+  descriptions: distinctTexts(z.array(z.string().min(1).max(90)).min(2).max(5).describe("2 to 5 descriptions, each at most 90 characters; Google recommends one of 60 or fewer")),
   marketing_images: images("1 to 20 landscape images, 1.91:1 (e.g. 1200×628)", 1, 20),
   square_marketing_images: images("1 to 20 square images, 1:1 (e.g. 1200×1200)", 1, 20),
   portrait_marketing_images: images("0 to 20 portrait images, 4:5 (e.g. 960×1200)", 0, 20).default([]),
@@ -246,11 +262,20 @@ export const PUBLIC_CHANGES = [
   z.object({ type: z.literal("set_url_suffix"), campaign_id: campaignId,
     suffix: z.string().max(1000).describe('Query string Google appends to every landing page in the campaign, e.g. "utm_source=google&utm_medium=cpc&utm_term={keyword}", or "none" to clear it') })
     .describe("Set or clear a campaign's final URL suffix (tracking parameters on every ad click)"),
+  z.object({ type: z.literal("set_eu_political_advertising"), campaign_id: campaignId,
+    contains_eu_political_advertising: z.boolean()
+      .describe("The user's answer: true only if the campaign carries political ads under EU rules (about an election, a referendum, or a law or regulation, shown in the EU)") })
+    .describe("Declare whether a campaign contains EU political advertising. While any campaign lacks this declaration, Google refuses every change "
+      + "to the account (EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED); find those campaigns with campaign.missing_eu_political_advertising_declaration = TRUE. "
+      + "It is the advertiser's own legal statement: ask the user, never assume the answer"),
   z.object({ type: z.literal("create_conversion_action"),
     name: z.string().min(1).max(100),
     category: goalCategory,
-    source: z.enum(["UPLOAD_CLICKS", "WEBPAGE"]).default("UPLOAD_CLICKS")
-      .describe("UPLOAD_CLICKS: your server uploads ad click ids (no Google tag). WEBPAGE: Google gives you a tag to put on the page"),
+    source: z.enum(["UPLOAD_CLICKS", "WEBPAGE", "AD_CALL", "WEBSITE_CALL"]).default("UPLOAD_CLICKS")
+      .describe("UPLOAD_CLICKS: your server uploads ad click ids (no Google tag). WEBPAGE: Google gives you a tag to put on the page. "
+        + "AD_CALL: calls from the phone number in ads (call assets). WEBSITE_CALL: calls to a Google forwarding number on the site (needs Google's tag)"),
+    call_min_seconds: z.number().int().min(0).max(10000).optional()
+      .describe("AD_CALL and WEBSITE_CALL only: how long a call must last to count (default 60)"),
     counting: z.enum(["ONE_PER_CLICK", "MANY_PER_CLICK"]).default("ONE_PER_CLICK").describe("ONE_PER_CLICK for sign-ups and leads; MANY_PER_CLICK for purchases"),
     primary: z.boolean().default(true).describe("Primary actions count in Conversions and can steer bidding"),
     default_value: z.number().min(0).max(1_000_000).optional().describe("Value per conversion when none is sent"),
@@ -321,6 +346,8 @@ async function goalsOf(q: (gaql: string) => Promise<any[]>, category: string) {
       .map((r) => ({ resourceName: r.campaignConversionGoal.resourceName as string, biddable: !!r.campaignConversionGoal.biddable, campaign: r.campaign.name as string })),
   ];
 }
+
+const EU_POLITICAL = "CONTAINS_EU_POLITICAL_ADVERTISING", NO_EU_POLITICAL = "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING";
 
 /** Google's stand-in for "no end date". */
 const NO_END_DATE_TIME = "2037-12-30 23:59:59";
@@ -954,23 +981,56 @@ export async function resolveChange(
         inverse: { type: "set_url_suffix", campaign_id: change.campaign_id, suffix: before },
       };
     }
+    case "set_eu_political_advertising": {
+      const [c] = await q(`SELECT campaign.name, campaign.status, campaign.contains_eu_political_advertising FROM campaign WHERE campaign.id = ${change.campaign_id}`);
+      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      if (c.campaign.status === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
+      const before = c.campaign.containsEuPoliticalAdvertising as string | undefined;
+      const next = change.contains_eu_political_advertising ? EU_POLITICAL : NO_EU_POLITICAL;
+      const label = (v: string | undefined) => (v === EU_POLITICAL ? "contains" : v === NO_EU_POLITICAL ? "does not contain" : "not declared");
+      return {
+        change, service: "campaigns",
+        operations: before === next ? [] : [{ update: { resourceName: `customers/${customerId}/campaigns/${change.campaign_id}`,
+          containsEuPoliticalAdvertising: next }, updateMask: "contains_eu_political_advertising" }],
+        describe: `Declare that campaign "${c.campaign.name}" ${label(next)} EU political advertising (was: ${label(before)})`
+          + (next === EU_POLITICAL ? " ⚠ Google no longer runs political ads in the EU, so the campaign won't show there" : ""),
+        // Google has no way back to "not declared", so a first declaration can't be undone; a changed one can.
+        inverse: before === EU_POLITICAL || before === NO_EU_POLITICAL
+          ? { type: "set_eu_political_advertising", campaign_id: change.campaign_id, contains_eu_political_advertising: before === EU_POLITICAL } : undefined,
+      };
+    }
     case "create_conversion_action": {
       const dup = await q(`SELECT conversion_action.id FROM conversion_action WHERE conversion_action.name = '${gaqlStr(change.name)}' AND conversion_action.status != 'REMOVED'`);
       if (dup.length) throw new Error(`A conversion action named "${change.name}" already exists (id ${dup[0].conversionAction.id}).`);
+      const call = change.source === "AD_CALL" || change.source === "WEBSITE_CALL";
+      if (!call && change.call_min_seconds !== undefined) throw new Error("call_min_seconds is only for AD_CALL and WEBSITE_CALL conversion actions.");
       return {
         change, service: "conversionActions",
         operations: [{ create: {
           name: change.name, category: change.category, type: change.source, status: "ENABLED", countingType: change.counting, primaryForGoal: change.primary,
-          valueSettings: { defaultValue: change.default_value ?? 0, alwaysUseDefaultValue: false },
+          // A call carries no value of its own: Google 400s (INVALID_VALUE) unless it always uses the default (dry run, 2026-10-26).
+          valueSettings: { defaultValue: change.default_value ?? 0, alwaysUseDefaultValue: call },
+          ...(call ? { phoneCallDurationSeconds: String(change.call_min_seconds ?? 60) } : {}),
         } }],
-        describe: `Create conversion action "${change.name}" (${change.category}, ${change.source === "UPLOAD_CLICKS" ? "uploaded click ids" : "website tag"}, ` +
+        describe: `Create conversion action "${change.name}" (${change.category}, ${SOURCE_LABEL[change.source]}${call ? ` lasting ${change.call_min_seconds ?? 60}s or more` : ""}, ` +
           `${change.counting === "ONE_PER_CLICK" ? "one per click" : "every conversion"}, ${change.primary ? "primary" : "secondary"})` +
           (change.primary ? " ⚠ a primary action counts toward every campaign that uses account-default goals; scope campaigns with set_conversion_goal" : ""),
       };
     }
     case "set_conversion_counting": {
-      const [a] = await q(`SELECT conversion_action.name, conversion_action.counting_type FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
+      const [a] = await q(`SELECT conversion_action.name, conversion_action.counting_type, conversion_action.type FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
       if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
+      // An analytics import takes its counting from where it's imported from, and Google refuses the change outright: a paying
+      // user's proposal got MUTATE_NOT_ALLOWED + IMMUTABLE_FIELD + INVALID_VALUE at once, and stopped there (2026-10-26).
+      const type = String(a.conversionAction.type ?? "");
+      if (ANALYTICS_IMPORT.test(type)) {
+        const ga4 = type.startsWith("GOOGLE_ANALYTICS_4");
+        throw new Error(`Conversion action "${a.conversionAction.name}" is imported (${type}), so its counting comes from ${ga4 ? "GA4" : "its source"}, `
+          + "and Google won't change it through the API. "
+          + (ga4 ? "In GA4: Admin → Data display → Key events → the event's ⋮ → Change counting method (once per event, or once per session). "
+            : "Change it in the app that sends it (Firebase or the analytics tool). ")
+          + "Or count with a different conversion action. Nothing was proposed.");
+      }
       const before = a.conversionAction.countingType as "ONE_PER_CLICK" | "MANY_PER_CLICK";
       return {
         change, service: "conversionActions",
@@ -1151,7 +1211,7 @@ function campaignOps(T: ReturnType<typeof tempIds>, c: { name: string; daily_bud
     { campaignBudgetOperation: { create: { resourceName: budget, name: `${c.name} budget`, amountMicros: toMicros(c.daily_budget), deliveryMethod: "STANDARD", explicitlyShared: false } } },
     { campaignOperation: { create: {
       resourceName: campaign, name: c.name, status: "PAUSED", campaignBudget: budget, advertisingChannelType: channel,
-      containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING", ...fields,
+      containsEuPoliticalAdvertising: NO_EU_POLITICAL, ...fields,
       ...(c.end_date ? { endDateTime: `${c.end_date} 23:59:59` } : {}),
     } } },
   ] };

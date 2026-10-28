@@ -117,6 +117,7 @@ export function checkGaql(query: string, cat: Catalog): string[] {
   }
   const usable = (f: FieldMeta) => fromAllows(from, f);
   const seen = new Set<string>();
+  const unknown = new Set<string>();
   for (const [clause, names] of [["SELECT", p.select], ["WHERE", p.where], ["ORDER BY", p.orderBy]] as const) {
     for (const name of names) {
       if (seen.has(`${clause}:${name}`)) continue;
@@ -135,10 +136,14 @@ export function checkGaql(query: string, cat: Catalog): string[] {
         // Prefer suggestions this FROM can use; fall back to any field; with none close, the lookup that finds it.
         const pool = [...cat.values()].filter((x) => x.category !== "RESOURCE");
         const near = closest(name, pool.filter(usable).map((x) => x.name));
-        const anywhere = near.length ? [] : closest(name, pool.map((x) => x.name));
+        // Another resource's field only when it's the same field under another path (performance_label): a looser match
+        // offered segments.webpage for conversion_action.webpage_code, and the model dropped the whole query (prod, 2026-10-26).
+        const leaf = name.split(".").at(-1);
+        const anywhere = near.length ? [] : closest(name, pool.map((x) => x.name)).filter((c) => c.split(".").at(-1) === leaf);
         issues.push(`${name} doesn't exist${near.length ? `. Closest usable FROM ${p.from}: ${near.join(", ")}.`
           : anywhere.length ? `. Closest: ${anywhere.join(", ")} (not usable FROM ${p.from}).`
-          : `. Find the name with run_gaql: ${lookupQuery(keyWord(name))}`}`);
+          : `. Drop it, or find the name with run_gaql: ${lookupQuery(keyWord(name))}`}`);
+        unknown.add(issues.at(-1)!);
         continue;
       }
       if (f.category === "RESOURCE") {
@@ -150,16 +155,30 @@ export function checkGaql(query: string, cat: Catalog): string[] {
       if (clause === "WHERE" && f.filterable === false) issues.push(`${name} can't be used in WHERE.`);
       if (clause === "ORDER BY" && f.sortable === false) issues.push(`${name} can't be used in ORDER BY.`);
       if (!usable(f)) {
-        // A segment the FROM resource carries as its own field (segments.search_term FROM campaign_search_term_view): name
-        // that field first. Pointing at the other resources alone sent a user to the insight views instead (2026-10-16).
-        const own = f.category === "SEGMENT" ? cat.get(`${p.from}.${name.slice("segments.".length)}`) : undefined;
+        // A field the FROM resource carries as its own (segments.search_term FROM campaign_search_term_view is
+        // campaign_search_term_view.search_term; ad.final_urls FROM ad_group_ad is ad_group_ad.ad.final_urls): name that
+        // field first. Pointing at the other resources sent one user to the insight views (2026-10-16), and another
+        // to FROM ad, which can't filter by campaign, so it never got the URLs (prod, 2026-10-27).
+        const own = cat.get(`${p.from}.${f.category === "SEGMENT" ? name.slice("segments.".length) : name}`);
+        // A date segment FROM a resource with its own dates (segments.date FROM call_view): filter on those. Pointing at
+        // campaign/customer instead would drop the per-call rows the query was after (prod, 2026-10-24).
+        const dates = f.category === "SEGMENT" && f.dataType === "DATE" ? ownDates(cat, p.from) : [];
         issues.push(own && usable(own) && own.selectable !== false
           ? `${name} can't be used FROM ${p.from}: select ${own.name} instead, its own field.`
-          : `${name} can't be used FROM ${p.from}${whereFrom(f, cat, p.from)}.`);
+          : dates.length
+            ? `${name} can't be used FROM ${p.from}: filter on its own date instead, ${dates.join(" or ")} `
+              + `(${dates[0]} >= 'YYYY-MM-DD' AND ${dates[0]} <= 'YYYY-MM-DD').`
+          : `${name} can't be used FROM ${p.from}${whereFrom(f, cat, p.from, [...p.select, ...p.where])}.`);
       }
     }
   }
-  return [...issues, ...enumIssues(query, cat)];
+  // The same field in SELECT and ORDER BY gave the same line twice.
+  const all = [...new Set([...issues, ...enumIssues(query, cat)])];
+  // One unknown field and nothing else: say the rest stands. The model dropped a valid query over one bad field (prod, 2026-10-26).
+  if (all.length === 1 && unknown.has(all[0]!) && p.select.length > 1) {
+    all[0] = all[0]!.replace(/\. (Drop it|Closest)/, (_, w: string) => `, and nothing else in this query is flagged: without it, the rest runs. ${w}`);
+  }
+  return all;
 }
 
 /** An enum literal in WHERE that isn't one of the field's values (Google only says BAD_ENUM_CONSTANT): name the values it takes. */
@@ -188,6 +207,13 @@ function fromAllows(from: FieldMeta, f: FieldMeta): boolean {
   return res === from.name || (from.attributeResources ?? []).includes(res) || (from.segments ?? []).includes(res);
 }
 
+/** A resource's own filterable DATE fields (call_view.start_call_date_time), not nested ones. */
+function ownDates(cat: Catalog, from: string): string[] {
+  return [...cat.values()].filter((x) => x.category === "ATTRIBUTE" && x.dataType === "DATE" && x.filterable !== false
+    && x.name.split(".").length === 2 && x.name.startsWith(`${from}.`)).map((x) => x.name)
+    .sort((a, b) => Number(b.includes("start")) - Number(a.includes("start")));
+}
+
 /** The most telling word of a field's last part (url_expansion_opt_out → expansion), to look it up by. */
 function keyWord(name: string): string {
   return name.split(".").at(-1)!.split("_").reduce((a, b) => (b.length > a.length ? b : a), "");
@@ -202,9 +228,26 @@ const BROAD = ["customer", "campaign"];
  * what that query wanted: `metrics.conversions FROM conversion_action` was pointed at ad_group (catalog order), not
  * at customer or campaign with segments.conversion_action (2026-10-15).
  */
-function whereFrom(f: FieldMeta, cat: Catalog, from?: string): string {
+function whereFrom(f: FieldMeta, cat: Catalog, from?: string, fields: string[] = []): string {
   const own = f.category === "ATTRIBUTE" ? f.name.split(".")[0]! : null;
   const ok = [...cat.values()].filter((r) => r.category === "RESOURCE" && fromAllows(r, f)).map((r) => r.name);
+  // A view that carries the FROM resource keeps its rows: metrics FROM ad_group_criterion belong FROM keyword_view, and
+  // campaign/ad_group (the generic list) drop the per-keyword split the query was after (prod, 2026-10-22). Which view
+  // fits is named by the query's own fields: ad_group_criterion.keyword.text → keyword_view.
+  const grain = from && f.category !== "ATTRIBUTE"
+    ? ok.filter((r) => r.endsWith("_view") && (cat.get(r)!.attributeResources ?? []).includes(from)) : [];
+  if (grain.length) {
+    const parts = new Set(fields.filter((n) => n.startsWith(`${from}.`)).map((n) => n.split(".")[1]!));
+    const stem = (r: string) => r.replace(/_view$/, "");
+    // An exact name first: ad_group_criterion.keyword is keyword_view, and display_keyword_view only after it. With none
+    // named, keyword_view leads: catalog order left it out of the first four (dev, 2026-10-22).
+    const exact = grain.filter((r) => parts.has(stem(r)));
+    const near = grain.filter((r) => !exact.includes(r) && [...parts].some((x) => stem(r).endsWith(`_${x}`) || x.endsWith(`_${stem(r)}`)));
+    const named = [...exact, ...near];
+    const rest = ["keyword_view"].filter((r) => grain.includes(r) && !named.includes(r));
+    const pick = [...named, ...rest, ...grain.filter((r) => !named.includes(r) && !rest.includes(r))].slice(0, named.length || 4);
+    return `; query it FROM ${pick.join(" or FROM ")}, ${pick.length > 1 ? "each keeping" : "which keeps"} one row per ${from}, with its fields`;
+  }
   const seg = from && cat.get(`segments.${from}`)?.category === "SEGMENT" ? `segments.${from}` : null;
   const split = seg ? ok.filter((r) => (cat.get(r)!.segments ?? []).includes(seg)) : [];
   if (split.length) {
@@ -239,6 +282,10 @@ export function closest(name: string, pool: string[]): string[] {
   // Same last part (e.g. every *.cpc_bid_ceiling_micros): offer them all, since the path is what was guessed wrong and
   // names alone can't tell which (maximize clicks is target_spend in the API, say).
   const sameLeaf = scored.filter((x) => x.c.split(".").at(-1) === leaf);
+  // The resource's own name prefixed to the leaf: experiment.id is experiment.experiment_id, and the same-leaf rule alone
+  // offered only customer.id for it (2026-10-23).
+  const own = parts.length > 1 ? `${parts.slice(0, -1).join(".")}.${parts.at(-2)}_${leaf}` : "";
+  if (pool.includes(own)) return [own, ...sameLeaf.map((x) => x.c)].slice(0, 8);
   if (sameLeaf.length) return sameLeaf.slice(0, 8).map((x) => x.c);
   // Otherwise only names that are plausibly what was meant, judged on the last part: sharing the resource prefix alone
   // offered campaign.campaign_group for campaign.url_expansion_opt_out (2026-10-15), and a wrong guess costs a retry.

@@ -16,6 +16,7 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized fields in the query: 'recommendation.impact.base_metrics.clicks', 'recommendation.impact.potential_metrics.clicks'.", undefined, "SELECT recommendation.impact"],
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized field in the query: 'campaign.maximize_clicks.cpc_bid_ceiling_micros'.", undefined, "campaign.target_spend.cpc_bid_ceiling_micros"],
     [{ mutateError: "MUTATE_NOT_ALLOWED" }, "Mutates are not allowed for the requested resource.", "operations", "set_bidding_strategy can still move campaigns off it"],
+    [{ mutateError: "MUTATE_NOT_ALLOWED" }, "Mutates are not allowed for the requested resource.", "operations.update.type", "type is managed by Google"],
     [{ queryError: "BAD_FIELD_NAME" }, "Error in WHERE clause: invalid field name '('.", undefined, "no parentheses or OR"],
     [{ queryError: "EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE" }, "The following field must be present in SELECT clause: 'campaign.id'.", undefined, "add that field to SELECT"],
     [{ queryError: "EXPECTED_FILTERS_ON_DATE_RANGE" }, "Expects filters on the following field to limit a finite date range: 'segments.date'.", undefined, "finite range"],
@@ -29,13 +30,28 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select or filter on the following segments: 'segments.geo_target_city'(could not support requested resources: 'CAMPAIGN'), since segment is incompatible with the resource in the FROM clause or other selected segmenting resources", undefined, "FROM geographic_view"],
     [{ queryError: "BAD_ENUM_CONSTANT" }, "Invalid enum values cannot be included in WHERE clause: 'LOCATION', 'AFFILIATE_LOCATION'.", undefined, "FROM campaign_asset_set"],
     [{ changeEventError: "CHANGE_DATE_RANGE_INFINITE" }, "The change_event request is missing filters on change_event.change_date_time or is filtering on change_event.change_date_time with an infinite range.", undefined, "both ends of the window"],
+    [{ changeEventError: "START_DATE_TOO_OLD" }, "The requested start date is too old. It cannot be older than 30 days.", undefined, "29 days ago"],
     [{ queryError: "UNRECOGNIZED_FIELD" }, "Unrecognized field in the query: 'metrics.video_views'.", undefined, "metrics.video_trueview_views"],
+    [{ queryError: "UNEXPECTED_INPUT" }, "Error in query: unexpected input OR.", undefined, "no parentheses or OR"],
+    [{ queryError: "PROHIBITED_SEGMENT_WITH_METRIC_IN_SELECT_OR_WHERE_CLAUSE" }, "Cannot select the following segments because at least one unsupported metric is found in SELECT or WHERE clause: 'segments.conversion_action_name'(unsupported metrics: 'cost_micros').", undefined, "second one without the segment"],
+    [{ queryError: "REQUIRES_FILTER_BY_SINGLE_RESOURCE" }, "\"segments.date\",\"segments.search_term\" can only be selected when filtering by a single 'campaign_search_term_insight.id' in WHERE clause.", undefined, "take segments.date, segments.search_term out of SELECT (a date range can stay in WHERE) and run it to list each campaign_search_term_insight.id"],
+    [{ assetError: "DUPLICATE_ASSET" }, "Assets are duplicated across operations.", "mutate_operations.ad_group_ad_operation.create.ad.responsive_search_ad.headlines", "ignores spacing but not capitals"],
+    [{ euPoliticalAdvertisingError: "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED" }, "Mutates are generally not allowed if the customer contains non-exempt campaigns without the EU political advertising declaration.", undefined, "campaign.missing_eu_political_advertising_declaration = TRUE"],
+    [{ dateError: "MISALIGNED_DATE_FOR_FILTER" }, "Dates in conditions should be the start of week/month/quarter if the filtered field is segments.week/segments.month/segments.quarter.", undefined, "filter on segments.date BETWEEN"],
+    [{ authorizationError: "METRIC_ACCESS_DENIED" }, "The developer doesn't have access to metrics: ''auction_insight_search_impression_share', 'auction_insight_search_overlap_rate''.", undefined, "Auction insights report"],
     [{ imageError: "ASPECT_RATIO_NOT_ALLOWED" }, "The aspect ratio of the image does not match the expected aspect ratios provided in the asset spec.", "logo_images", "1.91:1"],
   ])("%j → hint", (code, message, field, hint) => {
     const e = new AdsApiError(400, body(code, message, field));
     expect(e.message).toContain(message);   // Google's own words stay
     expect(e.message).toContain(`→ `);
     expect(e.message).toContain(hint);
+  });
+
+  it("says a repeated error once", () => {
+    const err = { errorCode: { assetError: "DUPLICATE_ASSET" }, message: "Assets are duplicated across operations.",
+      location: { fieldPathElements: [{ fieldName: "headlines" }] } };
+    const e = new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: Array(7).fill(err) }] } }));
+    expect(e.message.match(/DUPLICATE_ASSET/g)).toHaveLength(1);
   });
 
   it("names the policy and the flagged text from PolicyViolationDetails", () => {
@@ -45,6 +61,20 @@ describe("AdsApiError fix hints", () => {
       details: { policyViolationDetails: { externalPolicyName: "Alcohol", key: { policyName: "ALCOHOL", violatingText: "borrel" }, isExemptible: true } },
     }] }] } }));
     expect(e.message).toContain('[policy Alcohol flagged "borrel", exemptible]');
+    expect(e.message).toContain("→ ");
+  });
+
+  it("names the policy topics and flagged text from PolicyFindingDetails", () => {
+    const e = new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{
+      errorCode: { policyFindingError: "POLICY_FINDING" },
+      message: "The resource has been disapproved since the policy summary includes policy topics of type PROHIBITED.",
+      location: { fieldPathElements: [{ fieldName: "operations" }, { fieldName: "create" }, { fieldName: "ad" }] },
+      details: { policyFindingDetails: { policyTopicEntries: [
+        { topic: "PUNCTUATION", type: "PROHIBITED", evidences: [{ textList: { texts: ["¡¡Compra ya!!"] } }] },
+        { topic: "DESTINATION_NOT_WORKING", type: "PROHIBITED" },
+      ] } },
+    }] }] } }));
+    expect(e.message).toContain('[policy PUNCTUATION PROHIBITED flagged "¡¡Compra ya!!"] [policy DESTINATION_NOT_WORKING PROHIBITED]');
     expect(e.message).toContain("→ ");
   });
 

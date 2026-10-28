@@ -8,10 +8,10 @@ import type { DB } from "./db.js";
 import type { GoogleCreds } from "./google.js";
 import { SignIn } from "./signin.js";
 import { startLoginAs } from "./account.js";
-import { buildReport, permissionLabels, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
+import { buildReport, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
 import { now } from "./db.js";
 import { esc } from "./pages.js";
-import { PRO_PRICE_LABEL } from "./plans.js";
+import { planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
 import { AUDIENCES, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
@@ -23,9 +23,7 @@ export interface AdminDeps {
   /** The admin site's origin. */
   adminUrl?: string;
   adminEmails: Set<string>;
-  /** PRO_EMAILS: Pro without a plan row (session.ts isPro), so the users table alone reads them as free. */
-  proEmails?: Set<string>;
-  /** Hidden from the numbers by default (operator + testers); the page can include them. */
+  /** Always left out of the numbers (operator + testers: ADMIN_EMAILS, PRO_EMAILS). */
   internalEmails: Set<string>;
   /** Announcement emails (announce.ts); unset = no Announcements page. */
   announcements?: Announcements;
@@ -61,14 +59,12 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
     res.redirect(302, "/");
   });
   site.post("/logout", (req, res) => { auth.close(req, res); res.redirect(303, d.baseUrl); });
-  // Every page takes the same filters: ?days=1|7|30|90 (whole UTC days; 1 is today) and ?internal=1 (include the operator's and testers' accounts).
+  // Every page takes the same filter: ?days=1|7|30|90 (whole UTC days; 1 is today). The operator's and testers' accounts
+  // (ADMIN_EMAILS, PRO_EMAILS) are always left out. ?all=1 lists every user on /users, whenever last seen.
   const view = (req: Request) => {
     const days = [1, 7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
-    const all = req.query.internal === "1";
-    const report = buildReport(d.db, { days, exclude: all ? [] : [...d.internalEmails] });
-    for (const u of report.users) if (u.plan === "free" && d.proEmails?.has(u.email.toLowerCase())) u.plan = "pro";
-    return { days, all, internal: d.internalEmails.size, report,
-      feedback: feedbackCount(d.db, windowStart(days)) };
+    const report = buildReport(d.db, { days, exclude: [...d.internalEmails] });
+    return { days, all: req.query.all === "1", report, feedback: feedbackCount(d.db, windowStart(days)) };
   };
   const pages: Record<string, (v: ReturnType<typeof view>) => string> = {
     "/": overviewPage, "/users": usersPage, "/activity": activityPage, "/revenue": revenuePage,
@@ -86,10 +82,10 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
   site.get("/users/:id", (req, res) => {
     const who = email(req);
     if (!who) { res.redirect(302, "/login"); return; }
-    const u = userDetail(d.db, req.params.id);
+    const v = view(req);
+    const u = userDetail(d.db, req.params.id, windowStart(v.days));
     if (!u) { res.status(404).send("No such user."); return; }
     if (req.query.format === "json") { res.json(u); return; }
-    const v = view(req);
     const heading = `<a class="muted" href="/users${qs(v)}">Users</a> <span class="dim">/</span> ${esc(u.user.email)} ${planBadge(u.user.plan, Boolean(u.user.stripe_sub))}${
       d.internalEmails.has(u.user.email.toLowerCase()) ? ` <span class="chip">internal</span>` : ""}`;
     res.type("html").send(shell("/users", who, v, userPage(u, v), heading));
@@ -147,10 +143,12 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
 
 // ---------------------------------------------------------------- views
 
-type View = { days: number; all: boolean; internal: number; report: Report; feedback: number };
+type View = { days: number; all: boolean; report: Report; feedback: number };
 
-/** Pro's monthly price in dollars, from the label the site shows, so the two can't drift. */
-const MRR_PER_PRO = Number(PRO_PRICE_LABEL.match(/\d+/)?.[0] ?? 0);
+/** Monthly recurring revenue: each paying customer at their plan's price (report.ts MONTHLY). Complimentary plans aren't in it. */
+const mrr = (r: Report) => r.payingByPlan.reduce((a, p) => a + p.n * (MONTHLY[p.plan] ?? 0), 0);
+/** "1 Pro · 2 Plus". */
+const byPlan = (r: Report) => r.payingByPlan.map((p) => `${p.n} ${planLabel(p.plan)}`).join(" · ");
 const ago = (t: number | null) => {
   if (!t) return "—";
   const s = now() - t;
@@ -161,9 +159,8 @@ const date = (t: number) => new Date(t * 1000).toISOString().slice(0, 16).replac
 const when = (t: number | null) => (t ? `<span title="${date(t)} UTC">${ago(t)}</span>` : `<span class="dim">—</span>`);
 const num = (n: number | null | undefined) => `<span class="n">${(n ?? 0).toLocaleString("en-US")}</span>`;
 const bad = (n: number) => (n ? `<span class="n bad">${n}</span>` : `<span class="n dim">0</span>`);
-const qs = (v: Pick<View, "days" | "all">, p: Partial<{ days: number; all: boolean }> = {}) => {
-  const days = p.days ?? v.days, all = p.all ?? v.all;
-  return `?days=${days}${all ? "&internal=1" : ""}`;
+const qs = (v: Pick<View, "days">, p: Partial<{ days: number }> = {}) => {
+  return `?days=${p.days ?? v.days}`;
 };
 /** The window in words: "today", or "7d" counting today. `lastW` and `inW` read as a phrase ("last 7d", "in 7d"). */
 const range = (days: number) => (days === 1 ? "today" : `${days}d`);
@@ -245,7 +242,7 @@ h1{font-size:18px;font-weight:600;margin:0;letter-spacing:-.2px}h2{font-size:13p
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
 .seg a{padding:4px 10px;color:var(--muted);font:12px ui-monospace,Menlo,monospace;border-left:1px solid var(--line)}.seg a:first-child{border-left:0}
 .seg a.on{background:var(--fg);color:var(--bg)}.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.toggle{font-size:12px;color:var(--dim)}.toggle:hover{color:var(--fg)}.toggle.on{color:var(--fg)}
+
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:16px;overflow:hidden}
 .stat{padding:14px 16px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);margin:0 -1px -1px 0}
 .stat span{display:block;color:var(--muted);font-size:12px}.stat b{display:block;font:500 22px/1.3 ui-monospace,Menlo,monospace;letter-spacing:-.5px;margin-top:4px}
@@ -253,7 +250,8 @@ h1{font-size:18px;font-weight:600;margin:0;letter-spacing:-.2px}h2{font-size:13p
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin-bottom:16px}.grid2>.card{margin-bottom:0}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;min-width:0}
 .card>header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
-.card>header small{color:var(--dim);font-size:12px}.card>.pad{padding:14px}
+.card>header{gap:12px}.card>header small{color:var(--dim);font-size:12px;text-align:right}
+.ret{display:inline-block;min-width:44px;padding:0 6px;border-radius:4px}.ret.open{border:1px dashed var(--line);color:var(--dim)}.card>.pad{padding:14px}
 .mfoot{display:none}.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%}
 th{font-weight:500;color:var(--muted);font-size:12px;text-align:left;padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
 td{padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--hover)}
@@ -277,16 +275,19 @@ button{font:inherit;font-size:12px;background:none;border:1px solid var(--line);
 .top{margin-bottom:14px}h1{font-size:16px}
 table.users thead{display:none}table.users tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:10px 14px;border-bottom:1px solid var(--line)}
 table.users tr:last-child{border-bottom:0}table.users td{padding:0;border:0}table.users td:first-child{flex-basis:100%}
-table.users td:nth-child(4),table.users td:nth-child(6),table.users td:nth-child(7),table.users td:nth-child(8),table.users td:nth-child(9){display:none}
-table.users td:nth-child(5){margin-left:auto;color:var(--dim);font-size:12px}}
+table.users td:nth-child(4),table.users td:nth-child(6),table.users td:nth-child(7),table.users td:nth-child(8),table.users td:nth-child(10){display:none}
+table.users td:nth-child(5){margin-left:auto;color:var(--dim);font-size:12px}
+table.opps thead{display:none}table.opps tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+table.opps tr:last-child{border-bottom:0}table.opps td{padding:0;border:0;white-space:normal}table.opps td:first-child{flex-basis:100%}
+table.opps td:nth-child(3),table.opps td:nth-child(4),table.opps td:nth-child(5){display:none}table.opps td:nth-child(6){margin-left:auto;color:var(--dim);font-size:12px}
+table.cohorts th,table.cohorts td{padding:7px 6px}table.cohorts .ret{min-width:38px;padding:0 3px}}
 </style></head><body><div class="app">
 <aside><div class="brand">camberstack<span>/admin</span></div><nav>${nav.map(([p, l, c]) =>
   `<a class="${p === path ? "on" : ""}" href="${p}${qs(v)}">${l}<em>${c}</em></a>`).join("")}</nav>
 <div class="ext"><span>Links</span>${EXTERNAL.map(([l, href]) => `<a href="${href}" target="_blank" rel="noopener">${l} <i>↗</i></a>`).join("")}</div>
 <div class="who"><span title="${esc(who)}">${esc(who)}</span><form method="post" action="/logout"><button>Sign out</button></form></div></aside>
 <main><div class="top"><h1>${heading ?? title}</h1><div class="tools"${path === "/announcements" ? ' style="display:none"' : ""}>
-<span class="seg" title="Whole days in UTC, counting today">${[1, 7, 30, 90].map((d) => `<a class="${d === v.days ? "on" : ""}" href="?${qs(v, { days: d }).slice(1)}">${d === 1 ? "Today" : `${d}d`}</a>`).join("")}</span>
-<a class="toggle ${v.all ? "on" : ""}" href="${qs(v, { all: !v.all })}" title="Include the operator's and testers' accounts (ADMIN_EMAILS, PRO_EMAILS)">${v.all ? "showing" : "hiding"} internal</a></div></div>
+<span class="seg" title="Whole days in UTC, counting today">${[1, 7, 30, 90].map((d) => `<a class="${d === v.days ? "on" : ""}" href="?${qs(v, { days: d }).slice(1)}">${d === 1 ? "Today" : `${d}d`}</a>`).join("")}</span></div></div>
 ${body}
 <footer class="mfoot">${EXTERNAL.map(([l, href]) => `<a href="${href}" target="_blank" rel="noopener">${l} ↗</a>`).join("")}
 <span>${esc(who)} · <form method="post" action="/logout" style="display:inline"><button>Sign out</button></form></span></footer>
@@ -303,11 +304,13 @@ function overviewPage(v: View): string {
   return `<div class="stats">
 ${stat("Users", num(r.funnel.all.connected), `+${r.funnel.window.connected} ${inW(v.days)}`)}
 ${stat(`Active · ${w}`, num(r.activeInWindow), `${callsInWindow.toLocaleString("en-US")} calls`)}
-${stat("Applied a change", num(r.funnel.all.applied), `${Math.round((100 * r.funnel.all.applied) / top)}% of users`)}
-${stat("Paying", num(paying), `$${paying * MRR_PER_PRO} MRR`)}
+${stat(`Applied a change · ${w}`, num(r.appliedInWindow.users), `${r.appliedInWindow.changes} change${r.appliedInWindow.changes === 1 ? "" : "s"} · ${r.funnel.all.applied} all time`)}
+${stat("Paying", num(paying), `$${mrr(r)} MRR`)}
 ${stat(`Tool errors · ${w}`, errs ? `<span class="n bad">${errs}</span>` : num(0), callsInWindow ? `${((100 * errs) / callsInWindow).toFixed(1)}% of calls` : "")}
 </div>
 ${callsChart(v)}
+${sharingCard(v)}
+${opportunitiesCard(v)}
 <div class="grid2">
 ${card("Funnel", table(["stage", ["all time", "r"], "", [`new · ${w}`, "r"]], stages.map((k) => [k.replace(/_/g, " "), num(r.funnel.all[k]),
     `<div class="bar"><i style="width:${Math.round((100 * r.funnel.all[k]) / top)}%"></i></div>`, num(r.funnel.window[k])])))}
@@ -316,9 +319,9 @@ ${card("Google permissions", table(["service", ["connected users", "r"], ""], [
     ...(r.permissionsUnknown ? [[`<span class="dim">not reported yet</span>`, num(r.permissionsUnknown), ""]] : []),
   ]), `<small>connected users only</small>`)}
 </div>
-${card("Connects by source", table(["source", "campaign", "content", ["users", "r"], [`new · ${w}`, "r"], ["used real", "r"], ["applied", "r"]],
-    r.sources.map((x) => [x.source === "(untagged)" ? `<span class="dim">untagged</span>` : esc(x.source), esc(x.campaign ?? "—"), esc(x.content ?? "—"),
-      num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>first touch</small>`)}
+${card("Connects by app", table(["app", ["users", "r"], [`new · ${w}`, "r"], ["used real", "r"], ["applied", "r"]],
+    r.sources.map((x) => [x.app ? esc(x.app) : `<span class="dim">unknown</span>`,
+      num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>app of first call, else token</small>`)}
 <div class="grid2">
 ${card("Latest signups", table(["user", "plan", "permissions", ["signed up", "r"]], [...r.users].sort((a, b) => b.created_at - a.created_at).slice(0, 6)
     .map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }), `<span class="r">${when(u.created_at)}</span>`])),
@@ -333,19 +336,8 @@ ${card("Top tools", table(["tool", ["calls", "r"], ["errors", "r"]], r.tools.sli
  * or for today one per UTC hour (hours still to come drawn empty).
  */
 function callsChart(v: View): string {
-  const r = v.report, start = windowStart(v.days), hourNow = new Date(now() * 1000).getUTCHours();
-  type Bar = { label: string; calls: number; users: number; errors: number; future?: boolean };
-  let bars: Bar[];
-  if (v.days === 1) {
-    const byHour = new Map(r.hourly.map((x) => [x.hour, x]));
-    bars = Array.from({ length: 24 }, (_, h) => ({ label: `${String(h).padStart(2, "0")}:00`, calls: 0, users: 0, errors: 0, ...byHour.get(h), future: h > hourNow }));
-  } else {
-    const byDay = new Map(r.daily.map((x) => [x.day, x]));
-    bars = Array.from({ length: v.days }, (_, i) => {
-      const day = new Date((start + i * 86400) * 1000).toISOString().slice(0, 10);
-      return { label: day, calls: 0, users: 0, errors: 0, ...byDay.get(day) };
-    });
-  }
+  const r = v.report;
+  const bars = slots(v, r.hourly, r.daily, { calls: 0, users: 0, errors: 0 });
   const per = v.days === 1 ? "hour" : "day", max = Math.max(1, ...bars.map((b) => b.calls));
   const body = r.daily.length
     ? `<div class="chart">${bars.map((b) => `<div class="${b.future ? "future" : ""}" style="height:${b.future ? 100 : Math.max(1, Math.round((100 * b.calls) / max))}%" title="${b.label}${
@@ -355,23 +347,112 @@ function callsChart(v: View): string {
   return card(`Calls per ${per}`, body, `<small>${lastW(v.days)} · UTC</small>`);
 }
 
-function usersPage(v: View): string {
+/** One bar per UTC day of the window, zeros included, or for today one per UTC hour (hours still to come marked future). */
+function slots<T extends object>(v: View, hourly: ({ hour: number } & T)[], daily: ({ day: string } & T)[], zero: T): ({ label: string; future?: boolean } & T)[] {
+  if (v.days === 1) {
+    const byHour = new Map(hourly.map((x) => [x.hour, x])), hourNow = new Date(now() * 1000).getUTCHours();
+    return Array.from({ length: 24 }, (_, h) => ({ ...zero, ...byHour.get(h), label: `${String(h).padStart(2, "0")}:00`, future: h > hourNow }));
+  }
+  const byDay = new Map(daily.map((x) => [x.day, x])), start = windowStart(v.days);
+  return Array.from({ length: v.days }, (_, i) => {
+    const day = new Date((start + i * 86400) * 1000).toISOString().slice(0, 10);
+    return { ...zero, ...byDay.get(day), label: day };
+  });
+}
+
+/** Signups over the window, drawn like callsChart. */
+function signupsChart(v: View): string {
   const r = v.report;
-  const shown = r.users.length < r.funnel.all.connected ? `${r.users.length} of ${r.funnel.all.connected} users` : `${r.users.length} users`;
-  return card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], "app"],
-    r.users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
-      when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
-    `<small>all time, by last seen</small>`);
+  const bars = slots(v, r.signupsHourly, r.signupsDaily, { n: 0 });
+  const per = v.days === 1 ? "hour" : "day", max = Math.max(1, ...bars.map((b) => b.n)), total = bars.reduce((a, b) => a + b.n, 0);
+  const body = total
+    ? `<div class="chart">${bars.map((b) => `<div class="${b.future ? "future" : ""}" style="height:${b.future ? 100 : Math.max(1, Math.round((100 * b.n) / max))}%" title="${b.label}${
+        v.days === 1 ? " UTC" : ""}: ${b.n} signups"></div>`).join("")}</div>
+<div class="axis"><span>${bars[0]!.label}</span><span>${total} total · peak ${max}/${per}</span><span>${bars.at(-1)!.label}${v.days === 1 ? " UTC" : ""}</span></div>`
+    : `<p class="empty">No signups in this window.</p>`;
+  return card(`Signups per ${per}`, body, `<small>${lastW(v.days)} · UTC</small>`);
+}
+
+/** Weekly cohorts (report.ts retention): of each signup week's users who applied a change, the share applying one N weeks on, and who pays. Not windowed. */
+function retentionCard(v: View): string {
+  const rows = v.report.retention;
+  // A week still under way for someone in the cohort is outlined and dim: it can only go up, so it isn't a drop yet.
+  const cell = (n: number, of: number, open: boolean) => {
+    const p = Math.round((100 * n) / Math.max(1, of));
+    return open ? `<span class="ret open" title="${n} of ${of} so far · week still under way">${p}%</span>`
+      : `<span class="ret" style="background:color-mix(in srgb,var(--bar) ${Math.round(p * 0.6)}%,transparent)" title="${n} of ${of}">${p}%</span>`;
+  };
+  const wks = Array.from({ length: RETENTION_WEEKS }, (_, n): [string, "r"] => [`W${n}`, "r"]);
+  // The pricing read (projects/camberstack/PRICING-TEST.md): of those who applied a change, how many keep applying, and who pays.
+  return card("Retention", table(["signup week", ["users", "r"], ["applied", "r"], ["paid", "r"], ...wks],
+    rows.map((c) => [c.week, num(c.users), num(c.appliers), num(c.paid),
+      ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.applied.length && c.appliers ? cell(c.applied[n]!, c.appliers, n >= c.done) : "")]),
+    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="Of each week's users who ever applied a real-account change, the share that applied one 7n–7n+7 days after their own signup. Demo account excluded. Paid: on a paid plan now.">all time · applied in week N, of appliers</small>`);
+}
+
+/** The one-service paywall funnel (report.ts paywall; PRICING-TEST.md): read by group, existing vs new signups, ChatGPT vs other apps. */
+function paywallCard(v: View): string {
+  const p = v.report.paywall;
+  if (!p.since) return "";
+  return card("Paywall · one service", table(["signed up", "app", ["users", "r"], ["stopped", "r"], ["emailed", "r"], ["viewed /plans", "r"], ["clicked upgrade", "r"], ["paid", "r"]],
+    p.rows.map((r) => [r.existing ? "before switch-on" : "after", r.chatgpt ? "ChatGPT" : "other", num(r.users), num(r.stopped), num(r.emailed),
+      r.chatgpt ? num(r.viewed) : `<span class="muted">—</span>`, num(r.clicked), num(r.paid)]), "Nobody active since switch-on."),
+    `<small title="From the first Service notice (the flag going on). Users seen since then. Stopped: got Service limit. ChatGPT gets /plans, not an upgrade link; others get the link in the stop itself. Clicked: any personal upgrade link (tool, email, account page). Paid: a checkout since switch-on.">since ${when(p.since)}</small>`);
+}
+
+function usersPage(v: View): string {
+  const r = v.report, since = windowStart(v.days);
+  // Users seen in the window (last seen, else signed up); ?all=1 keeps everyone, so users idle past 90d stay reachable.
+  const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
+  const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
+  const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
+  return signupsChart(v) + paywallCard(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
+    users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
+      when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
+      `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
+    `<small>${toggle}</small>`);
+}
+
+/** Accounts shared across logins (report.ts sharing): how Free could be multiplied. On the overview only when there is one. */
+function sharingCard(v: View, always = false): string {
+  const rows = v.report.sharing;
+  if (!rows.length && !always) return "";
+  return card("Shared across logins", table(["", "account", "users", ["last", "r"]], rows.map((s) => {
+    const users = JSON.parse(s.users) as { id: string; email: string; plan: string }[];
+    return [s.kind, cid(s.customer_id), users.map((u) => `${userLink(v, u.id, u.email)} ${planBadge(u.plan, true)}`).join("<br>"),
+      `<span class="r">${when(s.last)}</span>`];
+  }), "No ad or manager account is shared by two logins."), `<small>ad account: tools run by 2+ users · manager: reachable by 2+</small>`);
+}
+
+/** Users who might need a bigger plan (report.ts opportunities). On the overview only when there is one. */
+function opportunitiesCard(v: View): string {
+  const rows = v.report.opportunities;
+  if (!rows.length) return "";
+  return card("Plan opportunities", table(["user", "why", ["reachable", "r"], ["active · 30d", "r"], ["used · 30d", "r"], ["last gate hit", "r"]], rows.map((o) => [
+    `${userLink(v, o.id, o.email)} ${planBadge(o.plan, true)}`, esc(o.why.join(" · ")),
+    `<span class="r">${o.reach === null ? "?" : num(o.reach)}${o.managers ? `<span class="dim"> +${o.managers}m</span>` : ""}</span>`,
+    `<span class="r">${o.active === null ? "?" : num(o.active)}</span>`, `<span class="r">${num(o.used30)}</span>`,
+    `<span class="r">${o.last_hit ? when(o.last_hit) : "—"}</span>`]), "", "opps"),
+    `<small title="Ad accounts that spent in the last 30 days, read when the user lists or picks accounts (&quot;?&quot; until then)">active = spent · 30d</small>`);
+}
+
+/** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls
+ *  can't tell them apart; "?" until a fresh account list records it. */
+function usedOf(used: number, ads: number | null, managers: number | null): string {
+  const title = ads === null ? "accounts used / visible (not recorded yet)" : `accounts used / visible: ${ads} ad + ${managers ?? 0} manager`;
+  return `<span title="${title}">${num(used)}<span class="dim"> / ${ads === null ? "?" : num(ads + (managers ?? 0))}</span></span>`;
 }
 
 function userPage(x: UserDetail, v: View): string {
-  const u = x.user;
+  const u = x.user, w = lastW(v.days);
   const stripe = u.stripe_customer ? `<a href="https://dashboard.stripe.com/customers/${encodeURIComponent(u.stripe_customer)}" target="_blank" rel="noopener"><code>${esc(u.stripe_customer)}</code> ↗</a>` : `<span class="dim">—</span>`;
   return `<div class="stats">
-${stat("Calls · all time", num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
-${stat("Errors · all time", x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
-${stat("Proposals", num(x.proposals.length), `${x.proposals.filter((p) => p.status === "applied").length} applied`)}
-${stat("Ads accounts", num(x.accounts.length), "")}
+${stat(`Calls · ${w}`, num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
+${stat(`Errors · ${w}`, x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
+${stat("Proposals · all time", num(x.proposals.length), `${x.proposals.filter((p) => p.status === "applied").length} applied`)}
+${stat("Ads accounts used", num(x.accounts.filter((a) => a.ok_calls > 0 && a.customer_id !== "0000000001" && a.customer_id !== "ga4").length),
+    u.ads_accounts === null ? `${w} · visible not recorded yet`
+      : `${w} · of ${u.ads_accounts} visible${u.ads_managers ? ` + ${u.ads_managers} manager${u.ads_managers > 1 ? "s" : ""}` : ""} (${ago(u.ads_accounts_at!)})`)}
 </div>
 <div class="grid2">
 ${card("Account", `<dl>
@@ -379,33 +460,40 @@ ${card("Account", `<dl>
 <dt>Google permissions</dt><dd>${perms(u.google_scopes, u.connected, { missing: true })}</dd>
 <dt>Signed up</dt><dd>${date(u.created_at)} UTC <span class="dim">(${ago(u.created_at)})</span></dd>
 <dt>Last seen</dt><dd>${when(u.last_seen_at)}</dd>
-<dt>Came from</dt><dd>${u.src_source ? esc([u.src_source, u.src_campaign, u.src_content].filter(Boolean).join(" · ")) : `<span class="dim">untagged</span>`}</dd>
+<dt>Came from</dt><dd>${u.came_from ? esc(u.came_from) : `<span class="dim">unknown</span>`}</dd>
 <dt>Time zone</dt><dd>${esc(u.time_zone ?? "—")}</dd>
 <dt>Stripe</dt><dd>${stripe}${u.stripe_sub ? ` <code class="dim">${esc(u.stripe_sub)}</code>` : ""}</dd>
 <dt>Emails</dt><dd>${u.email_opt_out ? `<span class="bad">unsubscribed</span>` : "subscribed"}</dd>
 <dt>User id</dt><dd><code>${esc(u.id)}</code></dd>
 </dl>
 <form method="post" action="/users/${encodeURIComponent(u.id)}/login-as" target="_blank"><button>Log in as user ↗</button></form>`)}
-${card("Ads accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === "0000000001" ? ` <span class="chip">demo</span>` : ""), num(a.calls), when(a.first), when(a.last)])))}
+${card("Ads accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === "0000000001" ? ` <span class="chip">demo</span>` : "")
+      + (a.ok_calls ? "" : ` <span class="chip">not used</span>`), num(a.calls), when(a.first), when(a.last)]),
+    "No calls in this window."), `<small>${w}</small>`)}
 </div>
 <div class="grid2">
-${card("AI apps", table(["app", ["calls", "r"], "last", "tool list"], x.clients.map((c) => [esc(c.client), num(c.calls), when(c.last), toolList(x, c.client)])),
-    `<small>tool list: our version when the app last fetched it</small>`)}
-${card("Tools", table(["tool", ["calls", "r"], ["errors", "r"]], x.tools.map((t) => [`<code>${esc(t.tool)}</code>`, num(t.calls), bad(t.errors)])))}
+${card("AI apps", table(["app", ["calls", "r"], "last", "tool list"], x.clients.map((c) => [esc(c.client), num(c.calls), when(c.last), toolList(x, c.client)]), "No calls in this window."),
+    `<small>${w} · tool list: our version when the app last fetched it</small>`)}
+${card("Tools", table(["tool", ["calls", "r"], ["errors", "r"]], x.tools.map((t) => [`<code>${esc(t.tool)}</code>`, num(t.calls), bad(t.errors)]), "No calls in this window."), `<small>${w}</small>`)}
 </div>
 ${card("Proposals", table(["id", "account", "status", "summary", "created"], x.proposals.map((p) => [`<code>${esc(p.id)}</code>`, cid(p.customer_id),
     `<span class="chip ${p.status === "applied" ? "okc" : p.status === "failed" ? "badc" : ""}">${esc(p.status)}${p.undo_of ? " · undo" : ""}</span>`,
     `<span class="muted">${esc(p.summary).replace(/\n/g, "<br>")}</span>`, when(p.created_at)]), "No proposals.").replaceAll("<td><span class=\"muted\">", "<td class=\"wrap\"><span class=\"muted\">"))}
 ${card("Emails sent", table(["email", "sent"], x.emails.map((e) => [`<code>${esc(e.kind)}</code>`, `${date(e.sent_at)} UTC`]), "None sent."))}
-${card("Recent calls", callsTable(x.recent.map((c) => ({ ...c, email: null }))), `<small>last ${x.recent.length}</small>`)}`;
+${card("Recent calls", callsTable(x.recent.map((c) => ({ ...c, email: null }))), `<small>${w} · last ${x.recent.length}</small>`)}`;
 }
 
-/** The tool set an app holds: our version when it last fetched the list. Apps keep it until they fetch again. */
+/**
+ * The tool set an app holds: our version when it last fetched the list. Apps keep it until they fetch again. ChatGPT's
+ * published app fetches once for everyone, so its users show that fetch (appToolLists in report.ts).
+ */
 function toolList(x: UserDetail, client: string): string {
-  const t = x.toolLists.find((l) => l.client === client);  // newest first
+  const own = x.toolLists.find((l) => l.client === client);  // newest first
+  const t = own ?? x.appToolLists.find((l) => l.client === client);
   if (!t) return `<span class="dim" title="Hasn't fetched the tool list since 2026-10-15, when this started being recorded">unknown</span>`;
   const stale = t.version !== SERVER_VERSION;
-  return `<span class="${stale ? "bad" : "ok"}" title="Fetched ${date(t.fetched_at)} UTC${stale ? `; current is ${SERVER_VERSION}` : ""}">${esc(t.version)}</span> <span class="dim">${ago(t.fetched_at)}</span>`;
+  const how = own ? "Fetched" : "ChatGPT fetches the tool list once for every user of the app, not per user; last fetched";
+  return `<span class="${stale ? "bad" : "ok"}" title="${how} ${date(t.fetched_at)} UTC${stale ? `; current is ${SERVER_VERSION}` : ""}">${esc(t.version)}</span> <span class="dim">${ago(t.fetched_at)}</span>`;
 }
 
 function callsTable(rows: { at: number; email: string | null; id?: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }[], v?: View): string {
@@ -434,13 +522,12 @@ function revenuePage(v: View): string {
   const pros = r.users.filter((u) => u.plan !== "free");
   const paying = r.paying;
   return `<div class="stats">
-${stat("Paying", num(paying), "live Stripe subscriptions")}
-${stat("MRR", `$${paying * MRR_PER_PRO}`, `$${MRR_PER_PRO}/mo each`)}
-${stat("Comped Pro", num(pros.filter((u) => !u.paying).length), v.all ? "PRO_EMAILS" : "PRO_EMAILS are internal: show internal")}
+${stat("Paying", num(paying), "live Stripe subscriptions; complimentary plans not counted")}
+${stat("MRR", `$${mrr(r)}`, byPlan(r) || "no paid plans")}
 ${stat("Ad connects uploaded", num(r.adConversions?.uploaded), `${r.adConversions?.recorded ?? 0} recorded`)}
 </div>
-${card("Pro users", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
-    perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No Pro users yet."))}
+${card("Paid and complimentary", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
+    perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No paid or complimentary users yet."))}
 <div class="grid2">
 ${card("Emails", table(["email", ["all time", "r"], [lastW(v.days), "r"]], r.emails.map((e) => [`<code>${esc(e.kind)}</code>`, num(e.sent), num(e.in_window)]), "No emails sent yet."))}
 ${card("Ad conversions", `<dl><dt>Recorded</dt><dd>${num(r.adConversions?.recorded)}</dd><dt>Uploaded to Google Ads</dt><dd>${num(r.adConversions?.uploaded)}</dd>

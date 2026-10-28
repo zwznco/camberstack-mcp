@@ -7,6 +7,24 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.19.0", date: "2026-10-23",
+    summary: "Pick your account first, and an account switch is a question, not an error.",
+    items: [
+      "**With more Google Ads accounts than your plan covers, your assistant asks which to start on** before using any of them, instead of the plan taking whichever it opened first.",
+      "**Asking about a new account on a full plan now answers with what a switch would lock and until when**, as a normal reply rather than an error. Nothing is spent until you agree.",
+      "**A clearer fix for change history older than Google allows:** `change_event` reaches back 30 days to the second, so the assistant starts a day inside it.",
+    ],
+  },
+  {
+    version: "0.18.0", date: "2026-10-22",
+    summary: "Clear Google's EU political ads block from the chat, and fewer failed retries.",
+    items: [
+      "**Declare whether a campaign contains EU political advertising** (`set_eu_political_advertising`). Google refuses every change to an account while any campaign lacks this declaration; when that happens, your assistant now finds those campaigns, asks you, and proposes the declaration for your approval.",
+      "**Repeated ad text is caught before Google sees it:** a headline or description that appears twice in one ad is named, so the assistant fixes the right one first time. Spacing doesn't make two texts different; capitals do.",
+      "**Clearer fixes for more Google Ads errors:** `OR` in a query, a segment that can't split cost, and duplicated assets. An error Google repeats for every item is shown once.",
+    ],
+  },
+  {
     version: "0.17.0", date: "2026-10-19",
     summary: "Import a GA4 key event into Google Ads without leaving the chat.",
     items: [

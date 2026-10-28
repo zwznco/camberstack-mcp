@@ -10,13 +10,14 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SWITCH_NOTICE_PREFIX, accountsLabel, poolOf, type Pool } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, ALL_THREE, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, freePlan, freePlanChange, isPaid, poolOf, planLabel, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
-import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields } from "./gaql.js";
+import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields, queryShape } from "./gaql.js";
+import { reportBug } from "./sentry.js";
 import {
   ChangeSchema, MAX_CHANGES, inverseAfterApply, sameSummary, pendingOf, resolveChange, summarize,
   type Change, type ResolvedChange,
@@ -31,6 +32,8 @@ export interface Account {
   loginCustomerId: string | null;
   /** The account's IANA time zone, e.g. "America/New_York". */
   timeZone?: string;
+  /** Whether it spent anything in the last 30 days (spendActivity); absent when not checked or Google didn't answer. */
+  spentLast30Days?: boolean;
 }
 
 const tokenCache = new Map<string, { token: string; exp: number }>();
@@ -42,6 +45,12 @@ const tokenCache = new Map<string, { token: string; exp: number }>();
 type Unreadable = { customerId: string; error: string; grant_url?: string };
 const accountsCache = new Map<string, { at: number; list: Account[]; unreadable: Unreadable[] }>();
 const ACCOUNTS_TTL_MS = 10 * 60_000;
+/** Which accounts spent in the last 30 days, per user: shown when the user picks an account (2026-10-26). */
+const activityCache = new Map<string, { at: number; spent: boolean }>();  // keyed user|customer
+const ACTIVITY_TTL_MS = 6 * 3600_000;
+/** Accounts checked per listing, and how long a listing waits for Google before showing what it has. */
+const ACTIVITY_MAX = 25;
+const ACTIVITY_WAIT_MS = 4000;
 /** Drop a user's cached Google token and account list: on disconnect, and on reconnect (the old token may be revoked). */
 export function clearGoogleCache(userId: string): void {
   tokenCache.delete(userId);
@@ -54,6 +63,10 @@ const NOT_REPEATABLE = new Set<string>(["add_ad_group", "add_responsive_search_a
 /** Per user: the tail of their plan-gate checks (run one at a time), and the accounts with a call running. */
 const gateQueue = new Map<string, Promise<void>>();
 const inFlight = new Map<string, Map<string, number>>();
+/** Services a user's running calls use, so parallel calls can't take two services at once (checkService). */
+const servicesInFlight = new Map<string, Map<Service, number>>();
+/** When each user was last asked to pick Free's service (checkService). In memory: a restart just asks again. */
+const serviceAsked = new Map<string, number>();
 
 /**
  * `fn` over `items`, at most `limit` at a time, results in input order. If any fail, throws the error of the
@@ -81,11 +94,19 @@ export interface SessionDeps {
   /** Google Ads accounts each plan covers, over ACCOUNT_WINDOW_DAYS (config.ts). */
   freeAccounts: number;
   proAccounts: number;
+  /** Option C (plans.ts FreePlan): when Free starts covering one Google service at a time. Off unless FREE_ONE_SERVICE is set. */
+  freeOneServiceFrom?: number;
+  /** Agency's accounts at a time; unset = no Agency plan (tests, and billing without STRIPE_AGENCY_PRICE_ID). */
+  agencyAccounts?: number;
+  /** Plus is sold (STRIPE_PLUS_PRICE_ID). It's offered only once one-service Free is announced: before, Free is the same. */
+  plusAvailable?: boolean;
   proEmails: Set<string>;
   /** Asks Stripe whether this user just paid; true when that made them Pro (billing.ts refreshPlan). */
   refreshPlan?: (userId: string) => Promise<boolean>;
   /** Signed per-user billing links (billing.ts); null when billing isn't configured. */
-  billingLink?: (kind: "upgrade" | "billing", userId: string) => string | null;
+  billingLink?: (kind: "upgrade" | "billing" | "agency" | "plus", userId: string) => string | null;
+  /** A personal /plans link, so a view counts in the paywall funnel (billing.ts plansLink). */
+  plansLink?: (userId: string) => string;
   /** Tests inject a fake. */
   adsFactory?: (user: UserRow) => AdsClient;
   scFactory?: (user: UserRow) => SearchConsole;
@@ -138,6 +159,8 @@ type AnyChange = Change | GaChange | McChange;
 type AnyResolved = ResolvedChange | GaResolved | McResolved;
 /** `note`: something the user must do next, e.g. a new GA4 property's tag. */
 type Outcome = { describe: string; ok: boolean; error?: string; note?: string; inverse?: AnyChange };
+type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[] };
+type AlreadyInPlace = { status: "already in place"; changes: 0; skipped: string[]; note: string };
 /** What the AI (and the account page) sees of an applied proposal's outcomes. */
 const publicResults = (outcomes: Outcome[]) => outcomes.map(({ describe, ok, error, note }) =>
   ({ change: describe, ok, ...(error ? { error } : {}), ...(note ? { note } : {}) }));
@@ -205,12 +228,39 @@ export class UserSession {
     }
   }
 
+  /** On a paid plan (Plus, Pro or Agency), or complimentary Pro (PRO_EMAILS): all three Google services, no one-service gate. */
   get isPro(): boolean {
-    return this.user.plan === "pro" || this.deps.proEmails.has(this.user.email.toLowerCase());
+    return isPaid(this.user.plan) || this.deps.proEmails.has(this.user.email.toLowerCase());
+  }
+
+  get planName(): Plan {
+    return this.user.plan === "agency" ? "agency" : this.user.plan === "plus" ? "plus" : this.isPro ? "pro" : "free";
   }
 
   get accountLimit(): number {
-    return this.isPro ? this.deps.proAccounts : this.deps.freeAccounts;
+    const p = this.planName;
+    return p === "agency" ? this.deps.agencyAccounts ?? this.deps.proAccounts : p === "pro" ? this.deps.proAccounts : p === "plus" ? PLUS_ACCOUNTS : this.deps.freeAccounts;
+  }
+
+  /**
+   * The plan with more Google Ads accounts, if it's offered: Pro from Free or Plus, Agency from Pro. Never on ChatGPT (no
+   * upgrade pitches there). A paying Plus user's link goes to Stripe's billing portal, which switches the subscription.
+   */
+  private nextPlan(): { plan: Plan; price: string; accounts_included: number; upgrade_url: string | null } | null {
+    if (this.chatgpt) return null;
+    const p = this.planName;
+    if (p === "free" || p === "plus") return { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts, upgrade_url: this.deps.billingLink?.("upgrade", this.user.id) ?? null };
+    // Paid Pro switches in Stripe's billing portal (the agency link sends a paying user there); complimentary Pro checks out.
+    if (p === "pro" && this.deps.agencyAccounts) {
+      const url = this.deps.billingLink?.("agency", this.user.id) ?? null;
+      return url ? { plan: "agency", price: AGENCY_PRICE_LABEL, accounts_included: this.deps.agencyAccounts, upgrade_url: url } : null;
+    }
+    return null;
+  }
+
+  /** After Stripe said this user just paid: their plan as billing.ts recorded it. */
+  private reloadPlan(): void {
+    this.user.plan = (this.deps.db.prepare("SELECT plan FROM users WHERE id = ?").get(this.user.id) as { plan: string } | undefined)?.plan ?? this.user.plan;
   }
 
   /**
@@ -223,8 +273,87 @@ export class UserSession {
     return this.usage(pool).map((u) => u.c);
   }
 
+  /**
+   * Google services this user ran real calls on in the window, most recently used first (tool_calls.service; the demo,
+   * refused calls and calls before plan_reset_at don't count). With FREE_ONE_SERVICE, Free covers the first of these.
+   */
+  servicesInUse(): { s: Service; last: number }[] {
+    const rows = this.deps.db.prepare(`SELECT service, max(at) last, max(id) id FROM tool_calls WHERE user_id = ? AND ok = 1 AND service IS NOT NULL AND at >= ?
+        GROUP BY service ORDER BY last DESC, id DESC`)
+      // Only calls since one-service Free started: everyone picks their service then, rather than keeping whichever they used last before it.
+      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0, this.deps.freeOneServiceFrom ?? 0)) as { service: string; last: number }[];
+    const out: { s: Service; last: number }[] = [];
+    for (const r of rows) for (const s of r.service.split(",") as Service[]) if (!out.some((o) => o.s === s)) out.push({ s, last: r.last });
+    return out;
+  }
+
+  /**
+   * The one-service gate (FREE_ONE_SERVICE, Free only): a call may use only the service the plan covers, which is the
+   * most recently used one (a call needing two, paid_organic_overlap, needs a paid plan). Another service opens 30 days
+   * after the covered one was last used, or with plan_reset_at. With none used yet, the first real call stops with a
+   * Service choice notice so the AI asks the user which service to keep for 30 days; the next real call within
+   * SERVICE_CHOICE_SECONDS is the answer and takes the plan. Both stops are SwitchNotices, normal results rather than
+   * errors (errors count against the directories' reliability metrics).
+   * Returns a release to call once the call is logged: until then its service counts as in use.
+   */
+  checkService(services: Service[]): () => void {
+    if (!this.oneService || this.isPro) return () => {};
+    const running = [...(servicesInFlight.get(this.user.id)?.keys() ?? [])];
+    const used = this.servicesInUse();
+    if (!running.length && !used.length && services.length === 1) {
+      const asked = serviceAsked.get(this.user.id);
+      if (!asked || now() - asked > SERVICE_CHOICE_SECONDS) {
+        serviceAsked.set(this.user.id, now());
+        const plan = this.chatgpt ? "The current plan" : "The Free plan";
+        throw new SwitchNotice(`${SERVICE_CHOICE_PREFIX} ${plan} covers one Google service at a time: Google Ads, Search Console or Google Analytics. `
+          + `Nothing has run yet. Ask the user which one they want to use for the next ${ACCOUNT_WINDOW_DAYS} days, then make the call for that service: `
+          + `the first one made in the next ${SERVICE_CHOICE_SECONDS / 60} minutes becomes the plan's service, and the others wait until ${ACCOUNT_WINDOW_DAYS} days after it was last used.`
+          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers all three together.` : ` Pro (${PRO_PRICE_LABEL}) covers all three together.`),
+          { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: Object.values(SERVICE_LABELS), window_days: ACCOUNT_WINDOW_DAYS,
+            ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
+      }
+      serviceAsked.delete(this.user.id);
+    }
+    const covered = running[0] ?? used[0]?.s ?? (services.length === 1 ? services[0]! : undefined);
+    const extra = services.filter((s) => s !== covered);
+    if (!covered || extra.length) {
+      const have = covered ? SERVICE_LABELS[covered] : null;
+      const want = extra.map((s) => SERVICE_LABELS[s]).join(" and ") || services.map((s) => SERVICE_LABELS[s]).join(" and ");
+      // A covered service still in flight (parallel calls) has no logged use yet: it's being used now.
+      const last = used.find((u) => u.s === covered)?.last ?? (covered ? now() : undefined);
+      const opens = last ? new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10) : null;
+      const why = have ? `this login uses it for ${have}` : `${want} together need more than one`;
+      const head = `${SERVICE_LIMIT_PREFIX} ${this.chatgpt ? "the current plan" : "the Free plan"} covers one Google service at a time (Google Ads, Search Console or Google Analytics), and ${why}.`
+        + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
+      const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
+      if (this.chatgpt) throw new SwitchNotice(`${head} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
+      const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
+      if (plusUrl) {
+        const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+        throw new SwitchNotice(`${head} Plus (${PLUS_PRICE_LABEL}) covers all three together on 1 Google Ads account, so ${want} works right away; `
+          + `Pro (${PRO_PRICE_LABEL}) does on up to ${this.deps.proAccounts}.`,
+          { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${ALL_THREE}, on 1 Google Ads account`, cancel: "any time",
+            upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" },
+            or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `${ALL_THREE}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
+      }
+      const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+      throw new SwitchNotice(`${head} Pro (${PRO_PRICE_LABEL}) covers all three together, so ${want} works right away.`,
+        { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: "Google Ads, Search Console and Google Analytics together", cancel: "any time",
+          upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
+    }
+    const mine = servicesInFlight.get(this.user.id) ?? new Map<Service, number>();
+    servicesInFlight.set(this.user.id, mine);
+    mine.set(covered, (mine.get(covered) ?? 0) + 1);
+    return () => {
+      const n = (mine.get(covered) ?? 1) - 1;
+      if (n > 0) mine.set(covered, n); else mine.delete(covered);
+      if (!mine.size) servicesInFlight.delete(this.user.id);
+    };
+  }
+
   /** accountsInUse, most recently used first, with when each was last used. Merchant Center accounts (mc:<id>) are their own pool. */
   private usage(pool: Pool = "ads"): { c: string; last: number }[] {
+
     // max(id): a same-second tie goes to the later call, so switch_account's account is the active one.
     return this.deps.db.prepare(`SELECT customer_id c, max(at) last FROM tool_calls
         WHERE user_id = ? AND ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?, ?) AND (customer_id LIKE 'mc:%') = ? AND at >= ?
@@ -287,6 +416,12 @@ export class UserSession {
     const managerIds = async () => (pool === "mc" ? new Set<string>()
       : new Set((await this.accounts().catch(() => [] as Account[])).filter((a) => a.manager).map((a) => a.customerId)));
     let st = this.planState(new Set(), pool);
+    // Nothing used yet and the login has more accounts than the plan covers: the user picks, not whichever call lands
+    // first (2026-10-23: a Free user's AI overviewed 3 of 5 accounts at once and the first took the plan).
+    if (pool === "ads" && !st.used.length && !confirmSwitch) {
+      const counted = (await this.accounts().catch(() => [] as Account[])).filter((a) => !a.manager && !isDemo(a.customerId));
+      if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) this.noticeChoice(await this.withActivity(counted));
+    }
     // A new account on a full plan is the switch: it passes only once the user has said yes to spending it.
     const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
     if (isSwitch() && !confirmSwitch) {
@@ -294,7 +429,7 @@ export class UserSession {
       if (!managers.has(cid)) {
         st = this.planState(managers, pool);
         if (isSwitch() && !this.isPro && await this.deps.refreshPlan?.(this.user.id)) {
-          this.user.plan = "pro";
+          this.reloadPlan();
           st = this.planState(managers, pool);
         }
         if (isSwitch()) this.noticeSwitch(cid, st, pool);
@@ -306,7 +441,7 @@ export class UserSession {
         st = this.planState(managers, pool);
         // Someone who paid and closed the tab before /upgraded must not be blocked for an hour: ask Stripe first.
         if (!st.allows(cid) && !this.isPro && await this.deps.refreshPlan?.(this.user.id)) {
-          this.user.plan = "pro";
+          this.reloadPlan();
           st = this.planState(managers, pool);
         }
         if (!st.allows(cid)) this.refuse(cid, st, pool);
@@ -322,48 +457,94 @@ export class UserSession {
     };
   }
 
+  /** Stop before the plan's first account is taken: the user says which, then switch_account takes it. */
+  private noticeChoice(accounts: Account[]): never {
+    const n = this.accountLimit, one = n === 1;
+    throw new SwitchNotice(`${ACCOUNT_CHOICE_PREFIX} this plan covers ${n} Google Ads account${one ? "" : "s"} at a time and this login has `
+      + `${accounts.length}. The first ${one ? "account" : "accounts"} used become${one ? "s" : ""} the plan's, so nothing has been used yet. `
+      + `Ask the user which to work on; then call switch_account with that customer_id, then this tool again.`,
+      { status: "account_choice_needed", plan: this.planName, accounts_included: n,
+        accounts: accounts.map((a) => ({ customer_id: a.customerId, name: a.name,
+          ...(a.spentLast30Days === undefined ? {} : { spent_last_30_days: a.spentLast30Days }) })),
+        ...(accounts.some((a) => a.spentLast30Days === false) ? { note: "spent_last_30_days false: the account had no ad spend in the last 30 days, so it may be dormant. Show this to the user when they pick." } : {}),
+        to_go_ahead: "once the user picks, call switch_account with that customer_id, then this tool again" });
+  }
+
   /** Stop before the switch is spent: what it locks, until when, and how to go ahead. */
   private noticeSwitch(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool = "ads"): never {
     const locks = st.active.at(-1)!;
     // Once spent, the switch comes back when the account it locks ages out of the window.
     const last = this.usage(pool).find((u) => u.c === locks)?.last ?? now();
     const reopens = new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
-    const url = this.isPro || this.chatgpt ? null : this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-    throw new PlanLimitError(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one ${pool === "mc" ? "Merchant Center " : ""}switch per ${ACCOUNT_WINDOW_DAYS} days. `
+    const next = this.nextPlan();
+    throw new SwitchNotice(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one ${pool === "mc" ? "Merchant Center " : ""}switch per ${ACCOUNT_WINDOW_DAYS} days. `
       + `${locks} would lock until ${reopens}, including switching back to it. Nothing has been used yet. `
       + `Ask the user; if they want to go ahead, call switch_account with customer_id ${cid}, then this tool again.`,
-      { error: "switch_confirmation_needed", plan: this.isPro ? "pro" : "free", switch_to: cid, locks_account: locks,
+      { status: "switch_confirmation_needed", plan: this.planName, switch_to: cid, locks_account: locks,
         locked_until: reopens, accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
         to_go_ahead: `once the user agrees, call switch_account with customer_id ${cid}, then this tool again`,
-        ...(this.isPro || this.chatgpt ? {} : { keep_both: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts,
-          upgrade_url: url, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } }) });
+        ...(next ? { keep_both: { ...next, pricing_page: next.upgrade_url ? null : `${this.deps.baseUrl}/#pricing` } } : {}),
+        ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
   }
 
   private refuse(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool = "ads"): never {
     const used = `${PLAN_LIMIT_PREFIX} Camberstack has been used on ${accountsLabel(st.used.length, pool)} in the last ${ACCOUNT_WINDOW_DAYS} days`;
     const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with one switch per ${ACCOUNT_WINDOW_DAYS} days, `
       + `already used; the next opens ${st.switchOpens}.`;
-    const common = { plan: this.isPro ? "pro" : "free", accounts_in_use: st.used, active_accounts: st.active,
+    const common = { plan: this.planName, accounts_in_use: st.used, active_accounts: st.active,
       accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS, refused_account: cid,
       switching: `one switch per ${ACCOUNT_WINDOW_DAYS} days, already used; the next opens ${st.switchOpens}`,
       still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"] };
     if (this.isPro) {
-      throw new PlanLimitError(`${used}; Pro ${rule}`,
-        { error: "plan_limit", ...common, contact: "adam@camberstack.io" });
+      const next = this.nextPlan(), name = planLabel(this.planName);
+      throw new PlanLimitError(`${used}; ${name} ${rule}`
+        + (next ? ` ${planLabel(next.plan)} (${next.price}) covers up to ${next.accounts_included}, switched to from the billing page (upgrade_url).` : ""),
+        { error: "plan_limit", ...common, ...(next ? { upgrade: { ...next, cancel: "any time", upgrade_url_expires: next.upgrade_url ? "7 days; personal to this user" : null } } : {}),
+          contact: "adam@camberstack.io" });
     }
     // Lead with what gets them working again: someone refused here is working on more than one account.
     const wait = st.used.includes(cid) ? `${cid} opens again on ${st.switchOpens}` : `the next switch opens on ${st.switchOpens}`;
     if (this.chatgpt) {
       throw new PlanLimitError(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}: the current plan ${rule} `
-        + `More accounts at a time need a different plan.`, { error: "plan_limit", ...common });
+        + `More accounts at a time need a different plan.`, { error: "plan_limit", ...common, plans_page: this.plansPage });
     }
     const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const agency = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;
     throw new PlanLimitError(`${used} (${st.used.join(", ")}). Pro (${PRO_PRICE_LABEL}) covers up to ${this.deps.proAccounts}, `
-      + `so ${cid} works right away. On Free, ${wait}: the Free plan ${rule}`,
+      + `so ${cid} works right away${agency ? `; Agency (${AGENCY_PRICE_LABEL}) up to ${this.deps.agencyAccounts}` : ""}. On Free, ${wait}: the Free plan ${rule}`,
       { error: "plan_limit", ...common,
         upgrade: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts, cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null,
-          pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
+          pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` },
+        ...(agency ? { or_agency: { plan: "agency", price: AGENCY_PRICE_LABEL, accounts_included: this.deps.agencyAccounts, upgrade_url: agency } } : {}) });
+  }
+
+  /**
+   * What ChatGPT connections link to about plans: facts only, no upgrade buttons (pages.ts plansPage). Its guidelines allow
+   * explaining that a feature needs a different plan and linking "an informational page describing available plans".
+   */
+  private get plansPage(): string { return this.deps.plansLink?.(this.user.id) ?? `${this.deps.baseUrl}/plans`; }
+
+  /** Plus is pitched once one-service Free is on, outside ChatGPT, when it's sold. Before that it would equal Free. */
+  private get plusOffered(): boolean { return !this.chatgpt && !!this.deps.plusAvailable && this.freePlan.kind === "one_service"; }
+
+  /** Which Free is live now (plans.ts freePlan): FREE_ONE_SERVICE's date can pass while the server runs. */
+  private get freePlan(): FreePlan { return freePlan(this.deps.freeOneServiceFrom); }
+  private get oneService(): boolean { return this.freePlan.kind === "one_service"; }
+
+  private freeIncluded(): string {
+    return this.oneService
+      ? "every tool on 1 Google service at a time (Google Ads, Search Console or Google Analytics) and 1 Google Ads account, with unlimited applied changes; undo and history always work"
+      : "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work";
+  }
+
+  /** With FREE_ONE_SERVICE: which service Free covers now, or the change it announces before its date. Nothing otherwise. */
+  private serviceUsage(): { service_in_use?: string | null; services_included?: number; free_plan_change?: string } {
+    const change = freePlanChange(this.freePlan, this.chatgpt);
+    if (change) return { free_plan_change: change };
+    if (!this.oneService) return {};
+    const s = this.servicesInUse()[0]?.s;
+    return { service_in_use: s ? SERVICE_LABELS[s] : null, services_included: 1 };
   }
 
   /** What billing shows of the plan's use: Google Ads accounts, and Merchant Center accounts once there are any (a separate allowance of the same size). */
@@ -376,23 +557,31 @@ export class UserSession {
   plan() {
     if (this.chatgpt) {
       const usage = this.planUsage();
-      return this.isPro ? { plan: "pro", ...usage }
-        : { plan: "free", ...usage, included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
-            note: "More accounts at a time need a different plan." };
+      return this.isPro ? { plan: this.planName, ...usage, plans_page: this.plansPage }
+        : { plan: "free", ...usage, ...this.serviceUsage(), included: this.freeIncluded(),
+            note: "More accounts at a time need a different plan.", plans_page: this.plansPage };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const plusUrl = this.plusOffered && !this.isPro ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
+    const agencyUrl = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;
+    const agency = agencyUrl ? { agency: `up to ${accountsLabel(this.deps.agencyAccounts!)}, ${AGENCY_PRICE_LABEL}, cancel any time`, agency_upgrade_url: agencyUrl } : {};
     const account_page = `${this.deps.baseUrl}/account`;
     const usage = this.planUsage();
     return this.isPro
-      ? { plan: "pro", account_page, ...usage,
-          // Paid Pro is plan = 'pro' (a live subscription). Pro any other way is complimentary (PRO_EMAILS):
-          // nothing to manage or cancel, even if an old Stripe customer is still on record.
-          ...(this.user.plan === "pro" && this.user.stripe_customer
+      ? { plan: this.planName, account_page, ...usage,
+          // Paid is plan = 'plus', 'pro' or 'agency' with a Stripe customer. Otherwise it's complimentary (PRO_EMAILS, or
+          // grandfathered Plus with no subscription): nothing to manage or cancel.
+          ...(isPaid(this.user.plan) && this.user.stripe_customer
             ? { manage_billing: this.deps.billingLink?.("billing", this.user.id) ?? null }
-            : { complimentary: true, manage_billing: null }) }
-      : { plan: "free", account_page, ...usage,
-          included: "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work",
-          pro: `up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, upgrade_url: upgrade,
+            : { complimentary: true, manage_billing: null }),
+          // Plus → Pro and Pro → Agency switch on the billing page (Stripe's portal), with the difference prorated.
+          ...(this.planName === "pro" ? agency : {}),
+          ...(this.planName === "plus" && upgrade ? { pro: `${ALL_THREE}, on up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
+      : { plan: "free", account_page, ...usage, ...this.serviceUsage(),
+          included: this.freeIncluded(),
+          ...(plusUrl ? { plus: `${ALL_THREE}, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
+          pro: `${this.freePlan.kind !== "accounts" ? `${ALL_THREE}, on ` : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
+          upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
   }
 
@@ -416,9 +605,11 @@ export class UserSession {
       unreadable.push({ customerId: "this Google login", error: (e as Error).message, ...(e instanceof NotGrantedError && e.link ? { grant_url: e.link } : {}) });
     }
     // All roots at once; merged below in Google's order, so the result is the same as reading them one by one.
+    // Every level, not just direct clients: a manager under a manager has its own clients, which a level <= 1 read never
+    // listed (2026-10-23). The root works as login-customer-id at any depth below it.
     const perRoot = await Promise.all(roots.map((root) => this.ads.search(root, `SELECT customer_client.id, customer_client.descriptive_name,
         customer_client.currency_code, customer_client.time_zone, customer_client.manager, customer_client.level, customer_client.status
-      FROM customer_client WHERE customer_client.level <= 1 AND customer_client.status = 'ENABLED'`, root)
+      FROM customer_client WHERE customer_client.status = 'ENABLED'`, root)
       .then((rows) => ({ rows }), (e: Error) => ({ error: e.message }))));
     for (const [i, root] of roots.entries()) {
       const got = perRoot[i]!;
@@ -444,6 +635,12 @@ export class UserSession {
       }
     }
     const list = [...out.values()].sort((a, b) => Number(a.manager) - Number(b.manager) || a.name.localeCompare(b.name));
+    // Only when something was readable or nothing failed: a refusal would otherwise overwrite a real count with 0.
+    if (out.size || !unreadable.length) {
+      const managers = list.filter((a) => a.manager).map((a) => a.customerId);
+      this.deps.db.prepare("UPDATE users SET ads_accounts = ?, ads_managers = ?, ads_manager_ids = ?, ads_accounts_at = ? WHERE id = ?")
+        .run(list.length - managers.length, managers.length, JSON.stringify(managers), now(), this.user.id);
+    }
     // Nothing readable (no Ads access, or blocked e.g. by 2-Step Verification): offer the demo account,
     // and keep the reason in lastUnreadable so list_accounts still says why the real ones are missing.
     if (!list.some((a) => !a.manager)) list.push(DEMO_ACCOUNT);
@@ -455,12 +652,50 @@ export class UserSession {
     return list;
   }
 
+  /**
+   * Whether each ad account spent anything in the last 30 days, so the user picks a live account rather than a dormant
+   * one by name (on Free that pick holds for 30 days). Only when the user is listing or choosing accounts, one small
+   * query per account (up to ACTIVITY_MAX), never more than ACTIVITY_WAIT_MS. An account Google doesn't answer for is
+   * left out, never guessed. Stores only the count (users.ads_active), for the admin site's opportunities.
+   */
+  async spendActivity(list: Account[]): Promise<Map<string, boolean>> {
+    const all = list.filter((a) => !a.manager && !isDemo(a.customerId));
+    const ads = all.slice(0, ACTIVITY_MAX);
+    const key = (c: string) => `${this.user.id}|${c}`;
+    const fresh = (c: string) => { const h = activityCache.get(key(c)); return h && Date.now() - h.at < ACTIVITY_TTL_MS ? h : undefined; };
+    const checks = mapLimited(ads.filter((a) => !fresh(a.customerId)), (a) => this.ads.search(a.customerId,
+      "SELECT metrics.cost_micros FROM customer WHERE segments.date DURING LAST_30_DAYS", a.loginCustomerId)
+      .then((rows) => { activityCache.set(key(a.customerId), { at: Date.now(), spent: rows.some((r) => Number(r.metrics?.costMicros ?? 0) > 0) }); }, () => {}));
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([checks, new Promise((r) => { timer = setTimeout(r, ACTIVITY_WAIT_MS); })]);
+    clearTimeout(timer);
+    const done = new Map<string, boolean>();
+    for (const a of ads) { const h = fresh(a.customerId); if (h) done.set(a.customerId, h.spent); }
+    // The count only when every account answered: a partial one would read as fewer live accounts than there are.
+    if (all.length && done.size === all.length) {
+      this.deps.db.prepare("UPDATE users SET ads_active = ?, ads_active_at = ? WHERE id = ?")
+        .run([...done.values()].filter(Boolean).length, now(), this.user.id);
+    }
+    return done;
+  }
+
+  /** `list` with spentLast30Days set where it's known. */
+  async withActivity(list: Account[]): Promise<Account[]> {
+    const spent = await this.spendActivity(list);
+    return list.map((a) => (spent.has(a.customerId) ? { ...a, spentLast30Days: spent.get(a.customerId) } : a));
+  }
+
   async account(customerId: string): Promise<Account> {
     const cid = bareCid(customerId);
     if (cid === DEMO_CID) return DEMO_ACCOUNT;  // anyone can try the demo by its id
     const a = (await this.accounts()).find((x) => x.customerId === cid)
       ?? (await this.accounts({ fresh: true })).find((x) => x.customerId === cid);
-    if (!a) throw new Error(`Account ${customerId} is not accessible with this Google login. Call list_accounts to see the ones that are.`);
+    // "Call list_accounts" alone sent a model that had already called it back in a loop, and the user gave up (2026-10-27).
+    // A user-typed id usually belongs to another Google login, so say which login this is and how to get access.
+    if (!a) throw new Error(`Account ${customerId} isn't one that ${this.user.email}, the Google login connected to Camberstack, can open. `
+      + `If the user gave this id, it most likely belongs to a different Google login: give ${this.user.email} access to it in Google Ads `
+      + "(Admin, then Access and security), or disconnect and connect again with the Google login that has it. "
+      + `list_accounts lists the accounts ${this.user.email} can open.`);
     if (a.manager) throw new Error(`${a.name} (${cid}) is a manager account; pick one of the client accounts under it.`);
     // The account they actually work on sets their time zone (lifecycle emails go out in their morning).
     if (a.timeZone) this.deps.db.prepare("UPDATE users SET time_zone = ? WHERE id = ? AND time_zone IS NOT ?").run(a.timeZone, this.user.id, a.timeZone);
@@ -524,8 +759,15 @@ export class UserSession {
         q = q.replace(/^\s*select\s+/i, `SELECT ${missing.join(", ")}, `);
       }
     }
-    // A finding on a query Google ran is a bug in the check, not in the query: log it, never show it.
-    void this.gaqlCheck(q).then((found) => { if (found.length) console.error(`gaql check false positive: ${found.join(" ")} | ${q.slice(0, 300)}`); });
+    // A finding on a query Google ran is a bug in the check, not in the query: report it, never show it. To Bugsink as well
+    // as the log, which every deploy replaces: none had survived to say whether the check was ever wrong (2026-10-22).
+    // The shape, not the query: the event leaves the box, and the query carries the user's values.
+    void this.gaqlCheck(q).then((found) => {
+      if (!found.length) return;
+      const msg = `gaql check false positive: ${found.join(" ")} | ${queryShape(q).slice(0, 300)}`;
+      console.error(msg);
+      reportBug(msg, "run_gaql");
+    });
     return { ...demoNote(a.customerId), ...(rewrote.length ? { rewritten: `Google only accepts LAST_7/14/30_DAYS, so ran ${rewrote.join(", ")} (dates in UTC)` } : {}),
       ...(renamed.length ? { renamed: `These fields were renamed in the API, so ran ${renamed.join(", ")} (a date and time, e.g. 2026-01-31 23:59:59)` } : {}),
       ...(added.length ? { added_to_select: `Google requires fields used in WHERE or ORDER BY to be selected too, so added ${added.join(", ")} to SELECT` } : {}),
@@ -943,7 +1185,7 @@ export class UserSession {
 
   // ---------------------------------------------------------------- write
 
-  async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<{ proposal_id: string; summary: string; changes: number; skipped: string[] }> {
+  async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<Proposed | AlreadyInPlace> {
     const ga = customerId === GA_TARGET, mc = isMcTarget(customerId);
     const a = ga || mc ? { customerId, loginCustomerId: null } : await this.account(customerId);
     const changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : ChangeSchema).parse(c));
@@ -970,11 +1212,17 @@ export class UserSession {
     if (count > MAX_CHANGES) throw new Error(`At most ${MAX_CHANGES} changes per proposal (got ${count}). Split it.`);
     const pending = pendingOf(changes as Change[]);
     // Resolving only reads, and `pending` already carries what sibling changes set, so the changes resolve in parallel.
-    const resolved = await mapLimited(changes, (c) => this.resolve(a.customerId, a.loginCustomerId, c, pending));
+    const resolved = await mapLimited(changes, (c) => this.resolve(a.customerId, a.loginCustomerId, c, pending))
+      .catch((e) => this.explainUnappliedGa4(e, changes));
     const live = resolved.filter((r) => r.operations.length);
-    if (!live.length) throw new Error("Nothing to change: every requested change is already in place.");
+    // Not an error: the account already reads as asked, and that is the answer.
+    if (!live.length) {
+      return { status: "already in place", changes: 0, skipped: resolved.map((r) => r.describe),
+        note: "Nothing to propose: every requested change is already in place in the account, so there's nothing to approve or apply." };
+    }
     // Dry run against Google so problems surface now, not after the user approves.
-    await mapLimited(live, (r) => this.write(a.customerId, a.loginCustomerId, r, true));
+    await mapLimited(live, (r) => this.write(a.customerId, a.loginCustomerId, r, true))
+      .catch((e) => this.explainEuBlock(e, a.customerId, a.loginCustomerId));
     const id = `p_${randomUUID().slice(0, 8)}`;
     const summary = summarize(live);
     this.deps.db.prepare(`INSERT INTO proposals (id, user_id, customer_id, login_customer_id, changes, summary, status, undo_of, created_at)
@@ -986,6 +1234,7 @@ export class UserSession {
 
   async apply(proposalId: string) {
     const p = this.proposal(proposalId);
+    if (p.status === "applied") return this.alreadyApplied(p);
     if (p.status !== "proposed") throw new Error(`Proposal ${proposalId} is already ${p.status}.`);
     const changes = JSON.parse(p.changes) as AnyChange[];
     // Claim it before any write: a client retrying after a timeout would otherwise apply it twice. applied_at
@@ -1000,6 +1249,7 @@ export class UserSession {
           AND o.applied_at IS NOT NULL AND o.status <> 'failed'))`).run(now(), p.id, retake ? 1 : 0, now() - STALE_CLAIM).changes;
     if (!claimed) {
       const cur = this.proposal(proposalId);
+      if (cur.status === "applied") return this.alreadyApplied(cur);
       if (cur.status !== "proposed") throw new Error(`Proposal ${proposalId} is already ${cur.status}.`);
       if (cur.applied_at && cur.applied_at < now() - STALE_CLAIM) {
         throw new Error(`Proposal ${proposalId} was interrupted while applying, and it adds ads, ad groups or sitelinks, which re-running could duplicate. `
@@ -1080,6 +1330,15 @@ export class UserSession {
    * written: the old proposal is discarded and the same request is proposed afresh, for the user to approve. Not an
    * error: it's the expected answer to an account that changed. (Replaced a flat 24-hour expiry, 2026-10-15.)
    */
+  /** A repeat apply of an applied proposal: not an error, the change is in, and that is the answer (2026-10-28: a model
+   *  re-sent apply_changes 8s after it succeeded). Nothing is written again; the first apply's results are returned. */
+  private alreadyApplied(p: ProposalRow) {
+    const outcomes = p.result ? JSON.parse(p.result) as Outcome[] : [];
+    const at = p.applied_at ? ` at ${new Date(p.applied_at * 1000).toISOString()}` : "";
+    return { proposal_id: p.id, status: "applied", note: `Already applied${at}; nothing was changed again.`,
+      results: publicResults(outcomes) };
+  }
+
   private async drifted(p: ProposalRow, resolved: AnyResolved[]) {
     const live = resolved.filter((r) => r.operations.length);
     if (live.length && sameSummary(summarize(live), p.summary)) return null;
@@ -1088,10 +1347,62 @@ export class UserSession {
       return { proposal_id: p.id, status: "already in place",
         note: "Nothing was applied: every change in this proposal is already in place in the account, so there's nothing left to do." };
     }
-    const fresh = await this.propose(p.customer_id, live.map((r) => r.change), p.undo_of ?? undefined);
+    // `live` is non-empty, so this stores a proposal.
+    const fresh = await this.propose(p.customer_id, live.map((r) => r.change), p.undo_of ?? undefined) as Proposed;
     return { proposal_id: fresh.proposal_id, status: "needs approval", replaces: p.id, summary: fresh.summary, skipped: fresh.skipped,
       note: `Nothing was applied: the account changed since ${p.id} was proposed, so it no longer matches what was approved. `
         + `Show the user this updated summary and call apply_changes with ${fresh.proposal_id} only after they approve it.` };
+  }
+
+  /**
+   * An import fails until its key event is marked and the property linked. ChatGPT proposed mark_key_event, never applied
+   * it, and tried the import 18 minutes later (prod, 2026-10-25). If an open GA4 proposal would make the import work,
+   * name it, so the AI asks the user to approve it instead of retrying or giving up.
+   */
+  private explainUnappliedGa4(e: unknown, changes: AnyChange[]): never {
+    if (!(e instanceof Error) || !e.message.startsWith("Google Ads has no conversion action for")) throw e;
+    const imports = changes.filter((c): c is Extract<Change, { type: "import_ga4_key_event" }> => c.type === "import_ga4_key_event");
+    const open = this.deps.db.prepare(`SELECT id, changes FROM proposals WHERE user_id = ? AND customer_id = ? AND status = 'proposed'
+        ORDER BY created_at DESC`).all(this.user.id, GA_TARGET) as { id: string; changes: string }[];
+    const waiting = open.filter((p) => (JSON.parse(p.changes) as GaChange[]).some((g) => imports.some((i) => (g.type === "link_google_ads"
+      && g.property_id === i.property_id) || (g.type === "mark_key_event" && g.property_id === i.property_id && g.event_name === i.event_name))));
+    if (!waiting.length) throw e;
+    const ids = waiting.map((p) => p.id).join(", ");
+    e.message += ` Proposal ${ids} would do that but hasn't been applied: show the user its summary, call apply_changes with it `
+      + `once they approve, then propose this import again.`;
+    throw e;
+  }
+
+  /**
+   * Google refuses every change to an account with an undeclared campaign, and the hint alone left the AI to look them up.
+   * When the lookup came back empty it had nothing to propose and stopped, twice for one user (prod, 2026-10-22). So
+   * look them up here and name them, or say plainly that none show through the API and the user must answer in Google
+   * Ads, and report that case: the account state that triggers it isn't known yet.
+   */
+  private async explainEuBlock(e: unknown, customerId: string, login: string | null): Promise<never> {
+    if (!(e instanceof AdsApiError) || !e.body.includes("EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED")) throw e;
+    const head = "Google Ads API 400: EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED Google refuses every change to this account until it has "
+      + "the EU political advertising declaration. ";
+    const missing = await this.ads.search(customerId, "SELECT campaign.id, campaign.name FROM campaign "
+      + "WHERE campaign.missing_eu_political_advertising_declaration = TRUE AND campaign.status != 'REMOVED'", login).catch(() => null);
+    if (!missing) throw e; // the static hint still says how to look them up
+    if (missing.length) {
+      e.message = head + `Not declared yet: ${missing.map((r) => `"${r.campaign.name}" (id ${r.campaign.id})`).join(", ")}. Ask the user whether `
+        + "any of them run EU political ads (it is their legal declaration; most businesses answer no), propose set_eu_political_advertising "
+        + "for each in one proposal, apply it, then propose this change again.";
+      throw e;
+    }
+    e.message = head + "No campaign shows as missing it through the API, so Camberstack can't make the declaration. Ask the user to answer "
+      + "the EU political ads question in Google Ads (in each campaign's settings, or Admin → Account settings), then propose this change again.";
+    const state = await Promise.all([
+      this.ads.search(customerId, "SELECT customer.contains_eu_political_advertising FROM customer", login),
+      this.ads.search(customerId, "SELECT campaign.id, campaign.status, campaign.advertising_channel_type, campaign.contains_eu_political_advertising FROM campaign", login),
+    ]).then(([[c], camps]) => `account ${c?.customer?.containsEuPoliticalAdvertising ?? "unset"}; campaigns not declared: `
+      + (camps.filter((r) => !/^(CONTAINS|DOES_NOT_CONTAIN)_EU/.test(r.campaign.containsEuPoliticalAdvertising ?? ""))
+        .map((r) => `${r.campaign.id} ${r.campaign.status} ${r.campaign.advertisingChannelType}`).join(", ") || "none"),
+    (err: Error) => `state unreadable: ${err.message.slice(0, 200)}`);
+    reportBug(`EU declaration required but none missing: customer ${customerId}, ${state}`, "propose_changes");
+    throw e;
   }
 
   /** Read what a change would do against the live account (Google Ads, Merchant Center) or property (Google Analytics). */

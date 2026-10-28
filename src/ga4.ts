@@ -23,7 +23,7 @@ export interface ReportRequest {
   metrics: string[];
   /** Only rows whose `dimension` contains `value` (case-insensitive). */
   filter?: { dimension: string; value: string };
-  /** Metric to sort by, highest first; defaults to the first metric. */
+  /** A requested metric (highest first) or dimension (A to Z, dates oldest first); defaults to the first metric. */
   orderBy?: string;
   limit: number;
 }
@@ -86,7 +86,8 @@ export class AnalyticsClient implements Analytics {
       metrics: q.metrics.map((name) => ({ name })),
       ...(q.filter ? { dimensionFilter: { filter: { fieldName: q.filter.dimension,
         stringFilter: { matchType: "CONTAINS", value: q.filter.value, caseSensitive: false } } } } : {}),
-      orderBys: [{ metric: { metricName: q.orderBy ?? q.metrics[0] }, desc: true }],
+      orderBys: [q.orderBy && q.dimensions.includes(q.orderBy) && !q.metrics.includes(q.orderBy)
+        ? { dimension: { dimensionName: q.orderBy }, desc: false } : { metric: { metricName: q.orderBy ?? q.metrics[0] }, desc: true }],
       limit: q.limit,
     });
     const dims = (r.dimensionHeaders ?? []).map((h: { name: string }) => h.name) as string[];
@@ -154,7 +155,10 @@ export async function listProperties(ga: Analytics) {
 
 export async function report(ga: Analytics, propertyId: string, o: { days: number; start_date?: string; end_date?: string;
   dimensions: string[]; metrics: string[]; filter?: { dimension: string; contains: string }; order_by?: string; limit: number }) {
-  if (o.order_by && !o.metrics.includes(o.order_by)) throw new Error("order_by must be one of the requested metrics.");
+  // AIs ask for date order on trends (2026-10-23: three rejected calls), so a requested dimension sorts too.
+  if (o.order_by && !o.metrics.includes(o.order_by) && !o.dimensions.includes(o.order_by))
+    throw new Error(`order_by "${o.order_by}" isn't in this report. Use one of its metrics (${o.metrics.join(", ")})`
+      + (o.dimensions.length ? ` or dimensions (${o.dimensions.join(", ")})` : "") + ", or add it to them.");
   const w = gaWindow(o);
   const r = await ga.runReport(propertyId, { ...w, dimensions: o.dimensions, metrics: o.metrics, limit: o.limit, orderBy: o.order_by,
     ...(o.filter ? { filter: { dimension: o.filter.dimension, value: o.filter.contains } } : {}) });
@@ -251,7 +255,7 @@ export class DemoAnalytics implements Analytics {
     if (path === p) return { name: p, displayName: "DEMO: Northwind Plumbing (sample data)", timeZone: "America/Chicago", currencyCode: "USD" };
     if (path.startsWith(`${p}/dataStreams`)) return { dataStreams: [{ name: `${p}/dataStreams/1`, type: "WEB_DATA_STREAM", displayName: "northwindplumbing.example",
       webStreamData: { measurementId: "G-DEMO000001", defaultUri: "https://northwindplumbing.example" } }] };
-    if (path.startsWith(`${p}/keyEvents`)) return { keyEvents: s.keyEvents.map((k) => ({ name: keyName(k.id), eventName: k.eventName, countingMethod: k.countingMethod })) };
+    if (path.startsWith(`${p}/keyEvents`)) return { keyEvents: s.keyEvents.map((k) => ({ name: keyName(k.id), eventName: k.eventName, countingMethod: k.countingMethod, deletable: true })) };
     if (path.startsWith(`${p}/googleAdsLinks`)) return { googleAdsLinks: s.adsLinks.map((l) => ({ name: linkName(l.id), customerId: l.customerId })) };
     throw new Error(`The demo property doesn't support ${method} ${path}.`);
   }
@@ -282,9 +286,10 @@ export class DemoAnalytics implements Analytics {
       screenPageViews: Math.round(g.s * 2.4), engagementRate: g.s ? round4(g.e / g.s) : 0, sessionKeyEventRate: g.s ? round4(g.k / g.s) : 0,
     } as Record<string, number>)[m]!;
     const by = q.orderBy ?? q.metrics[0]!;
+    const byDim = q.dimensions.includes(by) && !q.metrics.includes(by);
     const rows = [...groups.values()].map((g) => ({ ...g.dims, ...Object.fromEntries(q.metrics.map((m) => [m, metric(g, m)])) }))
       .filter((r) => q.metrics.some((m) => Number(r[m]) > 0))
-      .sort((a, b) => Number(b[by]) - Number(a[by]));
+      .sort((a, b) => byDim ? String(a[by]).localeCompare(String(b[by])) : Number(b[by]) - Number(a[by]));
     return { row_count: rows.length, rows: rows.slice(0, q.limit) };
   }
 }

@@ -159,13 +159,31 @@ const DURING_LITERALS = "TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS, LAST_30_DA
  * fields that moved or were renamed, and which resource a thing lives on. A generic guess next to the catalog's finding
  * contradicted it ("check the name" for FROM invoice, which has no such resource, 2026-10-20).
  */
+const NO_OR = "GAQL has no parentheses or OR: WHERE conditions can only be joined with AND. Use field IN ('a', 'b') for alternatives, "
+  + "LIKE for one pattern, or separate queries.";
+
 function adsErrorFix(code: string, message: string, field: string): string | null {
   switch (code) {
+    case "METRIC_ACCESS_DENIED":
+      // Auction insights for a ChatGPT user, 2026-10-23: no query can get these, so say so instead of inviting a retry.
+      return (message.includes("auction_insight")
+        ? "Google gives auction insights metrics only to developer tokens it has approved for them, and Camberstack's isn't one, so no query "
+          + "here can return them. The user can see competitors in Google Ads' Auction insights report; for the account's own share, "
+          + "metrics.search_impression_share and metrics.search_top_impression_share work."
+        : "Google restricts these metrics to developer tokens it has approved for them, and Camberstack's isn't one: drop them from the query.");
     case "EXPECTED_FILTERS_ON_DATE_RANGE":
       return "add a finite range to WHERE: segments.date DURING LAST_30_DAYS, or segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'.";
     case "CHANGE_DATE_RANGE_INFINITE":
       return "change_event needs both ends of the window, within the last 30 days, plus a LIMIT (at most 10000): WHERE change_event.change_date_time "
         + ">= 'YYYY-MM-DD' AND change_event.change_date_time <= 'YYYY-MM-DD' … LIMIT 1000. For changes made through Camberstack, use change_history.";
+    case "START_DATE_TOO_OLD":
+      // DURING LAST_30_DAYS on change_event, 2026-10-23: the window starts at midnight 30 days back, just past the limit.
+      return "change_event reaches back 30 days to the second (change_status 90), and DURING LAST_30_DAYS starts just past that. "
+        + "Start a day inside the limit with explicit dates: WHERE change_event.change_date_time >= 'YYYY-MM-DD' (29 days ago) "
+        + "AND change_event.change_date_time <= 'YYYY-MM-DD' … LIMIT 1000.";
+    case "MISALIGNED_DATE_FOR_FILTER":
+      return "keep segments.week/month/quarter in SELECT but filter on segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' instead: rows "
+        + "still come back per week/month/quarter. (Filtering segments.week itself needs a Monday; segments.month the 1st.)";
     case "EXPECTED_FILTER_ON_A_SINGLE_DAY":
       return "click_view needs one day: segments.date = 'YYYY-MM-DD'. Query each day separately.";
     case "EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE":
@@ -197,6 +215,10 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       }
       return null;
     case "MUTATE_NOT_ALLOWED":
+      // Field "type" is the item's own type locking it: for a conversion action, a Google-managed one (2026-10-26).
+      if (/(^|\.)type$/.test(field)) return "this item's type is managed by Google, so the API can't change its settings. For a conversion action, "
+        + "check it with SELECT conversion_action.name, conversion_action.type FROM conversion_action; count with a different action (propose "
+        + "create_conversion_action; for calls, source AD_CALL), or change it in Google Ads (Goals → Conversions) if Google allows it there.";
       return "Google doesn't allow this change through the API (some legacy or system-managed items are locked, and some campaign types "
         + "can't be created). Do it in Google Ads. For a locked shared bid strategy, set_bidding_strategy can still move campaigns off it.";
     case "UNRECOGNIZED_FIELD":
@@ -221,11 +243,31 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       }
       return null;
     case "BAD_FIELD_NAME":
-      return /'\('/.test(message)
-        ? "GAQL has no parentheses or OR: WHERE conditions can only be joined with AND. Use field IN ('a', 'b') for alternatives, or separate queries."
-        : null;
+      return /'\('/.test(message) ? NO_OR : null;
+    case "UNEXPECTED_INPUT":
+      return /unexpected input (OR\b|[()])/i.test(message) ? NO_OR : null;
+    case "PROHIBITED_SEGMENT_WITH_METRIC_IN_SELECT_OR_WHERE_CLAUSE":
+      return "Google can't split the metrics it names by that segment. Drop them from this query and get them in a second one without the segment: "
+        + "e.g. conversions by segments.conversion_action_name in one, cost per campaign in another.";
+    case "REQUIRES_FILTER_BY_SINGLE_RESOURCE": {
+      // Google names the fields and the id, but not the two steps. The model dropped one field at a time, kept
+      // segments.date in SELECT, and fell back to a view that has no Performance Max terms (prod, 2026-10-27).
+      const m = /^(.+?) can only be selected when filtering by a single '([a-z_.]+)'/.exec(message);
+      if (!m) return null;
+      const fields = m[1]!.replace(/"/g, "").split(",").map((s) => s.trim()).join(", ");
+      return `take ${fields} out of SELECT (a date range can stay in WHERE) and run it to list each ${m[2]}; then select them `
+        + `again in one query per ${m[2]}, with WHERE ${m[2]} = that value.`;
+    }
+    case "DUPLICATE_ASSET":
+      return "two texts in one ad or asset group are the same to Google, which ignores spacing but not capitals. Make every headline and "
+        + "description different, and propose again.";
+    case "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED":
+      return "Google refuses every change to this account until each of its campaigns declares whether it contains EU political advertising. "
+        + "Find them: SELECT campaign.id, campaign.name FROM campaign WHERE campaign.missing_eu_political_advertising_declaration = TRUE "
+        + "AND campaign.status != 'REMOVED'. Ask the user whether any of them run EU political ads (it is their legal declaration; most "
+        + "businesses answer no), propose set_eu_political_advertising for each in one proposal, apply it, then retry this change.";
     case "POLICY_FINDING":
-      return "Google's ad policy check rejected the ad text, images or video. Common causes: repeated punctuation (\"!!\"), "
+      return "Google's ad policy check rejected the ad text, images or video. Change what any [policy …] above flags. Common causes: repeated punctuation (\"!!\"), "
         + "ALL CAPS, symbols or emoji used for emphasis, phone numbers in headlines, or a video or landing page that breaks policy. "
         + "Reword the ad and propose again; the full reasons show under Policy in Google Ads.";
     case "POLICY_ERROR":
@@ -269,9 +311,17 @@ export class AdsApiError extends Error {
         const pv = d.details?.policyViolationDetails;
         const policy = pv ? `[policy ${pv.externalPolicyName ?? pv.key?.policyName}` + (pv.key?.violatingText ? ` flagged "${pv.key.violatingText}"` : "")
           + (pv.isExemptible ? ", exemptible" : "") + "]" : "";
-        return [code, d.message, field ? `(field ${field})` : "", policy, fix ? `→ ${fix}` : ""].filter(Boolean).join(" ");
+        // POLICY_FINDING's topics and the text Google flagged are in PolicyFindingDetails. Without them the AI reworded
+        // blind and got the same refusal twice (2026-10-22).
+        const findings = (d.details?.policyFindingDetails?.policyTopicEntries ?? []).map((t: any) => {
+          const texts = (t.evidences ?? []).flatMap((ev: any) => ev.textList?.texts ?? []);
+          return `[policy ${t.topic}${t.type ? ` ${t.type}` : ""}${texts.length ? ` flagged ${texts.map((s: string) => `"${s}"`).join(", ")}` : ""}]`;
+        }).join(" ");
+        return [code, d.message, field ? `(field ${field})` : "", policy, findings, fix ? `→ ${fix}` : ""].filter(Boolean).join(" ");
       });
-      return `Google Ads API ${status}: ${msgs.length ? msgs.join("; ") : e?.message ?? body.slice(0, 300)}`;
+      // Google repeats one error per offending operation (seven identical DUPLICATE_ASSETs, 2026-10-22): once is enough.
+      const distinct = [...new Set(msgs)];
+      return `Google Ads API ${status}: ${distinct.length ? distinct.join("; ") : e?.message ?? body.slice(0, 300)}`;
     } catch {
       return `Google Ads API ${status}: ${body.slice(0, 300)}`;
     }

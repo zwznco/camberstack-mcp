@@ -7,12 +7,14 @@ import { listMerchantAccounts, merchantReport, productIssues } from "./merchant.
 import { PUBLIC_MC_CHANGES, PublicMcChangeSchema, mcTarget } from "./merchant-changes.js";
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
-import { ACCOUNT_WINDOW_DAYS, PlanLimitError } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice, type Service } from "./plans.js";
+import { DEMO_SITE } from "./demo.js";
+import { DEMO_PROPERTY } from "./ga4.js";
 import { isDemo, type Account, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.17.0";
+export const SERVER_VERSION = "0.19.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -33,6 +35,25 @@ const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "key
 
 /** Tools that read or change one Merchant Center account (account_id): their own allowance, logged as mc:<id>. */
 const MC_GATED = new Set(["merchant_product_issues", "merchant_report", "propose_merchant_changes", ...PUBLIC_MC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
+
+const GA_PROPOSES = new Set(PUBLIC_GA_CHANGES.map((c) => `propose_${c.shape.type.value}`));
+/**
+ * The Google services a call uses on real data, for the one-service Free plan (session.ts checkService). Listing what a
+ * login can reach (list_accounts, search_console_sites, analytics_properties) and the demo account, site and property
+ * use none; nor do apply/undo/history, which act on a proposal the gate already let through.
+ */
+export function servicesOf(name: string, a: unknown): Service[] {
+  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; changes?: { property_id?: unknown }[] };
+  const realGa = (p: unknown) => p !== DEMO_PROPERTY;
+  if (name === "paid_organic_overlap")
+    return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(x.site_url !== DEMO_SITE ? ["search_console" as const] : [])];
+  if (GATED.has(name) && name !== "switch_account") return typeof x.customer_id === "string" && !isDemo(x.customer_id) && !isLookup(name, a) ? ["ads"] : [];
+  if (name.startsWith("search_console_") && name !== "search_console_sites") return x.site_url !== DEMO_SITE ? ["search_console"] : [];
+  if (["analytics_report", "analytics_landing_pages", "analytics_setup"].includes(name) || GA_PROPOSES.has(name)) return realGa(x.property_id) ? ["analytics"] : [];
+  // create_ga4_property has no property_id: a new property is real.
+  if (name === "propose_analytics_changes") return (x.changes ?? []).some((c) => realGa(c?.property_id)) ? ["analytics"] : [];
+  return [];
+}
 
 /** A run_gaql field lookup reads Google's field catalog, not the account named: no plan gate, and no account in the log. */
 const isLookup = (name: string, a: unknown) => {
@@ -96,13 +117,15 @@ export interface ToolCall {
   bytes: number;
   /** run_gaql only: gaql.ts queryShape, never the values. */
   queryShape?: string | null;
+  /** servicesOf, comma-joined, on a call that ran (null when it used none, or was refused). */
+  service?: string | null;
 }
 
 /** What the /tools page and llms.txt show about each tool; filled as buildServer registers them. */
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { chatgpt?: boolean; merchant?: boolean } = {}): McpServer {
+  o: { chatgpt?: boolean; merchant?: boolean; stuck?: (tool: string, error: string) => string | null } = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
@@ -113,24 +136,50 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         : (a as { customer_id?: unknown } | undefined)?.customer_id;
       let out: ReturnType<typeof ok> | ReturnType<typeof fail>;
       let release = () => {};
+      let notice: string | null = null;
+      const services = servicesOf(name, a);
       try {
-        if ((GATED.has(name) || MC_GATED.has(name)) && typeof cid === "string")
+        if (services.length) {
+          const done = session().checkService(services);
+          const prev = release;
+          release = () => { prev(); done(); };
+        }
+        if ((GATED.has(name) || MC_GATED.has(name)) && typeof cid === "string") {
           // Only switch_account may spend the plan's switch: the read tools stay free of side effects.
-          release = await session().checkAccount(cid, name === "switch_account");
+          const done = await session().checkAccount(cid, name === "switch_account");
+          const prev = release;
+          release = () => { prev(); done(); };
+        }
         out = ok(await fn(a));
       } catch (e) {
-        out = fail(e);
-        if (isUnexpected(e)) reportError(e, name);
+        if (e instanceof SwitchNotice) {
+          // A question for the user, not a failure: a normal result (plans.ts SwitchNotice).
+          notice = e.message;
+          out = ok({ notice: e.message, ...e.detail });
+        } else {
+          out = fail(e);
+          if (isUnexpected(e)) reportError(e, name);
+        }
       }
       try {
         log({
-          tool: name, customerId: typeof cid === "string" ? (cid.startsWith("mc:") ? cid : cid.replace(/-/g, "")) : null,
-          ok: !("isError" in out), error: "isError" in out ? out.content[0]!.text.slice(7, 1007) : null,
+          // A notice logs as ok but with no account, since none was used (session.ts usage); its text stays in error.
+          tool: name, customerId: typeof cid === "string" && !notice ? (cid.startsWith("mc:") ? cid : cid.replace(/-/g, "")) : null,
+          ok: !("isError" in out), error: "isError" in out ? out.content[0]!.text.slice(7, 1007) : notice?.slice(0, 1000) ?? null,
           ms: Date.now() - t0, bytes: out.content[0]!.text.length,
           queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
+          service: services.length && !("isError" in out) && !notice ? services.join(",") : null,
         });
       } catch { /* logging must never break a tool */ }
       release();  // after the log: the account now counts as used from tool_calls instead
+      // The same wall a third time: only the user knows what they were after, so give the model a line to pass on.
+      // After the log: stuckNow counts this error, and the log keeps it as Google or our code wrote it.
+      if ("isError" in out) {
+        try {
+          const extra = o.stuck?.(name, out.content[0]!.text.slice(7));
+          if (extra) out = { ...out, content: [{ type: "text" as const, text: `${out.content[0]!.text}\n\n${extra}` }] };
+        } catch { /* a hint must never break a tool */ }
+      }
       return out;
     };
   };
@@ -149,11 +198,12 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   tool("list_accounts", {
     title: "List Google Ads accounts",
     description: "Lists every Google Ads account this login can reach, including client accounts under a manager (MCC). Start here. "
+      + "spentLast30Days says whether an account had ad spend in the last 30 days (show it when the user picks one). "
       + "When the user's plan is at its limit, each account also says whether the plan covers it (plan_status: active, switch or locked).",
     annotations: read,
   }, async () => {
     const s = session();
-    const accounts = await s.accounts({ fresh: true });
+    const accounts = await s.withActivity(await s.accounts({ fresh: true }));
     const demo = accounts.some((a) => isDemo(a.customerId));
     const grantUrl = s.lastUnreadable.find((u) => u.grant_url)?.grant_url;
     // Only a plan at its limit says anything: until then every account is open, and there's nothing to explain.
@@ -163,12 +213,23 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     return {
       accounts: st.full ? accounts.map((a) => counted(a) ? { ...a, plan_status: status(a.customerId) } : a) : accounts,
       ...(st.full && accounts.some((a) => counted(a) && !st.active.includes(a.customerId)) ? { plan: {
-        plan: s.isPro ? "pro" : "free", accounts_included: s.accountLimit, active_accounts: st.active,
+        plan: s.planName, accounts_included: s.accountLimit, active_accounts: st.active,
         switching: st.canSwitch
           ? `One switch per ${ACCOUNT_WINDOW_DAYS} days: using a "switch" account makes it active and locks ${st.active.at(-1)}, `
             + "switching back included. Nothing is spent until the user agrees and switch_account is called."
           : `This ${ACCOUNT_WINDOW_DAYS}-day switch is used; locked accounts open up from ${st.switchOpens}`
-            + (s.isPro || s.chatgpt ? "." : ", or on Pro, which covers more (the billing tool has the upgrade link)."),
+            + (s.chatgpt || s.planName === "agency" ? "." : s.planName === "plus" ? ", or on Pro or Agency, which cover more (the billing tool has the switch link)."
+              : s.isPro ? ", or on Agency, which covers more (the billing tool has the switch link)."
+              : ", or on Pro or Agency, which cover more (the billing tool has the upgrade links)."),
+      } } : {}),
+      // Before the limit, the first accounts any tool touches become the plan's, unasked: a Free user with 5 accounts was
+      // given whichever the AI overviewed first (2026-10-23). With more accounts than the plan has room for, ask first.
+      ...(!st.full && accounts.filter((a) => counted(a) && !st.used.includes(a.customerId)).length > s.accountLimit - st.used.length ? { plan: {
+        plan: s.planName, accounts_included: s.accountLimit, active_accounts: st.active,
+        choosing: `This plan covers ${s.accountLimit} Google Ads account${s.accountLimit === 1 ? "" : "s"} at a time, and the first `
+          + `${s.accountLimit === 1 ? "account" : "accounts"} a tool is used on become${s.accountLimit === 1 ? "s" : ""} the plan's `
+          + `(after that, one switch per ${ACCOUNT_WINDOW_DAYS} days). This login has more, so ask the user which to work on before `
+          + "calling any tool with a customer_id, and don't survey several. The demo account never counts.",
       } } : {}),
       ...(s.lastUnreadable.length ? { unreadable: s.lastUnreadable } : {}),
       // Google Ads wasn't granted (connected for Search Console only): one link adds it, nothing to reconnect.
@@ -385,7 +446,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       metrics: z.array(z.string().regex(/^[A-Za-z][\w:]*$/)).min(1).max(10).describe("GA4 metric names"),
       filter: z.object({ dimension: z.string().regex(/^[A-Za-z][\w:]*$/), contains: z.string().min(1).max(200) }).optional()
         .describe("Only rows whose dimension contains this text (case-insensitive)"),
-      order_by: z.string().optional().describe("Metric to sort by, highest first; defaults to the first metric"),
+      order_by: z.string().optional().describe("A requested metric (highest first) or dimension (A to Z, dates oldest first); defaults to the first metric"),
       limit: z.number().int().min(1).max(1000).default(50).describe("Most rows to return") },
     annotations: read,
   }, ({ property_id, ...o }: GaWindow & { property_id: string; dimensions: string[]; metrics: string[];
@@ -468,7 +529,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   if (!o.chatgpt) tool("propose_changes", {
     title: "Propose Google Ads changes (applies nothing)",
-    description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, create_conversion_action, set_conversion_counting, import_ga4_key_event; and link_merchant_center / unlink_merchant_center (Shopping and Performance Max need the link). Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
+    description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, set_eu_political_advertising (Google refuses every change to an account until each campaign has declared this), create_conversion_action, set_conversion_counting, import_ga4_key_event; and link_merchant_center / unlink_merchant_center (Shopping and Performance Max need the link). Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
     inputSchema: { customer_id: customerId, changes: z.array(PublicChangeSchema).min(1).max(MAX_CHANGES).describe(`Changes to propose; several can go in one proposal, up to ${MAX_CHANGES} (each keyword counts as one)`) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, ({ customer_id, changes }: { customer_id: string; changes: unknown[] }) => session().propose(customer_id, changes));
@@ -554,7 +615,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "Switch the plan's active account",
     description: "Spends the plan's one account switch per 30 days on customer_id: it becomes an active account, and the least recently used active account "
       + "locks until the date the \"Account switch:\" notice gave, switching back included. Call it only after another tool answered \"Account switch:\" "
-      + "for this account and the user agreed. Changes nothing in Google Ads; a no-op for an account that is already active. "
+      + "for this account and the user agreed, or answered \"Account choice:\" and the user picked this account (a first pick spends no switch). "
+      + "Changes nothing in Google Ads; a no-op for an account that is already active. "
       + "Merchant Center accounts are a separate allowance with their own switch: pass mc:<account_id>, as the notice gives it.",
     inputSchema: { customer_id: customerId },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -576,7 +638,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "Plan and billing",
     description: o.chatgpt
       ? "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers. This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend."
-      : "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Pro 10). Returns a personal link to upgrade (Free) or to change card and cancel (Pro). This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend.",
+      : `Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Plus 1, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}), and on Free which Google service it covers. Returns personal links to upgrade (Free to Plus or Pro, Plus to Pro, Pro to Agency) or to change card and cancel (paid plans). This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend.`,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, () => session().plan());
 

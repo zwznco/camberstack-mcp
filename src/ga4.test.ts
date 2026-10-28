@@ -31,6 +31,8 @@ describe("AnalyticsClient", () => {
     expect(r).toEqual({ row_count: 1, rows: [{ landingPage: "/a", sessions: 12, engagementRate: 0.5833 }] });
     expect(sent.dimensionFilter.filter).toEqual({ fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "CONTAINS", value: "Paid Search", caseSensitive: false } });
     expect(sent.orderBys).toEqual([{ metric: { metricName: "sessions" }, desc: true }]);
+    await ga.runReport("9", { startDate: "2026-10-01", endDate: "2026-10-07", dimensions: ["date"], metrics: ["sessions"], orderBy: "date", limit: 10 });
+    expect(sent.orderBys).toEqual([{ dimension: { dimensionName: "date" }, desc: false }]);
   });
 
   it("says Analytics isn't granted, with the grant link, instead of a raw 403", async () => {
@@ -63,7 +65,15 @@ describe("demo property", () => {
     const r = await report(demo, DEMO_PROPERTY, { days: 7, start_date: "2026-10-01", end_date: "2026-10-07", dimensions: ["date"], metrics: ["sessions"], limit: 50 });
     expect(r.rows).toHaveLength(7);
     await expect(report(demo, DEMO_PROPERTY, { days: 7, dimensions: ["city"], metrics: ["sessions"], limit: 5 })).rejects.toThrow(/supports dimensions/);
-    await expect(report(demo, DEMO_PROPERTY, { days: 7, dimensions: [], metrics: ["sessions"], order_by: "keyEvents", limit: 5 })).rejects.toThrow(/order_by/);
+    await expect(report(demo, DEMO_PROPERTY, { days: 7, dimensions: [], metrics: ["sessions"], order_by: "keyEvents", limit: 5 }))
+      .rejects.toThrow('order_by "keyEvents" isn\'t in this report. Use one of its metrics (sessions), or add it to them.');
+  });
+
+  it("sorts by a requested dimension, dates oldest first", async () => {
+    const r = await report(demo, DEMO_PROPERTY, { days: 7, start_date: "2026-10-01", end_date: "2026-10-07", dimensions: ["date"], metrics: ["sessions"],
+      order_by: "date", limit: 50 });
+    const dates = r.rows.map((x) => String(x.date));
+    expect(dates).toEqual([...dates].sort());
   });
 });
 

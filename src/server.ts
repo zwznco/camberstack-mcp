@@ -21,15 +21,17 @@ import { mountAccount } from "./account.js";
 import { mountFeedback } from "./feedback.js";
 import { Billing } from "./billing.js";
 import { AdConversions } from "./adconversions.js";
-import { FirstTouch } from "./firsttouch.js";
 import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
+import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
-import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
+import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage, withFreePlan } from "./pages.js";
+import { freePlan } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
 import { teeToFile } from "./logfile.js";
+import { ErrorAlerts, stuckNow } from "./alerts.js";
 const DRAIN_FILE = "/tmp/drain";
 
 /** brand/ sits beside src/ and dist/ at the package root. */
@@ -57,6 +59,8 @@ export interface Service {
   startJobs(): void;
   /** Links that add one Google service to a connection, so tests can follow one. */
   grants: Grants;
+  /** What every session reads, so tests can flip a flag (freeOneService) without a second server. */
+  deps: SessionDeps;
 }
 
 export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Service {
@@ -64,14 +68,16 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.set("trust proxy", 1); // behind Traefik: one hop
   app.disable("x-powered-by");
   const adConversions = new AdConversions(db, cfg.conversions, cfg.baseUrl.startsWith("https://"), overrides.adsConversionFetch);
-  const firstTouch = new FirstTouch(db, cfg.baseUrl.startsWith("https://"));
   const billing = new Billing({ db, baseUrl: cfg.baseUrl, stripe: cfg.stripe, fetch: overrides.stripeFetch,
     signingKey: deriveKey(cfg.encryptionKey, "billing-links") });
   const internalEmails = new Set([...cfg.adminEmails, ...cfg.proEmails]);
   const lifecycle = new Lifecycle({
     db, baseUrl: cfg.baseUrl, mail: cfg.mail, fetch: overrides.mailFetch, internalEmails,
     signingKey: lifecycleSigningKey(cfg.encryptionKey),
-    upgradeLink: (userId) => billing.link("upgrade", userId),
+    upgradeLink: (userId) => billing.link("upgrade", userId, "email"),
+    agencyLink: (userId) => billing.link("agency", userId, "email"),
+    plusLink: (userId) => billing.link("plus", userId, "email"),
+    freeOneServiceFrom: cfg.freeOneServiceFrom,
   });
   const announcements = new Announcements({ db, lifecycle, internalEmails, canSend: !!cfg.mail });
   const info = (title: string, body: string) => infoPage(cfg.baseUrl, title, body);
@@ -85,13 +91,15 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     signingKey: deriveKey(cfg.encryptionKey, "grant-links"), forgetToken: clearGoogleCache, fetch: overrides.fetch });
   const deps: SessionDeps = {
     db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
-    freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails,
-    billingLink: (kind, userId) => billing.link(kind, userId), refreshPlan: (userId) => billing.refreshPlan(userId),
+    freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails, freeOneServiceFrom: cfg.freeOneServiceFrom,
+    agencyAccounts: billing.agencyEnabled ? cfg.agencyAccounts : undefined, plusAvailable: billing.plusEnabled,
+    billingLink: (kind, userId) => billing.link(kind, userId, "tool"), plansLink: (userId) => billing.plansLink(userId),
+    refreshPlan: (userId) => billing.refreshPlan(userId),
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };
   const mcpUrl = new URL(`${cfg.baseUrl}/mcp`);
-  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   const analytics = new Analytics({ matomoUrl: cfg.matomo?.url ?? "", siteId: cfg.matomo?.siteId ?? "",
     token: cfg.matomo?.token ?? "", site: cfg.baseUrl, fetch: overrides.analyticsFetch });
@@ -106,7 +114,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   // Before every public route: the admin host serves only the admin site.
   const admin = mountAdmin(app, {
     db, google: cfg.google, baseUrl: cfg.baseUrl, adminUrl: cfg.adminUrl, adminEmails: cfg.adminEmails,
-    proEmails: cfg.proEmails, internalEmails, announcements, fetch: overrides.fetch,
+    internalEmails, announcements, fetch: overrides.fetch,
   });
 
   // Gemini (Spark custom apps) registers asking for client_secret_post, takes the secret, then its
@@ -171,7 +179,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
 
   const account = mountAccount(app, {
     db, google: cfg.google, baseUrl: cfg.baseUrl, fetch: overrides.fetch,
-    session: (userId, o) => UserSession.load(deps, userId, o), billingLink: (kind, userId) => billing.link(kind, userId),
+    session: (userId, o) => UserSession.load(deps, userId, o), billingLink: (kind, userId) => billing.link(kind, userId, "account"),
     adminUrl: cfg.adminUrl,
   });
   const feedback = mountFeedback(app, {
@@ -215,7 +223,6 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
       if (done.userId) {
         analytics.event(req, "connect");
         adConversions.record(req, res, done.userId, !!done.created);
-        firstTouch.record(req, res, done.userId, !!done.created);
       }
       res.redirect(302, done.to);
     } catch (e) {
@@ -247,8 +254,11 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const email = (db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string } | undefined)?.email.toLowerCase();
     const merchant = cfg.merchantPublic || (!!email && internalEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
-      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null);
-    }, [], { chatgpt, merchant });
+      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null);
+    }, [], { chatgpt, merchant, stuck: (tool, error) => (userId && stuckNow(db, userId, tool, error)
+      ? `This is the same error a third time. If you can't get the user what they asked for, tell them they can report it `
+        + `to Camberstack's maintainer at ${cfg.baseUrl}/feedback, saying what they were trying to get.`
+      : null) });
   };
   // 2026-07-28 traffic (server/discover, per-request _meta envelope). The SDK's own legacy leg would
   // answer 2025-era requests over SSE, so it is off and those keep the JSON-response wiring below.
@@ -322,14 +332,10 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.get("/mcp", noSessions);
   app.delete("/mcp", noSessions);
 
-  const page = (html: string) => (req: express.Request, res: express.Response) => {
-    res.setHeader("Cache-Control", "public, max-age=300");
-    adConversions.captureClick(req, res);  // keeps an ad click id; makes the response private if it does
-    firstTouch.capture(req, res);          // keeps the first tagged landing (utm_*, rdt_cid); same
-    res.type("html").send(html);
-  };
   const tools = toolCatalog({ merchant: cfg.merchantPublic });
-  const pages: Record<string, string> = {
+  // Each page rendered once per phase of FREE_ONE_SERVICE (plans.ts FreePlan: announced, then on), and the live phase's copy
+  // served, so the pages flip with the gate at its date, no restart. Unset, there's one phase.
+  const render = (): Record<string, string> => ({
     "/": homePage(cfg.baseUrl),
     "/google-ads-claude": claudeGuidePage(cfg.baseUrl),
     "/google-ads-chatgpt": chatgptGuidePage(cfg.baseUrl),
@@ -340,16 +346,32 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     "/about": aboutPage(cfg.baseUrl),
     "/privacy": privacyPage(cfg.baseUrl),
     "/terms": termsPage(cfg.baseUrl),
+    "/google-ads-gemini": geminiGuidePage(cfg.baseUrl),
+    // Not in the sitemap: the homepage #pricing is the page for search; this one is what ChatGPT connections link to.
+    "/plans": plansPage(cfg.baseUrl),
+    "/llms.txt": llmsTxt(cfg.baseUrl, tools),
+  });
+  const from = cfg.freeOneServiceFrom;
+  const phases = new Map((from === undefined ? [freePlan(undefined)] : [freePlan(from, from - 1), freePlan(from, from)])
+    .map((fp) => [fp.kind, withFreePlan(fp, render)]));
+  const live = () => phases.get(freePlan(from).kind)!;
+  const pages = live();
+  const page = (path: string) => (req: express.Request, res: express.Response) => {
+    res.setHeader("Cache-Control", "public, max-age=300");
+    adConversions.captureClick(req, res);  // keeps an ad click id; makes the response private if it does
+    res.type("html").send(live()[path]!);
   };
-  for (const [path, html] of Object.entries(pages)) app.get(path, page(html));
+  for (const path of Object.keys(pages)) if (path !== "/llms.txt" && path !== "/plans") app.get(path, page(path));
   for (const alias of ["/contact", "/contact-us", "/about-us"]) app.get(alias, (_q, r) => r.redirect(301, "/about"));
-  app.get("/google-ads-gemini", page(geminiGuidePage(cfg.baseUrl)));
+  // A personal link (session.ts plansPage) counts the view in the paywall funnel; the page is the same for everyone.
+  app.get("/plans", (req, _res, next) => { const u = billing.verify("plans", req.query.t); if (u) billing.track(u, "plans_view"); next(); },
+    page("/plans"));
   const indexed = Object.fromEntries(SITEMAP_PATHS.map((p) => [p, pages[p]!]));
   const { dates: lastmod, changed: changedPages } = pageDates(db, indexed, cfg.gitCommitDate);
   const inKey = indexNowKey(cfg.encryptionKey);
   app.get(`/${inKey}.txt`, (_q, r) => { r.type("text/plain").send(inKey); });
   app.get("/robots.txt", (_q, r) => { r.type("text/plain").send(cfg.noindex ? "User-agent: *\nDisallow: /\n" : robotsTxt(cfg.baseUrl)); });
-  app.get("/llms.txt", (_q, r) => { r.type("text/plain").send(llmsTxt(cfg.baseUrl, tools)); });
+  app.get("/llms.txt", (_q, r) => { r.type("text/plain").send(live()["/llms.txt"]!); });
   app.get("/sitemap.xml", (_q, r) => { r.type("application/xml").send(sitemapXml(cfg.baseUrl, lastmod)); });
   // Brand assets: the SVG is the source; the PNGs are rendered from it (brand/).
   const brand = (file: string, type: string) => (_q: express.Request, r: express.Response) => {
@@ -392,9 +414,16 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   });
 
   app.use((_req, res) => { res.status(404).type("html").send(errorPage(cfg.baseUrl, "Page not found.")); });
-  // A route that threw: report it, then let express answer 500 as before.
-  app.use((e: unknown, _req: express.Request, _res: express.Response, next: express.NextFunction) => { reportError(e, "http"); next(e); });
+  // A route that threw: report it, then let express answer as before. A 4xx error is the client's (body-parser's 400
+  // for a body that isn't JSON: coda-agent-runtime POSTs "not-json" to /register every few hours, 2026-10-23 →), not a bug.
+  app.use((e: unknown, _req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    const status = (e as { status?: unknown })?.status;
+    if (!(typeof status === "number" && status >= 400 && status < 500)) reportError(e, "http");
+    next(e);
+  });
 
+  const errorAlerts = new ErrorAlerts({ db, internalEmails, mail: cfg.mail, adminUrl: cfg.adminUrl,
+    to: cfg.alertTo ?? cfg.feedbackTo ?? cfg.mail?.replyTo ?? "adam@camberstack.io", fetch: overrides.mailFetch });
   const every = (ms: number, name: string, job: () => unknown) => {
     const run = async () => { try { await job(); } catch (e) { console.error(`${name}: ${(e as Error).message}`); reportError(e, name); } };
     setInterval(run, ms).unref();
@@ -405,7 +434,9 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     void every(HOUR, "billing sweep", () => billing.sweep())();  // also at boot: a restart mustn't delay a downgrade an hour
     every(HOUR, "lifecycle", () => lifecycle.run());
     every(60_000, "transactional mail", () => lifecycle.transactional());
+    every(15 * 60_000, "error alerts", () => errorAlerts.run());
     every(HOUR, "ad conversions", () => adConversions.flush());
+    every(HOUR, "retention", () => retain({ db, encryptionKey: cfg.encryptionKey, internalEmails }));
     // Pages new or changed since the last boot. Production only: a dev or test origin isn't ours to submit.
     if (cfg.baseUrl.startsWith("https://") && !cfg.noindex) {
       pingIndexNow(cfg.baseUrl, inKey, changedPages, overrides.indexNowFetch)
@@ -413,7 +444,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
         .catch((e) => console.error(`IndexNow: ${(e as Error).message}`));
     }
   };
-  return { app, billing, startJobs, grants };
+  return { app, billing, startJobs, grants, deps };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   error        TEXT,            -- first 1000 chars of the message shown to the AI (300 before 2026-10-15)
   ms           INTEGER NOT NULL,
   bytes        INTEGER NOT NULL, -- size of the result text
-  query_shape  TEXT              -- run_gaql only: the query with every value replaced by ? (gaql.ts queryShape)
+  query_shape  TEXT,             -- run_gaql only: the query with every value replaced by ? (gaql.ts queryShape)
+  service      TEXT              -- Google services a real (non-demo) call used, comma-joined (tools.ts servicesOf); plan gate for Option C
 );
 CREATE INDEX IF NOT EXISTS tool_calls_at ON tool_calls(at);
 
@@ -124,6 +125,17 @@ CREATE TABLE IF NOT EXISTS email_log (
   sent_at  INTEGER NOT NULL,
   PRIMARY KEY (user_id, kind)
 );
+
+-- The paywall funnel past the stop itself (billing.ts track; PRICING-TEST.md): a click on a personal upgrade link
+-- (src = where the link was handed out), a view of /plans through a personal link, a paid checkout. The stops are
+-- tool_calls rows already (error 'Service limit:' etc.), and the emails are email_log.
+CREATE TABLE IF NOT EXISTS plan_events (
+  user_id  TEXT NOT NULL,
+  kind     TEXT NOT NULL CHECK (kind IN ('upgrade_click','plans_view','paid')),
+  src      TEXT,
+  at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plan_events_user ON plan_events (user_id, kind);
 
 -- Announcement presets (announce.ts) the operator has sent from the admin: each goes out once. Who got one is in
 -- email_log, kind 'announce:<id>'. started_at also fixes who's eligible (users who'd signed up by then).
@@ -176,6 +188,13 @@ CREATE TABLE IF NOT EXISTS feedback (
   message  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS feedback_email_at ON feedback (email, at);
+
+-- Stuck-user alerts already mailed (alerts.ts): per user + tool + error, the last tool_calls.id mailed, so no error is mailed twice.
+CREATE TABLE IF NOT EXISTS error_alerts (
+  k        TEXT PRIMARY KEY,      -- user_id|tool family|error key
+  last_id  INTEGER NOT NULL,      -- tool_calls.id
+  at       INTEGER NOT NULL       -- when it was mailed (rows go after 30 days)
+);
 `;
 
 export function openDb(dataDir: string): DB {
@@ -199,12 +218,24 @@ export function openDb(dataDir: string): DB {
   if (!cols.has("google_scopes")) db.exec("ALTER TABLE users ADD COLUMN google_scopes TEXT");
   // Operator courtesy reset of plan accounts (session.ts usage): calls before it don't count. NULL = never reset.
   if (!cols.has("plan_reset_at")) db.exec("ALTER TABLE users ADD COLUMN plan_reset_at INTEGER");
-  // First-touch source of a new user (firsttouch.ts, 2026-10-16): utm_source/campaign/content and Reddit's rdt_cid.
-  // NULL = untagged landing, or signed up before it was recorded.
-  for (const c of ["src_source", "src_campaign", "src_content", "src_click"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} TEXT`);
+  // What their Google login can reach, as of its last fresh account list (session.ts accounts(), 2026-10-22): ad accounts
+  // (not managers, not the demo) and manager accounts. NULL = not listed since this was added.
+  for (const c of ["ads_accounts", "ads_managers", "ads_accounts_at"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} INTEGER`);
+  // Which manager accounts, as a JSON array of IDs (2026-10-22): logins under one manager are how Free could be multiplied (report.ts sharing).
+  if (!cols.has("ads_manager_ids")) db.exec("ALTER TABLE users ADD COLUMN ads_manager_ids TEXT");
+  // How many of those ad accounts spent in the last 30 days, and when that was read (session.ts spendActivity, 2026-10-26):
+  // only a count, read while the user lists or picks accounts. NULL = never fully read.
+  for (const c of ["ads_active", "ads_active_at"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} INTEGER`);
+  // The registered MCP client the account was created through (provider.ts, 2026-10-23): names the app for a connect the
+  // app never finished (a Codex sign-in that never swapped its code for a token left no call or token to name it).
+  if (!cols.has("signup_client_id")) db.exec("ALTER TABLE users ADD COLUMN signup_client_id TEXT");
+  // First-touch utm source (2026-10-16 → 10-22) tagged 2 of 34 users; the AI app a user connected from (report.ts) replaced it.
+  for (const c of ["src_source", "src_campaign", "src_content", "src_click"]) if (cols.has(c)) db.exec(`ALTER TABLE users DROP COLUMN ${c}`);
   // run_gaql's query shape (2026-10-15): which fields custom queries ask for, never the values in them.
   const tc = new Set((db.prepare("PRAGMA table_info(tool_calls)").all() as { name: string }[]).map((c) => c.name));
   if (!tc.has("query_shape")) db.exec("ALTER TABLE tool_calls ADD COLUMN query_shape TEXT");
+  // Which Google service each call used (2026-10-28), for the one-service Free plan behind FREE_ONE_SERVICE.
+  if (!tc.has("service")) db.exec("ALTER TABLE tool_calls ADD COLUMN service TEXT");
   // The admin's email on an /account session opened through "Log in as user" (account.ts); NULL = the user's own.
   const ws = new Set((db.prepare("PRAGMA table_info(web_sessions)").all() as { name: string }[]).map((c) => c.name));
   if (!ws.has("impersonator")) db.exec("ALTER TABLE web_sessions ADD COLUMN impersonator TEXT");
