@@ -768,8 +768,11 @@ describe("OAuth + MCP end to end", () => {
     expect(ads.kwStatus).toBe("PAUSED");
 
     const again = await call(token, "apply_changes", { proposal_id: p.json.proposal_id });
-    expect(again.isError).toBe(true);
-    expect(again.text).toContain("already applied");
+    expect(again.isError).toBe(false);  // a repeat apply answers with the first one's results and writes nothing
+    expect(again.json.status).toBe("applied");
+    expect(again.json.note).toContain("Already applied");
+    expect(again.json.results).toEqual(a.json.results);
+    expect(ads.negatives).toHaveLength(1);
 
     const u = await call(token, "undo_changes", { proposal_id: p.json.proposal_id });
     expect(u.json.summary).toContain("Enable keyword");

@@ -1021,6 +1021,7 @@ export class UserSession {
 
   async apply(proposalId: string) {
     const p = this.proposal(proposalId);
+    if (p.status === "applied") return this.alreadyApplied(p);
     if (p.status !== "proposed") throw new Error(`Proposal ${proposalId} is already ${p.status}.`);
     const changes = JSON.parse(p.changes) as AnyChange[];
     // Claim it before any write: a client retrying after a timeout would otherwise apply it twice. applied_at
@@ -1035,6 +1036,7 @@ export class UserSession {
           AND o.applied_at IS NOT NULL AND o.status <> 'failed'))`).run(now(), p.id, retake ? 1 : 0, now() - STALE_CLAIM).changes;
     if (!claimed) {
       const cur = this.proposal(proposalId);
+      if (cur.status === "applied") return this.alreadyApplied(cur);
       if (cur.status !== "proposed") throw new Error(`Proposal ${proposalId} is already ${cur.status}.`);
       if (cur.applied_at && cur.applied_at < now() - STALE_CLAIM) {
         throw new Error(`Proposal ${proposalId} was interrupted while applying, and it adds ads, ad groups or sitelinks, which re-running could duplicate. `
@@ -1115,6 +1117,15 @@ export class UserSession {
    * written: the old proposal is discarded and the same request is proposed afresh, for the user to approve. Not an
    * error: it's the expected answer to an account that changed. (Replaced a flat 24-hour expiry, 2026-10-15.)
    */
+  /** A repeat apply of an applied proposal: not an error, the change is in, and that is the answer (2026-10-28: a model
+   *  re-sent apply_changes 8s after it succeeded). Nothing is written again; the first apply's results are returned. */
+  private alreadyApplied(p: ProposalRow) {
+    const outcomes = p.result ? JSON.parse(p.result) as Outcome[] : [];
+    const at = p.applied_at ? ` at ${new Date(p.applied_at * 1000).toISOString()}` : "";
+    return { proposal_id: p.id, status: "applied", note: `Already applied${at}; nothing was changed again.`,
+      results: publicResults(outcomes) };
+  }
+
   private async drifted(p: ProposalRow, resolved: AnyResolved[]) {
     const live = resolved.filter((r) => r.operations.length);
     if (live.length && sameSummary(summarize(live), p.summary)) return null;
