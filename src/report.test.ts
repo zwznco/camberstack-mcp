@@ -60,9 +60,10 @@ describe("buildReport", () => {
     expect(buildReport(db, { days: 1, exclude: [] }).signupsHourly).toEqual([{ hour: 11, n: 1 }]);
     expect(buildReport(db, { days: 30, exclude: [] }).signupsDaily.map((x) => x.n)).toEqual([1, 1]);
     const ret = buildReport(db, { days: 1, exclude: [] }).retention;
-    // Weeks count from the signup, not the cohort's Monday: 15 days on is W2, still under way (done = 2).
-    expect(ret.find((r) => r.users === 1 && r.weeks.length === 1)).toMatchObject({ weeks: [0], done: 0 });
-    expect(ret.find((r) => r.weeks.length > 1)).toMatchObject({ weeks: [1, 1, 0], done: 2 });
+    // Weeks count from the signup, not the cohort's Monday: 15 days on is W2, still under way (done = 2). Tool calls alone
+    // aren't retention any more: only applied changes are (the next test).
+    expect(ret.find((r) => r.users === 1 && r.applied.length === 1)).toMatchObject({ applied: [0], done: 0, appliers: 0 });
+    expect(ret.find((r) => r.applied.length > 1)).toMatchObject({ applied: [0, 0, 0], done: 2 });
   });
 
   it("counts, per cohort, who applied a real change in each week since signup, and who pays", () => {

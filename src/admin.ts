@@ -371,7 +371,7 @@ function signupsChart(v: View): string {
   return card(`Signups per ${per}`, body, `<small>${lastW(v.days)} · UTC</small>`);
 }
 
-/** Weekly cohorts (report.ts retention): the share of each signup week that made a tool call N weeks on. Not windowed. */
+/** Weekly cohorts (report.ts retention): of each signup week's users who applied a change, the share applying one N weeks on, and who pays. Not windowed. */
 function retentionCard(v: View): string {
   const rows = v.report.retention;
   // A week still under way for someone in the cohort is outlined and dim: it can only go up, so it isn't a drop yet.
@@ -381,11 +381,8 @@ function retentionCard(v: View): string {
       : `<span class="ret" style="background:color-mix(in srgb,var(--bar) ${Math.round(p * 0.6)}%,transparent)" title="${n} of ${of}">${p}%</span>`;
   };
   const wks = Array.from({ length: RETENTION_WEEKS }, (_, n): [string, "r"] => [`W${n}`, "r"]);
-  return card("Retention", table(["signup week", ["users", "r"], ...wks],
-    rows.map((c) => [c.week, num(c.users), ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.weeks.length ? cell(c.weeks[n]!, c.users, n >= c.done) : "")]),
-    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="W0 is each user's first 7 days; Wn counts a successful tool call 7n–7n+7 days after their own signup. Outlined: still under way.">all time · tool call in week N</small>`)
   // The pricing read (projects/camberstack/PRICING-TEST.md): of those who applied a change, how many keep applying, and who pays.
-  + card("Retention · applied a change", table(["signup week", ["users", "r"], ["applied", "r"], ["paid", "r"], ...wks],
+  return card("Retention", table(["signup week", ["users", "r"], ["applied", "r"], ["paid", "r"], ...wks],
     rows.map((c) => [c.week, num(c.users), num(c.appliers), num(c.paid),
       ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.applied.length && c.appliers ? cell(c.applied[n]!, c.appliers, n >= c.done) : "")]),
     `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="Of each week's users who ever applied a real-account change, the share that applied one 7n–7n+7 days after their own signup. Demo account excluded. Paid: on a paid plan now.">all time · applied in week N, of appliers</small>`);
