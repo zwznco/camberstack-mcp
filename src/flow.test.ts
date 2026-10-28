@@ -2622,6 +2622,10 @@ describe("OAuth + MCP end to end", () => {
       expect(plus.pro_upgrade_url).toContain("/upgrade?t=");
       expect(plus).not.toHaveProperty("plus_upgrade_url");
       expect(plus).not.toHaveProperty("service_in_use");
+      // Grandfathered (PRICING-TEST.md): Plus with no Stripe subscription is complimentary, all three services, nothing to manage.
+      db.prepare("UPDATE users SET stripe_customer = NULL, stripe_sub = NULL WHERE id = ?").run(uid);
+      expect((await call(t, "billing")).json).toMatchObject({ plan: "plus", complimentary: true, manage_billing: null, accounts_included: 1 });
+      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
     } finally {
       deps.freeOneServiceFrom = undefined;
       googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
