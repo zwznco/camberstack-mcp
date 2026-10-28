@@ -2735,7 +2735,13 @@ describe("OAuth + MCP end to end", () => {
     expect(soon).toContain("<h3>Plus</h3>");
     expect(soon).toContain("Available from November 16.");
     expect(soon).not.toContain("upgrade=plus");
-    expect(on).toContain('<a class="btn btn-ghost" href="/account?upgrade=plus">Get Plus</a>');
+    // From the date Plus is the highlighted plan (most users have one account); before, Pro is.
+    expect(on).toContain('<div class="plan plan-pro"><h3>Plus</h3>');
+    expect(on).toContain('<a class="btn" href="/account?upgrade=plus">Get Plus</a>');
+    expect(on).toContain('<div class="plan"><h3>Pro</h3>');
+    expect(on).toContain('<a class="btn btn-ghost" href="/account?upgrade=1">Upgrade to Pro</a>');
+    expect(soon).toContain('<div class="plan plan-pro"><h3>Pro</h3>');
+    expect(soon).toContain('<div class="plan"><h3>Plus</h3>');
     expect(on).toContain("Using it together with Google Ads or Analytics needs <a href=\"/#pricing\">Plus</a> ($7/month)");
     expect(on).toContain("<h2>Plus · $7/month</h2>");
     expect(on).toContain("Plus $7/month covers all three together on 1 Google Ads account");

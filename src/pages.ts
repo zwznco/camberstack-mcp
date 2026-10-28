@@ -433,10 +433,12 @@ Changes there never reach Google, and the demo doesn't count as one of your plan
   : `Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong>. No card.`}</p>${fp.kind === "upcoming"
   ? `<p class="muted small">From ${dateLabel(fp.from)}: one Google service at a time (Google Ads, Search Console or Google Analytics).</p>` : ""}
 <p class="plan-cta"><a class="btn btn-ghost" href="#setup">Connect for free</a></p></div>${fp.kind === "accounts" ? "" : `
-<div class="plan"><h3>Plus</h3><p class="price">${PLUS_PRICE_LABEL}</p><p>Google Ads, Search Console and Google Analytics <strong>together, on 1 Google Ads account</strong>, for anyone who wants one connection for all of it. Cancel any time.</p>
-${fp.kind === "upcoming" ? `<p class="muted small">Available from ${dateLabel(fp.from)}.</p>` : `<p class="plan-cta"><a class="btn btn-ghost" href="/account?upgrade=plus">Get Plus</a></p>`}</div>`}
-<div class="plan plan-pro"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>${paidCovers()} <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>, for owners with a few brands and freelancers with a few clients. Cancel any time; you keep Pro until the end of the month you paid for.</p>
-<p class="plan-cta"><a class="btn" href="/account?upgrade=1">Upgrade to Pro</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p></div>
+<div class="plan${fp.kind === "one_service" ? " plan-pro" : ""}"><h3>Plus</h3><p class="price">${PLUS_PRICE_LABEL}</p><p>Google Ads, Search Console and Google Analytics <strong>together, on 1 Google Ads account</strong>, for anyone who wants one connection for all of it. Cancel any time.</p>
+${fp.kind === "upcoming" ? `<p class="muted small">Available from ${dateLabel(fp.from)}.</p>`
+  // Once sold, Plus is the highlighted plan: most users have one Google Ads account (69% on 2026-10-28).
+  : `<p class="plan-cta"><a class="btn" href="/account?upgrade=plus">Get Plus</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p>`}</div>`}
+<div class="plan${fp.kind === "one_service" ? "" : " plan-pro"}"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>${paidCovers()} <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>, for owners with a few brands and freelancers with a few clients. Cancel any time; you keep Pro until the end of the month you paid for.</p>
+<p class="plan-cta"><a class="btn${fp.kind === "one_service" ? " btn-ghost" : ""}" href="/account?upgrade=1">Upgrade to Pro</a></p>${fp.kind === "one_service" ? "" : `<p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p>`}</div>
 <div class="plan"><h3>Agency</h3><p class="price">${AGENCY_PRICE_LABEL}</p><p>${paidCovers()} <strong>up to ${AGENCY_ACCOUNTS} Google Ads accounts</strong>, for agencies and anyone managing clients through a manager (MCC) account. Already on Pro? Switch from your account page; the difference is prorated.</p>
 <p class="plan-cta"><a class="btn btn-ghost" href="/account?upgrade=agency">Upgrade to Agency</a></p></div>
 </div>
