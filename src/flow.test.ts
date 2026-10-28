@@ -16,7 +16,8 @@ import { AdsApiError, NotGrantedError } from "./google.js";
 import { io, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
-import { plansPage } from "./pages.js";
+import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
+import { freePlan, parseFreeOneService, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 
@@ -2531,7 +2532,7 @@ describe("OAuth + MCP end to end", () => {
 
   it("with FREE_ONE_SERVICE, covers one Google service on Free: the demo is free, another service waits or needs Pro", async () => {
     googleUser.sub = "google-sub-one-service"; googleUser.email = "oneservice@example.com";
-    deps.freeOneService = true;
+    deps.freeOneServiceFrom = 0;
     try {
       const t = await connect();
       const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-one-service") as { id: string }).id;
@@ -2568,7 +2569,7 @@ describe("OAuth + MCP end to end", () => {
       db.prepare("UPDATE users SET plan = 'pro' WHERE id = ?").run(uid);
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
     } finally {
-      deps.freeOneService = false;
+      deps.freeOneServiceFrom = undefined;
       googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
       const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-one-service") as { id: string } | undefined;
       // Every table keyed by user, so later tests see only the users they made.
@@ -2579,14 +2580,98 @@ describe("OAuth + MCP end to end", () => {
     }
   });
 
+  it("before FREE_ONE_SERVICE's date, announces it and gates nothing; from the date, everyone picks a service, history before it aside", async () => {
+    googleUser.sub = "google-sub-dated"; googleUser.email = "dated@example.com";
+    deps.freeOneServiceFrom = now() + 86400;
+    try {
+      const t = await connect();
+      // Announced: every service works, billing says what changes and when, and nothing counts as picked.
+      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
+      const before = (await call(t, "billing")).json;
+      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console or Google Analytics; Pro and Agency cover all three together\.$/);
+      expect(before.included).toBe("every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work");
+      expect(before.pro).toContain("Google Ads, Search Console and Google Analytics together");
+      expect(before).not.toHaveProperty("service_in_use");
+      // ChatGPT connections get it with no paid plan named (its guidelines bar upgrade pitches), as every other plan text.
+      const clientId = (db.prepare("SELECT client_id FROM tokens WHERE user_id = (SELECT id FROM users WHERE google_sub = 'google-sub-dated') LIMIT 1").get() as { client_id: string }).client_id;
+      const info = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(clientId) as { info: string }).info;
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(info), redirect_uris: ["https://chatgpt.com/connector/oauth/dated"] }), clientId);
+      const gpt = (await call(t, "billing")).json;
+      expect(gpt.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, the current plan covers one Google service at a time: .+; using several together needs a different plan\.$/);
+      expect(JSON.stringify(gpt).replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/upgrade|\bPro\b|\$|account_page|https?:/i);
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(info, clientId);
+      // The account page's plan box says the same.
+      const login = await fetch(`${base}/account/login`, { redirect: "manual" });
+      const cookie = await signIn(new URL(login.headers.get("location")!), stateCookie(login));
+      const accountPage = async () => (await fetch(`${base}/account`, { headers: { cookie } })).text();
+      const soonBox = await accountPage();
+      expect(soonBox).toContain("Every tool, with unlimited applied changes, on 1 Google Ads account.");
+      expect(soonBox).toMatch(/<strong style="color:var\(--fg\)">From [A-Z][a-z]+ \d+, Free covers one Google service at a time/);
+      // The date passes while the server runs: Search Console use before it doesn't pick the service, so the user is asked.
+      deps.freeOneServiceFrom = now() + 1;
+      await new Promise((r) => setTimeout(r, 1100));
+      const ask = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
+      expect(ask.json).toMatchObject({ stop: "service_choice", this_call_uses: "Search Console" });
+      const after = (await call(t, "billing")).json;
+      expect(after).toMatchObject({ service_in_use: null, services_included: 1 });
+      expect(after).not.toHaveProperty("free_plan_change");
+      const onBox = await accountPage();
+      expect(onBox).toContain("on one Google service at a time (Google Ads on 1 account, Search Console or Google Analytics). In use: <strong");
+      expect(onBox).toContain("none yet; your AI asks which before the first");
+      expect(onBox).toContain("Pro covers all three together, on up to 5");
+      expect(onBox).not.toContain("Free covers one Google service at a time; Pro and Agency");
+    } finally {
+      deps.freeOneServiceFrom = undefined;
+      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
+      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-dated") as { id: string } | undefined;
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
+        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
+      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
+      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-dated");
+    }
+  });
+
+  it("reads FREE_ONE_SERVICE as 1 (on), a date (announced until then), or off", () => {
+    expect(parseFreeOneService("1")).toBe(0);
+    expect(parseFreeOneService("2026-11-16")).toBe(Date.UTC(2026, 10, 16) / 1000);
+    for (const v of [undefined, "", "0", "true", "2026-13-40", "11/16/2026"]) expect(parseFreeOneService(v)).toBeUndefined();
+    const from = Date.UTC(2026, 10, 16) / 1000;
+    expect(freePlan(undefined, from)).toEqual({ kind: "accounts" });
+    expect(freePlan(from, from - 1)).toEqual({ kind: "upcoming", from });
+    expect(freePlan(from, from)).toEqual({ kind: "one_service", from });
+  });
+
   it("describes whichever Free plan is live on /plans", () => {
-    const off = plansPage("https://x.test", { freeOneService: false }), on = plansPage("https://x.test", { freeOneService: true });
+    const from = Date.UTC(2026, 10, 16) / 1000;
+    const [off, soon, on] = ([{ kind: "accounts" }, { kind: "upcoming", from }, { kind: "one_service", from }] as FreePlan[])
+      .map((fp) => withFreePlan(fp, () => plansPage("https://x.test")));
     expect(off).toContain("on <strong>1 Google Ads account</strong> at a time");
-    expect(off).toContain("Search Console and Google Analytics are included and don't count");
+    expect(off).toContain("Search Console and Google Analytics are included and don't count.</p>");
+    expect(off).toContain("Everything in Free, on <strong>up to 5 Google Ads accounts</strong>");
+    expect(soon).toContain("don't count. From November 16, Free covers one Google service at a time");
+    expect(soon).toContain("Google Ads, Search Console and Google Analytics together, on <strong>up to 5 Google Ads accounts</strong>");
     expect(on).toContain("<strong>one Google service at a time</strong>");
+    expect(on).not.toContain("don't count");
     expect(on).toContain("Google Ads, Search Console and Google Analytics together, on <strong>up to 5 Google Ads accounts</strong>");
     // The body (the site header's nav is every page's): nothing that starts an upgrade or links the account page.
-    for (const h of [off, on]) expect(h.slice(h.indexOf('<div class="legal">'))).not.toMatch(/upgrade=|Upgrade to|href="\/account/i);
+    for (const h of [off, soon, on]) expect(h.slice(h.indexOf('<div class="legal">'))).not.toMatch(/upgrade=|Upgrade to|href="\/account/i);
+  });
+
+  it("says nothing on any page, in any phase, that the live Free plan makes untrue", () => {
+    const from = Date.UTC(2026, 10, 16) / 1000;
+    const render = () => [homePage("https://x.test"), claudeGuidePage("https://x.test"), chatgptGuidePage("https://x.test"), geminiGuidePage("https://x.test"),
+      searchConsolePage("https://x.test"), docsPage("https://x.test"), plansPage("https://x.test"), llmsTxt("https://x.test", [])].join("\n");
+    const off = withFreePlan({ kind: "accounts" }, render), soon = withFreePlan({ kind: "upcoming", from }, render), on = withFreePlan({ kind: "one_service", from }, render);
+    // Off: exactly as before the flag existed.
+    expect(off).not.toMatch(/one Google service|November 16/);
+    // Announced: today's plan stays described, and the change is named with its date wherever plans are detailed.
+    expect(soon).toContain("don't count");
+    expect(soon.match(/From November 16/g)!.length).toBeGreaterThanOrEqual(6);
+    // On: nothing says Search Console or Analytics are free alongside Ads, or that Free is every tool on an Ads account.
+    expect(on).not.toMatch(/don't count toward a plan|included and don't count|November 16|Everything in Free|Search Console and Google Analytics included/);
+    expect(on).not.toMatch(/Free on one Google Ads account|One Google Ads account is free|Free plan covers 1 Google Ads account|on 1 Google Ads account\. No card/);
+    expect(on).toContain('"Service limit"');
+    expect(on).toContain("What does Free cover?");
   });
 
   it("names the Google services a call uses: none for the demo, listings, lookups and proposal bookkeeping", () => {

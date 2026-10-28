@@ -11,7 +11,7 @@ if (!to) { console.error("usage: node dist/email-preview.js <to>"); process.exit
 const cfg = loadConfig();
 if (!cfg.mail) { console.error("RESEND_API_KEY not set"); process.exit(1); }
 const lc = new Lifecycle({ db: openDb(":memory:"), baseUrl: cfg.baseUrl, mail: cfg.mail,
-  internalEmails: new Set(), upgradeLink: () => null,
+  internalEmails: new Set(), upgradeLink: () => null, freeOneServiceFrom: cfg.freeOneServiceFrom,
   signingKey: lifecycleSigningKey(cfg.encryptionKey) });
 await lc.preview(to);
 console.log(`sent 7 sample emails to ${to}`);

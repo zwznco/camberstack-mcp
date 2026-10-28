@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, isPaid, type Plan, type Service } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, ALL_THREE, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, freePlan, freePlanChange, isPaid, type FreePlan, type Plan, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -92,8 +92,8 @@ export interface SessionDeps {
   /** Google Ads accounts each plan covers, over ACCOUNT_WINDOW_DAYS (config.ts). */
   freeAccounts: number;
   proAccounts: number;
-  /** Option C (plans.ts Service): Free covers one Google service at a time. Off unless FREE_ONE_SERVICE=1. */
-  freeOneService?: boolean;
+  /** Option C (plans.ts FreePlan): when Free starts covering one Google service at a time. Off unless FREE_ONE_SERVICE is set. */
+  freeOneServiceFrom?: number;
   /** Agency's accounts at a time; unset = no Agency plan (tests, and billing without STRIPE_AGENCY_PRICE_ID). */
   agencyAccounts?: number;
   proEmails: Set<string>;
@@ -269,7 +269,8 @@ export class UserSession {
   servicesInUse(): { s: Service; last: number }[] {
     const rows = this.deps.db.prepare(`SELECT service, max(at) last, max(id) id FROM tool_calls WHERE user_id = ? AND ok = 1 AND service IS NOT NULL AND at >= ?
         GROUP BY service ORDER BY last DESC, id DESC`)
-      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0)) as { service: string; last: number }[];
+      // Only calls since one-service Free started: everyone picks their service then, rather than keeping whichever they used last before it.
+      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0, this.deps.freeOneServiceFrom ?? 0)) as { service: string; last: number }[];
     const out: { s: Service; last: number }[] = [];
     for (const r of rows) for (const s of r.service.split(",") as Service[]) if (!out.some((o) => o.s === s)) out.push({ s, last: r.last });
     return out;
@@ -285,7 +286,7 @@ export class UserSession {
    * Returns a release to call once the call is logged: until then its service counts as in use.
    */
   checkService(services: Service[]): () => void {
-    if (!this.deps.freeOneService || this.isPro) return () => {};
+    if (!this.oneService || this.isPro) return () => {};
     const running = [...(servicesInFlight.get(this.user.id)?.keys() ?? [])];
     const used = this.servicesInUse();
     if (!running.length && !used.length && services.length === 1) {
@@ -498,15 +499,21 @@ export class UserSession {
    */
   private get plansPage(): string { return this.deps.plansLink?.(this.user.id) ?? `${this.deps.baseUrl}/plans`; }
 
+  /** Which Free is live now (plans.ts freePlan): FREE_ONE_SERVICE's date can pass while the server runs. */
+  private get freePlan(): FreePlan { return freePlan(this.deps.freeOneServiceFrom); }
+  private get oneService(): boolean { return this.freePlan.kind === "one_service"; }
+
   private freeIncluded(): string {
-    return this.deps.freeOneService
+    return this.oneService
       ? "every tool on 1 Google service at a time (Google Ads, Search Console or Google Analytics) and 1 Google Ads account, with unlimited applied changes; undo and history always work"
       : "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work";
   }
 
-  /** With FREE_ONE_SERVICE: which service Free covers now. Nothing otherwise, so plan() reads as before. */
-  private serviceUsage(): { service_in_use?: string | null; services_included?: number } {
-    if (!this.deps.freeOneService) return {};
+  /** With FREE_ONE_SERVICE: which service Free covers now, or the change it announces before its date. Nothing otherwise. */
+  private serviceUsage(): { service_in_use?: string | null; services_included?: number; free_plan_change?: string } {
+    const change = freePlanChange(this.freePlan, this.chatgpt);
+    if (change) return { free_plan_change: change };
+    if (!this.oneService) return {};
     const s = this.servicesInUse()[0]?.s;
     return { service_in_use: s ? SERVICE_LABELS[s] : null, services_included: 1 };
   }
@@ -534,7 +541,7 @@ export class UserSession {
           ...(this.planName === "pro" ? agency : {}) }
       : { plan: "free", account_page, ...usage, ...this.serviceUsage(),
           included: this.freeIncluded(),
-          pro: `${this.deps.freeOneService ? "Google Ads, Search Console and Google Analytics together, on " : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
+          pro: `${this.freePlan.kind !== "accounts" ? `${ALL_THREE}, on ` : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
           upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
   }

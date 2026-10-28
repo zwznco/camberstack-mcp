@@ -19,8 +19,9 @@ export const SWITCH_NOTICE_PREFIX = "Account switch:";
 export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
 
 /**
- * Option C (projects/camberstack/PRICING-TEST.md), behind FREE_ONE_SERVICE=1: Free covers one Google service at a time,
+ * Option C (projects/camberstack/PRICING-TEST.md), behind FREE_ONE_SERVICE: Free covers one Google service at a time,
  * the most recently used one over ACCOUNT_WINDOW_DAYS; paid plans cover all three together. Off by default.
+ * FREE_ONE_SERVICE=YYYY-MM-DD announces it until that day (UTC) and starts it then; =1 starts it now.
  */
 export type Service = "ads" | "search_console" | "analytics";
 export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", search_console: "Search Console", analytics: "Google Analytics" };
@@ -30,6 +31,35 @@ export const SERVICE_LIMIT_PREFIX = "Service limit:";
 export const SERVICE_CHOICE_PREFIX = "Service choice:";
 /** How long after a Service choice notice the next real call counts as the user's answer (session.ts checkService). */
 export const SERVICE_CHOICE_SECONDS = 15 * 60;
+
+/**
+ * Which Free plan is live: by Google Ads account (FREE_ONE_SERVICE unset), one-service Free announced for a date, or on
+ * since `from`. Every page, email and tool result that describes Free reads this, so the copy flips with the gate.
+ */
+export type FreePlan = { kind: "accounts" } | { kind: "upcoming"; from: number } | { kind: "one_service"; from: number };
+export function freePlan(from: number | undefined, t = Math.floor(Date.now() / 1000)): FreePlan {
+  return from === undefined ? { kind: "accounts" } : t < from ? { kind: "upcoming", from } : { kind: "one_service", from };
+}
+/** FREE_ONE_SERVICE → when one-service Free starts: "1" = always (0), "YYYY-MM-DD" = that day 00:00 UTC, else off. */
+export function parseFreeOneService(v: string | undefined): number | undefined {
+  if (v === "1") return 0;
+  const m = /^\d{4}-\d{2}-\d{2}$/.test(v ?? "") ? Date.parse(`${v}T00:00:00Z`) : NaN;
+  return Number.isNaN(m) ? undefined : m / 1000;
+}
+/** "November 16". */
+export const dateLabel = (t: number) => new Date(t * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+/** Free under one-service, as a clause: "one Google service at a time: Google Ads (1 account), Search Console or Google Analytics". */
+export const ONE_SERVICE_FREE = "one Google service at a time: Google Ads (1 account), Search Console or Google Analytics";
+/** What Pro and Agency cover beyond account count, once one-service Free is announced. */
+export const ALL_THREE = "Google Ads, Search Console and Google Analytics together";
+/**
+ * The announcement sentence while one-service Free is upcoming; empty otherwise. `neutral` names no paid plan, for ChatGPT
+ * connections (its plugin guidelines bar promoting upgrades; saying a feature needs a different plan is allowed).
+ */
+export const freePlanChange = (fp: FreePlan, neutral = false) =>
+  fp.kind !== "upcoming" ? ""
+    : `From ${dateLabel(fp.from)}, ${neutral ? "the current plan" : "Free"} covers ${ONE_SERVICE_FREE}; `
+      + (neutral ? "using several together needs a different plan." : "Pro and Agency cover all three together.");
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number) => `${n} Google Ads account${n === 1 ? "" : "s"}`;

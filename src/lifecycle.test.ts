@@ -83,6 +83,22 @@ describe("lifecycle emails", () => {
     expect(await lc.run()).toBe(0);
   });
 
+  it("describes whichever Free is live in the welcome: by account, announced with its date, or one service", async () => {
+    const welcomeText = async (freeOneServiceFrom?: number) => {
+      const sent: any[] = [];
+      const lc = new Lifecycle({ db: openDb(":memory:"), baseUrl: "https://camberstack.io", signingKey: Buffer.alloc(32, 7), internalEmails: new Set(),
+        mail: { apiKey: "re_test", from: "a <adam@camberstack.io>", replyTo: "adam@camberstack.io" }, upgradeLink: () => null, freeOneServiceFrom,
+        fetch: (async (_url: string, init: RequestInit) => { sent.push(JSON.parse(String(init.body))); return new Response("{}", { status: 200 }); }) as any });
+      await lc.preview("me@example.com");
+      return sent.find((m) => m.subject === "Welcome to Camberstack").text as string;
+    };
+    const off = await welcomeText(), soon = await welcomeText(Date.UTC(2099, 10, 16) / 1000), on = await welcomeText(0);
+    expect(off).toContain("Free covers one Google Ads account; Pro ($15/month) covers up to 5, and Agency ($49/month) up to 25.\n");
+    expect(soon).toContain("up to 25. From November 16, Free covers one Google service at a time: Google Ads (1 account), Search Console or Google Analytics; Pro and Agency cover all three together.");
+    expect(on).toContain("Free covers one Google service at a time: Google Ads (1 account), Search Console or Google Analytics; Pro ($15/month) covers Google Ads, Search Console and Google Analytics together on up to 5 Google Ads accounts");
+    expect(on).not.toContain("From November");
+  });
+
   it("sends limit_reached once, the morning after the plan gate refused a second account, with when the next switch opens", async () => {
     const { db, lc, sent, user, call } = setup();
     const refused = (userId: string, daysAgo: number, error = "Plan limit: Camberstack has been used on 2 Google Ads accounts; "

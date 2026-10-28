@@ -26,7 +26,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, ALL_THREE, ONE_SERVICE_FREE, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, freePlan, freePlanChange, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 
@@ -46,6 +46,8 @@ export interface LifecycleDeps {
   upgradeLink: (userId: string) => string | null;
   /** The upgrade link for Agency (billing.ts link "agency"); null or unset when Agency isn't sold. */
   agencyLink?: (userId: string) => string | null;
+  /** FREE_ONE_SERVICE's start (plans.ts FreePlan): the welcome describes whichever Free is live. */
+  freeOneServiceFrom?: number;
   fetch?: typeof fetch;
   /** Tests pin the time of day. */
   clock?: () => Date;
@@ -188,7 +190,7 @@ export class Lifecycle {
       AND (EXISTS (SELECT 1 FROM tokens t WHERE t.user_id = u.id) OR EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id))`)
       .all(Math.max(WELCOME_SINCE, now() - WELCOME_WITHIN)) as { id: string; email: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
-    return await this.deliver(fresh.map((u) => ({ ...u, kind: "welcome" as const, days: 0 })), () => welcome(this.d.baseUrl))
+    return await this.deliver(fresh.map((u) => ({ ...u, kind: "welcome" as const, days: 0 })), () => welcome(this.d.baseUrl, freePlan(this.d.freeOneServiceFrom)))
       + await this.deliver(pros.map((u) => ({ ...u, kind: "pro_welcome" as const, days: 0 })), (u) => proWelcome(this.d.baseUrl, u.plan));
   }
 
@@ -242,7 +244,7 @@ export class Lifecycle {
     await this.send(to, serviceLimit(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "Service limit: the Free plan covers one Google service at a time "
       + "(Google Ads, Search Console or Google Analytics), and this login uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used."), "preview");
     await this.send(to, checkInEmail(), "preview");
-    await this.send(to, welcome(this.d.baseUrl), "preview");
+    await this.send(to, welcome(this.d.baseUrl, freePlan(this.d.freeOneServiceFrom)), "preview");
     await this.send(to, proWelcome(this.d.baseUrl, "pro"), "preview");
   }
 
@@ -415,8 +417,11 @@ camberstack.io`,
 }
 
 /** Transactional: right after signup. Doesn't name Google Ads as connected: someone can sign up with only Search Console. */
-function welcome(base: string) {
+function welcome(base: string, fp: FreePlan = { kind: "accounts" }) {
   const ask = "How did each of my Google Ads campaigns do last month?";
+  const plans = fp.kind === "one_service"
+    ? `Free covers ${ONE_SERVICE_FREE}; Pro (${PRO_PRICE_LABEL}) covers ${ALL_THREE} on up to ${PRO_ACCOUNTS} Google Ads accounts, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`
+    : `Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.${fp.kind === "upcoming" ? ` ${freePlanChange(fp)}` : ""}`;
   return {
     subject: "Welcome to Camberstack",
     text: `Hi,
@@ -427,7 +432,7 @@ A good first question: "${ask}" From there, ask about search terms, keywords and
 
 Want to try it on sample data first? Ask: "Show me Camberstack's demo account."
 
-Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.
+${plans}
 
 If anything doesn't work, just reply. I read every email.
 
@@ -436,7 +441,7 @@ Camberstack`,
     html: wrap(p("Hi,") + p("You're connected. You can now use Camberstack in Claude or ChatGPT.")
       + p(`A good first question: <em>“${ask}”</em> From there, ask about search terms, keywords and budgets. Nothing changes until you approve it, and every change can be undone from <a href="${base}/account">your account page</a>.`)
       + p(`Want to try it on sample data first? Ask: <em>“Show me Camberstack's demo account.”</em>`)
-      + p(`Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`)
+      + p(plans)
       + p("If anything doesn't work, just reply. I read every email.") + p("Adam<br>Camberstack")),
   };
 }

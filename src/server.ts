@@ -25,7 +25,8 @@ import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
 import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
-import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
+import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage, withFreePlan } from "./pages.js";
+import { freePlan } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
@@ -75,6 +76,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     signingKey: lifecycleSigningKey(cfg.encryptionKey),
     upgradeLink: (userId) => billing.link("upgrade", userId, "email"),
     agencyLink: (userId) => billing.link("agency", userId, "email"),
+    freeOneServiceFrom: cfg.freeOneServiceFrom,
   });
   const announcements = new Announcements({ db, lifecycle, internalEmails, canSend: !!cfg.mail });
   const info = (title: string, body: string) => infoPage(cfg.baseUrl, title, body);
@@ -88,7 +90,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     signingKey: deriveKey(cfg.encryptionKey, "grant-links"), forgetToken: clearGoogleCache, fetch: overrides.fetch });
   const deps: SessionDeps = {
     db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
-    freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails, freeOneService: cfg.freeOneService ?? false,
+    freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails, freeOneServiceFrom: cfg.freeOneServiceFrom,
     agencyAccounts: billing.agencyEnabled ? cfg.agencyAccounts : undefined,
     billingLink: (kind, userId) => billing.link(kind, userId, "tool"), plansLink: (userId) => billing.plansLink(userId),
     refreshPlan: (userId) => billing.refreshPlan(userId),
@@ -327,13 +329,10 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.get("/mcp", noSessions);
   app.delete("/mcp", noSessions);
 
-  const page = (html: string) => (req: express.Request, res: express.Response) => {
-    res.setHeader("Cache-Control", "public, max-age=300");
-    adConversions.captureClick(req, res);  // keeps an ad click id; makes the response private if it does
-    res.type("html").send(html);
-  };
   const tools = toolCatalog();
-  const pages: Record<string, string> = {
+  // Each page rendered once per phase of FREE_ONE_SERVICE (plans.ts FreePlan: announced, then on), and the live phase's copy
+  // served, so the pages flip with the gate at its date, no restart. Unset, there's one phase.
+  const render = (): Record<string, string> => ({
     "/": homePage(cfg.baseUrl),
     "/google-ads-claude": claudeGuidePage(cfg.baseUrl),
     "/google-ads-chatgpt": chatgptGuidePage(cfg.baseUrl),
@@ -344,20 +343,32 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     "/about": aboutPage(cfg.baseUrl),
     "/privacy": privacyPage(cfg.baseUrl),
     "/terms": termsPage(cfg.baseUrl),
+    "/google-ads-gemini": geminiGuidePage(cfg.baseUrl),
+    // Not in the sitemap: the homepage #pricing is the page for search; this one is what ChatGPT connections link to.
+    "/plans": plansPage(cfg.baseUrl),
+    "/llms.txt": llmsTxt(cfg.baseUrl, tools),
+  });
+  const from = cfg.freeOneServiceFrom;
+  const phases = new Map((from === undefined ? [freePlan(undefined)] : [freePlan(from, from - 1), freePlan(from, from)])
+    .map((fp) => [fp.kind, withFreePlan(fp, render)]));
+  const live = () => phases.get(freePlan(from).kind)!;
+  const pages = live();
+  const page = (path: string) => (req: express.Request, res: express.Response) => {
+    res.setHeader("Cache-Control", "public, max-age=300");
+    adConversions.captureClick(req, res);  // keeps an ad click id; makes the response private if it does
+    res.type("html").send(live()[path]!);
   };
-  for (const [path, html] of Object.entries(pages)) app.get(path, page(html));
+  for (const path of Object.keys(pages)) if (path !== "/llms.txt" && path !== "/plans") app.get(path, page(path));
   for (const alias of ["/contact", "/contact-us", "/about-us"]) app.get(alias, (_q, r) => r.redirect(301, "/about"));
-  app.get("/google-ads-gemini", page(geminiGuidePage(cfg.baseUrl)));
-  // Not in the sitemap: the homepage #pricing is the page for search; this one is what ChatGPT connections link to.
   // A personal link (session.ts plansPage) counts the view in the paywall funnel; the page is the same for everyone.
   app.get("/plans", (req, _res, next) => { const u = billing.verify("plans", req.query.t); if (u) billing.track(u, "plans_view"); next(); },
-    page(plansPage(cfg.baseUrl, { freeOneService: cfg.freeOneService ?? false })));
+    page("/plans"));
   const indexed = Object.fromEntries(SITEMAP_PATHS.map((p) => [p, pages[p]!]));
   const { dates: lastmod, changed: changedPages } = pageDates(db, indexed, cfg.gitCommitDate);
   const inKey = indexNowKey(cfg.encryptionKey);
   app.get(`/${inKey}.txt`, (_q, r) => { r.type("text/plain").send(inKey); });
   app.get("/robots.txt", (_q, r) => { r.type("text/plain").send(cfg.noindex ? "User-agent: *\nDisallow: /\n" : robotsTxt(cfg.baseUrl)); });
-  app.get("/llms.txt", (_q, r) => { r.type("text/plain").send(llmsTxt(cfg.baseUrl, tools)); });
+  app.get("/llms.txt", (_q, r) => { r.type("text/plain").send(live()["/llms.txt"]!); });
   app.get("/sitemap.xml", (_q, r) => { r.type("application/xml").send(sitemapXml(cfg.baseUrl, lastmod)); });
   // Brand assets: the SVG is the source; the PNGs are rendered from it (brand/).
   const brand = (file: string, type: string) => (_q: express.Request, r: express.Response) => {

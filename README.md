@@ -111,7 +111,7 @@ BASE_URL=https://your.host npm run dev
 | `BASE_URL` | public origin, the OAuth issuer (default `https://camberstack.io`) |
 | `DATA_DIR` | SQLite location (default `./data`) |
 | `FREE_ACCOUNTS` / `PRO_ACCOUNTS` / `PRO_EMAILS` | Google Ads accounts each plan covers at a time, counted as distinct accounts used in the last 30 days plus one switch per 30 days, manager and demo accounts excluded (defaults 1 / 10) / emails treated as Pro |
-| `FREE_ONE_SERVICE` | `1` = Free covers one Google service at a time (Ads, Search Console or GA4: the most recently used, over 30 days); paid plans cover all three. Off unless set. The demo never counts |
+| `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console or GA4: the most recently used, over 30 days); paid plans cover all three. `YYYY-MM-DD` = announced until that day (UTC): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
 | `STRIPE_AGENCY_PRICE_ID` / `AGENCY_ACCOUNTS` | the Agency plan's price (its own product) / accounts it covers (default 25); unset price = no Agency offered. Which plan a user is on follows their subscription's price, so a Pro ↔ Agency switch in Stripe's billing portal (which must list both prices) moves it within the hour |
 

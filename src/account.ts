@@ -196,9 +196,12 @@ ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="bt
       : (() => {
         const used = plan.accounts_in_use;
         return `<div class="card"><p class="label">Plan</p><p class="big">Free</p>
-<p class="muted">Every tool, with unlimited applied changes, on ${plan.accounts_included} Google Ads account.
-${used.length ? `In use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on an account yet."}
-Pro covers up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
+<p class="muted">${"services_included" in plan
+  ? `Every tool, with unlimited applied changes, on one Google service at a time (Google Ads on ${plan.accounts_included} account, Search Console or Google Analytics). In use: <strong style="color:var(--fg)">${esc(plan.service_in_use ?? "none yet; your AI asks which before the first")}</strong>.`
+  : `Every tool, with unlimited applied changes, on ${plan.accounts_included} Google Ads account.`}
+${used.length ? `Google Ads accounts in use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on a Google Ads account yet."}
+Pro covers ${"services_included" in plan ? `all three together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
+${"free_plan_change" in plan && plan.free_plan_change ? `<p class="muted"><strong style="color:var(--fg)">${esc(plan.free_plan_change)}</strong></p>` : ""}
 <p class="muted">To move to a different account, ask your AI to switch to it: Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.</p>
 ${!by && "upgrade_url" in plan && plan.upgrade_url ? `<a class="btn" href="${esc(plan.upgrade_url)}">Upgrade to Pro · ${PRO_PRICE_LABEL}</a>` : ""}
 ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="btn" href="${esc(plan.agency_upgrade_url)}">Agency · ${AGENCY_PRICE_LABEL}</a>` : ""}</div>`;
