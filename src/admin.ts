@@ -388,13 +388,23 @@ function retentionCard(v: View): string {
     `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="Of each week's users who ever applied a real-account change, the share that applied one 7n–7n+7 days after their own signup. Demo account excluded. Paid: on a paid plan now.">all time · applied in week N, of appliers</small>`);
 }
 
+/** The one-service paywall funnel (report.ts paywall; PRICING-TEST.md): read by group, existing vs new signups, ChatGPT vs other apps. */
+function paywallCard(v: View): string {
+  const p = v.report.paywall;
+  if (!p.since) return "";
+  return card("Paywall · one service", table(["signed up", "app", ["users", "r"], ["stopped", "r"], ["emailed", "r"], ["viewed /plans", "r"], ["clicked upgrade", "r"], ["paid", "r"]],
+    p.rows.map((r) => [r.existing ? "before switch-on" : "after", r.chatgpt ? "ChatGPT" : "other", num(r.users), num(r.stopped), num(r.emailed),
+      r.chatgpt ? num(r.viewed) : `<span class="muted">—</span>`, num(r.clicked), num(r.paid)]), "Nobody active since switch-on."),
+    `<small title="From the first Service notice (the flag going on). Users seen since then. Stopped: got Service limit. ChatGPT gets /plans, not an upgrade link; others get the link in the stop itself. Clicked: any personal upgrade link (tool, email, account page). Paid: a checkout since switch-on.">since ${when(p.since)}</small>`);
+}
+
 function usersPage(v: View): string {
   const r = v.report, since = windowStart(v.days);
   // Users seen in the window (last seen, else signed up); ?all=1 keeps everyone, so users idle past 90d stay reachable.
   const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
   const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
   const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
-  return signupsChart(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
+  return signupsChart(v) + paywallCard(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),

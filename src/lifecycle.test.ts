@@ -58,6 +58,31 @@ describe("lifecycle emails", () => {
     expect(sent.map((m) => m.to[0])).toEqual(["lookup@example.com"]);
   });
 
+  it("sends service_limit once, the morning after the one-service gate stopped a second service, naming both and the open date", async () => {
+    const { db, lc, sent, user, call } = setup();
+    // A stop is a SwitchNotice: logged ok, its text in error (tools.ts).
+    const stopped = (userId: string, daysAgo: number, error: string) =>
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'account_overview', 1, ?, 10, 10)")
+        .run(now() - daysAgo * DAY, userId, error);
+    const limit = "Service limit: the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and this login "
+      + "uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used.";
+    user("sc", "sc@example.com", 10); call("sc", "search_console_summary"); stopped("sc", 0.3, limit);
+    user("both", "both@example.com", 10); stopped("both", 0.3, "Service limit: the Free plan covers one Google service at a time "
+      + "(Google Ads, Search Console or Google Analytics), and Search Console and Google Ads together need more than one.");
+    user("recent", "recent@example.com", 10); stopped("recent", 0.2, limit);                 // under 6 hours ago
+    user("chose", "chose@example.com", 10); stopped("chose", 0.3, "Service choice: The Free plan covers one Google service");  // not a stop
+    user("pro", "pro@example.com", 10, "pro"); stopped("pro", 0.3, limit);
+    expect(await lc.run()).toBe(2);
+    const sc = sent.find((m) => m.to[0] === "sc@example.com"), both = sent.find((m) => m.to[0] === "both@example.com");
+    expect(sc.subject).toBe("Using Google Ads, Search Console and Analytics together");
+    expect(sc.text).toContain("stopped when your AI tried to use Google Ads. The Free plan covers one Google service at a time, "
+      + "and you're using it for Search Console; Google Ads opens on Free on November 27.");
+    expect(sc.text).toContain("https://camberstack.io/upgrade?t=sc.sig");
+    expect(sc.text).toContain("every tool and unlimited changes keep working on Search Console");
+    expect(both.text).toContain("tried to use Search Console and Google Ads. The Free plan covers one Google service at a time.");
+    expect(await lc.run()).toBe(0);
+  });
+
   it("sends limit_reached once, the morning after the plan gate refused a second account, with when the next switch opens", async () => {
     const { db, lc, sent, user, call } = setup();
     const refused = (userId: string, daysAgo: number, error = "Plan limit: Camberstack has been used on 2 Google Ads accounts; "

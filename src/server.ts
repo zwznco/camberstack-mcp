@@ -73,8 +73,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   const lifecycle = new Lifecycle({
     db, baseUrl: cfg.baseUrl, mail: cfg.mail, fetch: overrides.mailFetch, internalEmails,
     signingKey: lifecycleSigningKey(cfg.encryptionKey),
-    upgradeLink: (userId) => billing.link("upgrade", userId),
-    agencyLink: (userId) => billing.link("agency", userId),
+    upgradeLink: (userId) => billing.link("upgrade", userId, "email"),
+    agencyLink: (userId) => billing.link("agency", userId, "email"),
   });
   const announcements = new Announcements({ db, lifecycle, internalEmails, canSend: !!cfg.mail });
   const info = (title: string, body: string) => infoPage(cfg.baseUrl, title, body);
@@ -90,7 +90,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
     freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails, freeOneService: cfg.freeOneService ?? false,
     agencyAccounts: billing.agencyEnabled ? cfg.agencyAccounts : undefined,
-    billingLink: (kind, userId) => billing.link(kind, userId), refreshPlan: (userId) => billing.refreshPlan(userId),
+    billingLink: (kind, userId) => billing.link(kind, userId, "tool"), plansLink: (userId) => billing.plansLink(userId),
+    refreshPlan: (userId) => billing.refreshPlan(userId),
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };
   const mcpUrl = new URL(`${cfg.baseUrl}/mcp`);
@@ -175,7 +176,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
 
   const account = mountAccount(app, {
     db, google: cfg.google, baseUrl: cfg.baseUrl, fetch: overrides.fetch,
-    session: (userId, o) => UserSession.load(deps, userId, o), billingLink: (kind, userId) => billing.link(kind, userId),
+    session: (userId, o) => UserSession.load(deps, userId, o), billingLink: (kind, userId) => billing.link(kind, userId, "account"),
     adminUrl: cfg.adminUrl,
   });
   const feedback = mountFeedback(app, {
@@ -348,7 +349,9 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   for (const alias of ["/contact", "/contact-us", "/about-us"]) app.get(alias, (_q, r) => r.redirect(301, "/about"));
   app.get("/google-ads-gemini", page(geminiGuidePage(cfg.baseUrl)));
   // Not in the sitemap: the homepage #pricing is the page for search; this one is what ChatGPT connections link to.
-  app.get("/plans", page(plansPage(cfg.baseUrl, { freeOneService: cfg.freeOneService ?? false })));
+  // A personal link (session.ts plansPage) counts the view in the paywall funnel; the page is the same for everyone.
+  app.get("/plans", (req, _res, next) => { const u = billing.verify("plans", req.query.t); if (u) billing.track(u, "plans_view"); next(); },
+    page(plansPage(cfg.baseUrl, { freeOneService: cfg.freeOneService ?? false })));
   const indexed = Object.fromEntries(SITEMAP_PATHS.map((p) => [p, pages[p]!]));
   const { dates: lastmod, changed: changedPages } = pageDates(db, indexed, cfg.gitCommitDate);
   const inKey = indexNowKey(cfg.encryptionKey);

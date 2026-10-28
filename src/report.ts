@@ -122,6 +122,7 @@ export function buildReport(db: DB, o: ReportOptions) {
     signupsHourly: o.days === 1 ? q<{ hour: number; n: number }>(
       `SELECT cast(strftime('%H', created_at, 'unixepoch') AS int) hour, count(*) n FROM {U} u WHERE created_at >= ? GROUP BY 1 ORDER BY 1`, since) : [],
     retention: retention(q),
+    paywall: paywall(q),
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
@@ -215,6 +216,29 @@ function retention(q: <T>(sql: string, ...p: unknown[]) => T[], t = now()) {
       applied: Array.from({ length: begun }, (_, n) => applied.find((b) => b.start === c.start && b.wk === n)?.users ?? 0),
     };
   });
+}
+
+/**
+ * The one-service paywall (FREE_ONE_SERVICE; projects/camberstack/PRICING-TEST.md), from the first Service notice on, which is
+ * when the flag went on. Users split into those who signed up before it (they lost all three) and after (Free was always one
+ * service), and by whether they use ChatGPT, whose connections get /plans instead of an upgrade link. Each step counts users
+ * since the switch-on: stopped by `Service limit:`, emailed about it, viewed /plans through their personal link, clicked a
+ * personal upgrade link (any source), and paid. Empty until the flag has stopped someone.
+ */
+function paywall(q: <T>(sql: string, ...p: unknown[]) => T[]) {
+  const on = q<{ at: number | null }>(
+    `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE 'Service limit:%' OR c.error LIKE 'Service choice:%'`)[0]?.at;
+  if (!on) return { since: null, rows: [] };
+  const chatgpt = `EXISTS (SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = u.id
+    AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%'))`;
+  const ev = (kind: string) => `EXISTS (SELECT 1 FROM plan_events e WHERE e.user_id = u.id AND e.kind = '${kind}' AND e.at >= ${on})`;
+  const rows = q<{ existing: number; chatgpt: number; users: number; stopped: number; emailed: number; viewed: number; clicked: number; paid: number }>(
+    `SELECT u.created_at < ${on} existing, ${chatgpt} chatgpt, count(*) users,
+       sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE 'Service limit:%')) stopped,
+       sum(EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'service_limit')) emailed,
+       sum(${ev("plans_view")}) viewed, sum(${ev("upgrade_click")}) clicked, sum(${ev("paid")}) paid
+     FROM {U} u WHERE coalesce(u.last_seen_at, u.created_at) >= ${on} GROUP BY 1, 2 ORDER BY 1 DESC, 2 DESC`);
+  return { since: on, rows };
 }
 
 /** Google scope → the service it is, in the order the admin shows them. openid/email are left out. */

@@ -20,6 +20,9 @@ const LINK_TTL = 7 * 86400;
 /** Subscription statuses that keep Pro (past_due: Stripe is still retrying the card). */
 const LIVE = new Set(["active", "trialing", "past_due"]);
 const APP = "camberstack-mcp";
+/** Where a personal upgrade link was handed out (plan_events.src): an AI tool result, a lifecycle email, the account page. */
+export type LinkSrc = "tool" | "email" | "account";
+const SRCS = new Set<string>(["tool", "email", "account"]);
 
 export interface BillingDeps {
   db: DB;
@@ -45,11 +48,28 @@ export class Billing {
    * A link for one user, valid for a week. Null when billing (or, for "agency", the Agency plan) isn't configured.
    * "agency" is the upgrade link with plan=agency: which plan to buy is the user's choice, so it isn't signed.
    */
-  link(kind: "upgrade" | "billing" | "agency", userId: string): string | null {
+  link(kind: "upgrade" | "billing" | "agency", userId: string, src?: LinkSrc): string | null {
     if (!this.enabled || (kind === "agency" && !this.agencyEnabled)) return null;
     const k = kind === "agency" ? "upgrade" : kind;
     const payload = `${userId}.${now() + LINK_TTL}`;
-    return `${this.d.baseUrl}/${k}?t=${payload}.${this.sign(`${k}:${payload}`)}${kind === "agency" ? "&plan=agency" : ""}`;
+    // src isn't signed: it only labels the click for the funnel.
+    return `${this.d.baseUrl}/${k}?t=${payload}.${this.sign(`${k}:${payload}`)}${kind === "agency" ? "&plan=agency" : ""}${src && k === "upgrade" ? `&src=${src}` : ""}`;
+  }
+
+  /**
+   * The /plans page through a personal link, so a view counts in the paywall funnel (ChatGPT connections get this instead
+   * of an upgrade link). Works without Stripe: the page is facts only.
+   */
+  plansLink(userId: string): string {
+    const payload = `${userId}.${now() + LINK_TTL}`;
+    return `${this.d.baseUrl}/plans?t=${payload}.${this.sign(`plans:${payload}`)}`;
+  }
+
+  /** One paywall funnel step (db.ts plan_events). Never throws: tracking must not break a page. */
+  track(userId: string, kind: "upgrade_click" | "plans_view" | "paid", src: string | null = null): void {
+    try {
+      this.d.db.prepare("INSERT INTO plan_events (user_id, kind, src, at) VALUES (?, ?, ?, ?)").run(userId, kind, src, now());
+    } catch { /* best effort */ }
   }
 
   /** The plan a live subscription pays for: Agency by its price, anything else Pro (the old $49 Pro price included). */
@@ -58,7 +78,7 @@ export class Billing {
     return this.d.stripe?.agencyPriceId && prices.includes(this.d.stripe.agencyPriceId) ? "agency" : "pro";
   }
 
-  verify(kind: "upgrade" | "billing", t: unknown): string | null {
+  verify(kind: "upgrade" | "billing" | "plans", t: unknown): string | null {
     const [userId, exp, sig] = String(t ?? "").split(".");
     if (!userId || !exp || !sig) return null;
     return safeEqual(this.sign(`${kind}:${userId}.${exp}`), sig) && Number(exp) >= now() ? userId : null;
@@ -85,6 +105,9 @@ export class Billing {
     if (session?.status !== "complete" || session?.metadata?.app !== APP || !session.client_reference_id) return null;
     const r = this.d.db.prepare("UPDATE users SET plan = ?, stripe_customer = ?, stripe_sub = ? WHERE id = ?")
       .run(this.planOf(sub), String(session.customer ?? ""), String(session.subscription ?? ""), session.client_reference_id);
+    // Settling repeats (the sweep, a reload of /upgraded): one paid event per subscription, its id in src.
+    if (r.changes && session.subscription && !this.d.db.prepare("SELECT 1 FROM plan_events WHERE user_id = ? AND kind = 'paid' AND src = ?")
+      .get(session.client_reference_id, String(session.subscription))) this.track(session.client_reference_id, "paid", String(session.subscription));
     return r.changes ? session.client_reference_id : null;
   }
 
@@ -162,6 +185,7 @@ export class Billing {
       const userId = this.verify("upgrade", req.query.t);
       const u = userId ? this.user(userId) : undefined;
       if (!u || !this.enabled) return expired(res);
+      this.track(u.id, "upgrade_click", SRCS.has(String(req.query.src)) ? String(req.query.src) : null);
       const want: Plan = req.query.plan === "agency" && this.agencyEnabled ? "agency" : "pro";
       const name = want === "agency" ? "Agency" : "Pro";
       if (u.plan === want) return send(res, 200, `Already on ${name}`, `<p>${esc(u.email)} is already on Camberstack ${name}. Go back to your AI assistant and carry on.</p>`);

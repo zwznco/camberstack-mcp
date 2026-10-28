@@ -807,7 +807,8 @@ describe("OAuth + MCP end to end", () => {
     expect(blocked.text).toContain("Plan limit:");
     expect(blocked.text).toContain("2 Google Ads accounts in the last 30 days (1112223333, 2223334444)");
     expect(blocked.text).toContain("1 at a time (active: 1112223333), with one switch per 30 days, already used");
-    const link = blocked.text.match(/https?:\/\/\S+\/upgrade\?t=[\w.-]+/)![0];
+    // Tagged as handed out by a tool, for the paywall funnel (billing.ts track).
+    const link = blocked.text.match(/https?:\/\/\S+\/upgrade\?t=[\w.-]+&src=tool/)![0];
     // The refusal is structured: facts as fields, no instructions to the assistant.
     const limit = JSON.parse(blocked.text.slice(blocked.text.indexOf("\n") + 1));
     expect(limit).toMatchObject({ error: "plan_limit", plan: "free", accounts_in_use: ["1112223333", "2223334444"], active_accounts: ["1112223333"], accounts_included: 1,
@@ -824,11 +825,15 @@ describe("OAuth + MCP end to end", () => {
     const gpt = await call(token, "account_overview", { customer_id: "999-888-7777", days: 30 });
     expect(gpt.text).toContain("Plan limit:");
     expect(gpt.text).toContain("More accounts at a time need a different plan.");
-    expect(gpt.text).not.toMatch(/upgrade|\bPro\b|\$|pricing/i);
-    expect(gpt.text).toContain(`"plans_page": "${base}/plans"`);
+    // A personal /plans link, so a view counts in the paywall funnel; its token is random, so leave it out of the word checks.
+    const plansLink = /http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g;
+    expect(gpt.text.replace(plansLink, "")).not.toMatch(/upgrade|\bPro\b|\$|pricing/i);
+    expect(gpt.json?.plans_page ?? JSON.parse(gpt.text.slice(gpt.text.indexOf("\n") + 1)).plans_page).toMatch(new RegExp(`^${base}/plans\\?t=`));
     const gptPlan = await call(token, "billing", {});
-    expect(gptPlan.json).toMatchObject({ plan: "free", accounts_included: 1, plans_page: `${base}/plans` });
-    expect(JSON.stringify(gptPlan.json).replaceAll(`${base}/plans`, "")).not.toMatch(/upgrade|\bPro\b|\$|account_page|https?:/i);
+    expect(gptPlan.json).toMatchObject({ plan: "free", accounts_included: 1, plans_page: expect.stringMatching(new RegExp(`^${base}/plans\\?t=`)) });
+    expect(JSON.stringify(gptPlan.json).replace(plansLink, "")).not.toMatch(/upgrade|\bPro\b|\$|account_page|https?:/i);
+    await fetch(gptPlan.json.plans_page);
+    expect(db.prepare("SELECT count(*) n FROM plan_events WHERE user_id = ? AND kind = 'plans_view'").get(uid)).toEqual({ n: 1 });
     // The page it links to describes plans and starts nothing: no upgrade buttons, no checkout links.
     const plansHtml = await (await fetch(`${base}/plans`)).text();
     expect(plansHtml).toContain("<h2>Pro · $15/month</h2>");
@@ -850,7 +855,7 @@ describe("OAuth + MCP end to end", () => {
     expect(plan.json.upgrade_url).toContain("/upgrade?t=");
 
     // A tampered link is refused; the real one goes to Stripe Checkout as a subscription for this user.
-    expect((await fetch(link.replace(/.$/, (c) => (c === "A" ? "B" : "A")), { redirect: "manual" })).status).toBe(400);
+    expect((await fetch(link.replace(/.(?=&src=)/, (c) => (c === "A" ? "B" : "A")), { redirect: "manual" })).status).toBe(400);
     const go = await fetch(link, { redirect: "manual" });
     expect(go.status).toBe(303);
     expect(go.headers.get("location")).toContain("checkout.stripe.com");

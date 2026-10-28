@@ -6,6 +6,8 @@
  *   switch_wanted  a Free user's AI was stopped before spending the switch (asked about another account) and they didn't
  *                  spend it, still free the next morning (6+ hours later) → the plan that covers all their accounts
  *                  (Pro, or Agency past Pro's limit), its upgrade link. One upgrade email per user: never both this and limit_reached
+ *   service_limit  the one-service gate (FREE_ONE_SERVICE) stopped a Free user's AI asking for a second Google service, still
+ *                  free the next morning (6+ hours later) → which service they use, when the other opens, Pro covering all three
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on Pro with a Stripe subscription → what Pro adds, where billing lives
@@ -24,7 +26,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, PRO_PRICE_LABEL, SWITCH_NOTICE_PREFIX } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 
@@ -63,7 +65,7 @@ function localHour(at: Date, tz: string | null | undefined): number {
   const fmt = (zone: string) => Number(new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hourCycle: "h23" }).format(at));
   try { return fmt(tz || FALLBACK_TZ); } catch { return fmt(FALLBACK_TZ); }
 }
-type Kind = "first_steps" | "limit_reached" | "switch_wanted" | "check_in" | "welcome" | "pro_welcome";
+type Kind = "first_steps" | "limit_reached" | "switch_wanted" | "service_limit" | "check_in" | "welcome" | "pro_welcome";
 /** welcome shipped at this time (2026-10-14); everyone who signed up before it never gets one. */
 const WELCOME_SINCE = 1792001873;
 /** A welcome that hasn't gone out a day after signup (mail down that long) is dropped, not sent late. */
@@ -86,7 +88,7 @@ export class Lifecycle {
   }
 
   /** Who is due each email right now. */
-  private due(): { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number }[] {
+  private due(): { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string }[] {
     const t = now();
     const eligible = `u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan = 'free'`;
     const notSent = (k: string) => `NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = '${k}')`;
@@ -113,6 +115,13 @@ export class Lifecycle {
         AND NOT EXISTS (SELECT 1 FROM tool_calls s WHERE s.user_id = u.id AND s.tool = 'switch_account' AND s.ok = 1 AND s.at >= c.at)
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${SWITCH_NOTICE_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; ads_accounts: number | null; last: number }[];
+    // Stopped by the one-service gate (session.ts checkService), the last stop 6 hours to 30 days ago. A stop logs as ok
+    // (a SwitchNotice), so it's matched on the text; `error` is the latest one's, which names both services and the open date.
+    const service = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
+      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ?
+      WHERE ${eligible} AND ${notSent("service_limit")}
+      GROUP BY u.id HAVING last BETWEEN ? AND ?`)
+      .all(`${SERVICE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // First applied change to a real account (not the demo, not an undo) 2–14 days ago; any plan, connected or not.
     const checkIn = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, min(p.applied_at) first FROM users u
       JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.undo_of IS NULL AND p.customer_id <> ?
@@ -130,6 +139,7 @@ export class Lifecycle {
         opens: /the next opens (\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
       ...wanted.filter(ok).map((u) => ({ kind: "switch_wanted" as const, id: u.id, email: u.email, days: 0,         // All their accounts: what list_accounts last saw (managers aren't counted), or more if they asked about more since.
         accounts: Math.max(2, u.ads_accounts ?? 0, this.askedAccounts(u.id)) })),
+      ...service.filter(ok).map((u) => ({ kind: "service_limit" as const, id: u.id, email: u.email, days: 0, error: u.error })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];
   }
@@ -149,7 +159,8 @@ export class Lifecycle {
     if (!this.d.mail) return 0;
     return this.deliver(this.due(), (u) => u.kind === "first_steps" ? firstSteps(u.days)
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
-      : u.kind === "switch_wanted" ? this.switchWantedFor(u.id, u.accounts ?? 2) : checkInEmail());
+      : u.kind === "switch_wanted" ? this.switchWantedFor(u.id, u.accounts ?? 2)
+      : u.kind === "service_limit" ? serviceLimit(this.d.baseUrl, this.d.upgradeLink(u.id), u.error ?? "") : checkInEmail());
   }
 
   /** Agency only when they have more accounts than Pro covers and Agency is sold; otherwise Pro. */
@@ -228,6 +239,8 @@ export class Lifecycle {
     await this.send(to, firstSteps(3), "preview");
     await this.send(to, limitReached(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "2026-11-13"), "preview");
     await this.send(to, switchWanted(this.d.baseUrl, 5, "pro", `${this.d.baseUrl}/account?upgrade=1`), "preview");
+    await this.send(to, serviceLimit(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "Service limit: the Free plan covers one Google service at a time "
+      + "(Google Ads, Search Console or Google Analytics), and this login uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used."), "preview");
     await this.send(to, checkInEmail(), "preview");
     await this.send(to, welcome(this.d.baseUrl), "preview");
     await this.send(to, proWelcome(this.d.baseUrl, "pro"), "preview");
@@ -292,6 +305,41 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
   const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work";
   return {
     subject: "Using Camberstack on more than one Google Ads account",
+    text: `Hi,
+
+${stopped}
+
+${pro}${upgrade ? `\n${upgrade}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
+
+${free} Your plan: ${base}/account
+
+This is the only email about it. Questions? Just reply.
+
+Adam
+Camberstack`,
+    html: wrap(p("Hi,") + p(stopped) + p(pro)
+      + `<p style="margin:0 0 18px"><a href="${upgrade ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">Upgrade to Pro</a></p>`
+      + p(`${free} Your plan is on <a href="${base}/account">your account page</a>.`)
+      + p("This is the only email about it. Questions? Just reply.") + p("Adam<br>Camberstack")),
+  };
+}
+
+/**
+ * Service names and a date only, read back from the stop's own text (session.ts checkService): "… this login uses it for
+ * Search Console. Google Ads opens on Free on 2026-11-27, …", or "… Search Console and Google Ads together need more than one."
+ */
+function serviceLimit(base: string, upgrade: string | null, error: string) {
+  const have = /uses it for ([^.]+)\./.exec(error)?.[1];
+  const opens = /\. (.+?) opens on Free on (\d{4}-\d{2}-\d{2})/.exec(error);
+  const want = opens?.[1] ?? /and (.+?) together need more than one/.exec(error)?.[1] ?? "another Google service";
+  const when = opens && new Date(`${opens[2]}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+  const stopped = `Camberstack stopped when your AI tried to use ${want}. The Free plan covers one Google service at a time`
+    + (have ? `, and you're using it for ${have}${when ? `; ${want} opens on Free on ${when}` : ""}.` : ".");
+  const pro = `Camberstack Pro covers Google Ads, Search Console and Google Analytics together, including the tools that use them side by side, `
+    + `such as finding searches you pay for that already rank, for ${PRO_PRICE_LABEL}; cancel any time.`;
+  const free = `On Free, every tool and unlimited changes keep working${have ? ` on ${have}` : ""}, and undo and history always work.`;
+  return {
+    subject: "Using Google Ads, Search Console and Analytics together",
     text: `Hi,
 
 ${stopped}

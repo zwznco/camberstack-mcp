@@ -126,6 +126,17 @@ CREATE TABLE IF NOT EXISTS email_log (
   PRIMARY KEY (user_id, kind)
 );
 
+-- The paywall funnel past the stop itself (billing.ts track; PRICING-TEST.md): a click on a personal upgrade link
+-- (src = where the link was handed out), a view of /plans through a personal link, a paid checkout. The stops are
+-- tool_calls rows already (error 'Service limit:' etc.), and the emails are email_log.
+CREATE TABLE IF NOT EXISTS plan_events (
+  user_id  TEXT NOT NULL,
+  kind     TEXT NOT NULL CHECK (kind IN ('upgrade_click','plans_view','paid')),
+  src      TEXT,
+  at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plan_events_user ON plan_events (user_id, kind);
+
 -- Announcement presets (announce.ts) the operator has sent from the admin: each goes out once. Who got one is in
 -- email_log, kind 'announce:<id>'. started_at also fixes who's eligible (users who'd signed up by then).
 CREATE TABLE IF NOT EXISTS announcement_sends (

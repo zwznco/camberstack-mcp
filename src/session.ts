@@ -101,6 +101,8 @@ export interface SessionDeps {
   refreshPlan?: (userId: string) => Promise<boolean>;
   /** Signed per-user billing links (billing.ts); null when billing isn't configured. */
   billingLink?: (kind: "upgrade" | "billing" | "agency", userId: string) => string | null;
+  /** A personal /plans link, so a view counts in the paywall funnel (billing.ts plansLink). */
+  plansLink?: (userId: string) => string;
   /** Tests inject a fake. */
   adsFactory?: (user: UserRow) => AdsClient;
   scFactory?: (user: UserRow) => SearchConsole;
@@ -494,7 +496,7 @@ export class UserSession {
    * What ChatGPT connections link to about plans: facts only, no upgrade buttons (pages.ts plansPage). Its guidelines allow
    * explaining that a feature needs a different plan and linking "an informational page describing available plans".
    */
-  private get plansPage(): string { return `${this.deps.baseUrl}/plans`; }
+  private get plansPage(): string { return this.deps.plansLink?.(this.user.id) ?? `${this.deps.baseUrl}/plans`; }
 
   private freeIncluded(): string {
     return this.deps.freeOneService

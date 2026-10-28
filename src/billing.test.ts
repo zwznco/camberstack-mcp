@@ -74,6 +74,29 @@ describe("Agency plan billing", () => {
     expect(plan("b")).toBe("agency");
   });
 
+  it("tracks the paywall funnel: upgrade clicks by where the link came from, one paid event per subscription, /plans links", async () => {
+    user("f");
+    const events = (kind: string) => db.prepare("SELECT src FROM plan_events WHERE user_id = 'f' AND kind = ?").all(kind).map((r: any) => r.src);
+    expect(billing.link("upgrade", "f", "email")).toMatch(/&src=email$/);
+    expect(billing.link("billing", "f", "tool")).not.toContain("src=");
+    await visit(billing.link("upgrade", "f", "email")!);
+    await visit(billing.link("upgrade", "f")!);
+    await visit(`${billing.link("upgrade", "f")!}&src=bogus`);
+    expect(events("upgrade_click")).toEqual(["email", null, null]);
+    // A forged or expired token is no click.
+    await visit("http://x/upgrade?t=f.9999999999.bad&src=tool");
+    expect(events("upgrade_click")).toHaveLength(3);
+    stripe.subs.set("sub_f", { status: "active", price: PRO });
+    stripe.sessions.set("cs_f", { id: "cs_f", status: "complete", metadata: { app: "camberstack-mcp" }, client_reference_id: "f", customer: "cus_f", subscription: "sub_f" });
+    await visit(`${base}/upgraded?session_id=cs_f`);
+    await visit(`${base}/upgraded?session_id=cs_f`);
+    await billing.sweep();
+    expect(events("paid")).toEqual(["sub_f"]);
+    const t = new URL(billing.plansLink("f")).searchParams.get("t");
+    expect(billing.verify("plans", t)).toBe("f");
+    expect(billing.verify("upgrade", t)).toBeNull();
+  });
+
   it("follows a switch between Pro and Agency made in the billing portal, and drops either when it ends", async () => {
     user("c", "pro", "sub_c");
     stripe.subs.set("sub_c", { status: "active", price: AGENCY });

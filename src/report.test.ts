@@ -48,6 +48,33 @@ describe("buildReport", () => {
     });
   });
 
+  it("reads the one-service paywall from switch-on, by existing vs new signups and ChatGPT vs other apps", () => {
+    const db = openDb(":memory:");
+    const t = now(), on = t - 5 * 86400;
+    expect(buildReport(db, { days: 7, exclude: [] }).paywall).toEqual({ since: null, rows: [] });
+    db.prepare("INSERT INTO clients (client_id, info, created_at) VALUES ('gpt', ?, 0), ('claude', ?, 0)")
+      .run(JSON.stringify({ redirect_uris: ["https://chatgpt.com/connector/oauth/x"] }), JSON.stringify({ redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] }));
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, last_seen_at) VALUES (?, ?, ?, 'free', ?, ?)");
+    u.run("old", "g1", "o@x.com", t - 20 * 86400, t);      // existing, Claude: stopped, clicked, paid
+    u.run("gone", "g2", "g@x.com", t - 20 * 86400, t - 10 * 86400);  // idle since before switch-on: not in the read
+    u.run("gptnew", "g3", "n@x.com", t - 86400, t);        // new, ChatGPT: stopped, emailed, viewed /plans
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, ok, error, ms, bytes) VALUES (?, ?, ?, 'run_gaql', 1, ?, 1, 1)");
+    c.run(on, "old", "claude", "Service choice: The Free plan covers one Google service at a time");
+    c.run(on + 60, "old", "claude", "Service limit: the Free plan covers one Google service at a time");
+    c.run(t - 3600, "gptnew", "gpt", "Service limit: the Free plan covers one Google service at a time");
+    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('gptnew', 'service_limit', ?)").run(t);
+    const e = db.prepare("INSERT INTO plan_events (user_id, kind, src, at) VALUES (?, ?, ?, ?)");
+    e.run("old", "upgrade_click", "tool", on + 120); e.run("old", "paid", "sub_1", on + 180);
+    e.run("old", "upgrade_click", "email", on - 86400);    // before switch-on: doesn't count
+    e.run("gptnew", "plans_view", null, t - 60);
+    const p = buildReport(db, { days: 7, exclude: [] }).paywall;
+    expect(p.since).toBe(on);
+    expect(p.rows).toEqual([
+      { existing: 1, chatgpt: 0, users: 1, stopped: 1, emailed: 0, viewed: 0, clicked: 1, paid: 1 },
+      { existing: 0, chatgpt: 1, users: 1, stopped: 1, emailed: 1, viewed: 1, clicked: 0, paid: 0 },
+    ]);
+  });
+
   it("counts signups by hour today and by day otherwise, and retention by weeks since each user's own signup", () => {
     const db = openDb(":memory:");
     const t = now(), u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, 'free', ?)");
