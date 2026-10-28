@@ -8,10 +8,10 @@ import type { DB } from "./db.js";
 import type { GoogleCreds } from "./google.js";
 import { SignIn } from "./signin.js";
 import { startLoginAs } from "./account.js";
-import { buildReport, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
+import { buildReport, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
 import { now } from "./db.js";
 import { esc } from "./pages.js";
-import { PRO_PRICE_LABEL } from "./plans.js";
+import { planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
 import { AUDIENCES, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
@@ -145,8 +145,10 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
 
 type View = { days: number; all: boolean; report: Report; feedback: number };
 
-/** Pro's monthly price in dollars, from the label the site shows, so the two can't drift. */
-const MRR_PER_PRO = Number(PRO_PRICE_LABEL.match(/\d+/)?.[0] ?? 0);
+/** Monthly recurring revenue: each paying customer at their plan's price (report.ts MONTHLY). Complimentary plans aren't in it. */
+const mrr = (r: Report) => r.payingByPlan.reduce((a, p) => a + p.n * (MONTHLY[p.plan] ?? 0), 0);
+/** "1 Pro · 2 Plus". */
+const byPlan = (r: Report) => r.payingByPlan.map((p) => `${p.n} ${planLabel(p.plan)}`).join(" · ");
 const ago = (t: number | null) => {
   if (!t) return "—";
   const s = now() - t;
@@ -303,7 +305,7 @@ function overviewPage(v: View): string {
 ${stat("Users", num(r.funnel.all.connected), `+${r.funnel.window.connected} ${inW(v.days)}`)}
 ${stat(`Active · ${w}`, num(r.activeInWindow), `${callsInWindow.toLocaleString("en-US")} calls`)}
 ${stat(`Applied a change · ${w}`, num(r.appliedInWindow.users), `${r.appliedInWindow.changes} change${r.appliedInWindow.changes === 1 ? "" : "s"} · ${r.funnel.all.applied} all time`)}
-${stat("Paying", num(paying), `$${paying * MRR_PER_PRO} MRR`)}
+${stat("Paying", num(paying), `$${mrr(r)} MRR`)}
 ${stat(`Tool errors · ${w}`, errs ? `<span class="n bad">${errs}</span>` : num(0), callsInWindow ? `${((100 * errs) / callsInWindow).toFixed(1)}% of calls` : "")}
 </div>
 ${callsChart(v)}
@@ -520,12 +522,12 @@ function revenuePage(v: View): string {
   const pros = r.users.filter((u) => u.plan !== "free");
   const paying = r.paying;
   return `<div class="stats">
-${stat("Paying", num(paying), "live Stripe subscriptions")}
-${stat("MRR", `$${paying * MRR_PER_PRO}`, `$${MRR_PER_PRO}/mo each`)}
+${stat("Paying", num(paying), "live Stripe subscriptions; complimentary plans not counted")}
+${stat("MRR", `$${mrr(r)}`, byPlan(r) || "no paid plans")}
 ${stat("Ad connects uploaded", num(r.adConversions?.uploaded), `${r.adConversions?.recorded ?? 0} recorded`)}
 </div>
-${card("Pro users", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
-    perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No Pro users yet."))}
+${card("Paid and complimentary", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
+    perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No paid or complimentary users yet."))}
 <div class="grid2">
 ${card("Emails", table(["email", ["all time", "r"], [lastW(v.days), "r"]], r.emails.map((e) => [`<code>${esc(e.kind)}</code>`, num(e.sent), num(e.in_window)]), "No emails sent yet."))}
 ${card("Ad conversions", `<dl><dt>Recorded</dt><dd>${num(r.adConversions?.recorded)}</dd><dt>Uploaded to Google Ads</dt><dd>${num(r.adConversions?.uploaded)}</dd>

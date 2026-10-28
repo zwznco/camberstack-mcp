@@ -8,7 +8,17 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, SWITCH_NOTICE_PREFIX } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SWITCH_NOTICE_PREFIX } from "./plans.js";
+
+/**
+ * A paying customer: a paid plan with a live Stripe subscription. Complimentary plans (PRO_EMAILS, grandfathered Plus with no
+ * subscription) aren't revenue. billing.ts drops a lapsed subscription to plan 'free' but keeps its stripe_sub, so a stripe_sub
+ * alone isn't paying either. `u` is the users alias.
+ */
+const PAYING = "u.plan IN ('plus', 'pro', 'agency') AND coalesce(u.stripe_sub, '') != ''";
+/** Monthly dollars per paid plan, from the labels the site shows, so the two can't drift. */
+export const MONTHLY: Record<string, number> = Object.fromEntries(
+  ([["plus", PLUS_PRICE_LABEL], ["pro", PRO_PRICE_LABEL], ["agency", AGENCY_PRICE_LABEL]] as const).map(([p, l]) => [p, Number(l.match(/\d+/)?.[0] ?? 0)]));
 
 export interface ReportOptions {
   days: number;
@@ -66,7 +76,7 @@ export function buildReport(db: DB, o: ReportOptions) {
     used_real:    n(`SELECT count(DISTINCT c.user_id) n FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE u.created_at >= ? AND c.ok = 1 AND c.customer_id IS NOT NULL AND c.customer_id != '${DEMO_CID}'`, from),
     proposed:     n(`SELECT count(DISTINCT p.user_id) n FROM proposals p JOIN {U} u ON u.id = p.user_id WHERE u.created_at >= ? AND p.customer_id != '${DEMO_CID}'`, from),
     applied:      n(`SELECT count(DISTINCT p.user_id) n FROM proposals p JOIN {U} u ON u.id = p.user_id WHERE u.created_at >= ? AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}'`, from),
-    paid:         n("SELECT count(*) n FROM {U} u WHERE created_at >= ? AND plan != 'free'", from),
+    paid:         n(`SELECT count(*) n FROM {U} u WHERE created_at >= ? AND ${PAYING}`, from),
     disconnected: n("SELECT count(*) n FROM {U} u WHERE created_at >= ? AND enc_refresh IS NULL", from),
   });
 
@@ -79,16 +89,16 @@ export function buildReport(db: DB, o: ReportOptions) {
     // By when the change was applied, whenever the user signed up (the funnel's `applied` is by signup cohort). Real accounts only.
     appliedInWindow: q<{ users: number; changes: number }>(`SELECT count(DISTINCT p.user_id) users, count(*) changes FROM proposals p
         JOIN {U} u ON u.id = p.user_id WHERE p.status = 'applied' AND p.applied_at >= ? AND p.customer_id != '${DEMO_CID}'`, since)[0]!,
-    // Paid Pro, counted here rather than from `users` (capped at 200). billing.ts drops a lapsed subscription to
-    // plan 'free' but keeps its stripe_sub, so a stripe_sub alone is not a paying customer.
-    paying: n("SELECT count(*) n FROM {U} u WHERE plan IN ('pro', 'agency') AND coalesce(stripe_sub, '') != ''"),
+    // Paying customers, counted here rather than from `users` (capped at 200), and by plan for MRR.
+    paying: n(`SELECT count(*) n FROM {U} u WHERE ${PAYING}`),
+    payingByPlan: q<{ plan: string; n: number }>(`SELECT u.plan, count(*) n FROM {U} u WHERE ${PAYING} GROUP BY 1 ORDER BY 1`),
     // Counted on its own: summing `errors` would stop at its 15 groups and undercount wide windows.
     errorsInWindow: n("SELECT count(*) n FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.at >= ? AND c.ok = 0", since),
     users: q<{ id: string; email: string; plan: string; created_at: number; last_seen_at: number | null; connected: number;
                google_scopes: string | null; paying: number; calls: number; errors: number; applied: number; client: string | null;
                used_accounts: number; ads_accounts: number | null; ads_managers: number | null }>(
       `SELECT u.id, u.email, u.plan, u.created_at, u.last_seen_at, u.enc_refresh IS NOT NULL connected, u.google_scopes,
-         u.plan IN ('pro', 'agency') AND coalesce(u.stripe_sub, '') != '' paying,
+         ${PAYING} paying,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id) calls,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 0) errors,
          (SELECT count(*) FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied') applied,
@@ -201,7 +211,7 @@ function retention(q: <T>(sql: string, ...p: unknown[]) => T[], t = now()) {
   const monday = (col: string) => `(${col} - ${col} % 86400 - ((${col} / 86400 + 3) % 7) * 86400)`;
   const since = t - (t % 86400) - ((Math.floor(t / 86400) + 3) % 7) * 86400 - (RETENTION_WEEKS - 1) * 7 * 86400;
   const sizes = q<{ start: number; users: number; first: number; last: number; paid: number; appliers: number }>(
-    `SELECT ${monday("u.created_at")} start, count(*) users, min(u.created_at) first, max(u.created_at) last, sum(u.plan != 'free') paid,
+    `SELECT ${monday("u.created_at")} start, count(*) users, min(u.created_at) first, max(u.created_at) last, sum(${PAYING}) paid,
        sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}')) appliers
      FROM {U} u WHERE u.created_at >= ? GROUP BY 1 ORDER BY 1 DESC`, since);
   const applied = q<{ start: number; wk: number; users: number }>(

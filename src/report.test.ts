@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDb, now } from "./db.js";
-import { buildReport, userDetail, windowStart } from "./report.js";
+import { buildReport, MONTHLY, userDetail, windowStart } from "./report.js";
 
 describe("buildReport", () => {
   // The seeds sit 25-30 min back; between 00:00 and 00:30 UTC that is yesterday, outside a "today" window. Pin to noon.
@@ -20,6 +20,22 @@ describe("buildReport", () => {
     call.run(now() - 60, "account_overview", 1, null);
     return db;
   };
+
+  it("counts only live subscriptions as paying, at each plan's price; complimentary plans and lapsed subscriptions aren't revenue", () => {
+    const db = seed();  // "paid": Pro with sub_live; "lapsed": free with a leftover stripe_sub
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES (?, ?, ?, ?, ?, ?)");
+    u.run("plus", "g3", "plus@example.com", "plus", "sub_plus", now() - 3600);
+    u.run("agency", "g4", "agency@example.com", "agency", "sub_ag", now() - 3600);
+    u.run("comp", "g5", "comp@example.com", "plus", null, now() - 3600);      // grandfathered: complimentary Plus
+    u.run("comppro", "g6", "comppro@example.com", "pro", "", now() - 3600);  // complimentary Pro
+    const r = buildReport(db, { days: 7, exclude: [] });
+    expect(r.paying).toBe(3);
+    expect(r.payingByPlan).toEqual([{ plan: "agency", n: 1 }, { plan: "plus", n: 1 }, { plan: "pro", n: 1 }]);
+    expect(r.payingByPlan.reduce((a, p) => a + p.n * MONTHLY[p.plan]!, 0)).toBe(49 + 7 + 15);
+    expect(r.funnel.all.paid).toBe(3);
+    expect(Object.fromEntries(r.users.map((x) => [x.id, x.paying]))).toMatchObject({ paid: 1, plus: 1, agency: 1, comp: 0, comppro: 0, lapsed: 0 });
+    expect(r.retention.reduce((a, c) => a + c.paid, 0)).toBe(3);
+  });
 
   it("lists the newest error groups first, so a wide window still shows the latest ones", () => {
     const r = buildReport(seed(), { days: 7, exclude: [] });
@@ -97,6 +113,7 @@ describe("buildReport", () => {
     const db = openDb(":memory:");
     const t = now(), u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, ?, ?)");
     u.run("a", "g1", "a@x.com", "pro", t - 15 * 86400);
+    db.prepare("UPDATE users SET stripe_sub = 'sub_a' WHERE id = 'a'").run();  // paying: a live subscription, not complimentary
     u.run("b", "g2", "b@x.com", "free", t - 15 * 86400 + 60);
     const p = db.prepare("INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at) VALUES (?, ?, ?, '[]', '', ?, ?, ?)");
     p.run("p1", "a", "1", "applied", t - 15 * 86400 + 600, t - 15 * 86400 + 600);  // week 0
