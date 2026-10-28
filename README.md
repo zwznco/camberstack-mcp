@@ -9,7 +9,7 @@ proposal, and every applied change can be undone in one call, on every plan.** R
 more than doubling a budget or bid, switching bid strategy) are flagged in the proposal before you approve. A demo
 account lets anyone try every tool first.
 
-Hosted: **https://camberstack.io/mcp** (Free: 1 Google Ads account at a time with one switch a month, every tool, unlimited changes; Pro $15/mo: up to 5 accounts; Agency $49/mo: up to 25).
+Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes on 1 Google Ads account at a time, with one switch a month; from November 16, Free covers one Google service at a time: Google Ads, Search Console or Google Analytics. Plus $7/mo: all three together on 1 account; Pro $15/mo: all three on up to 5 accounts; Agency $49/mo: up to 25).
 
 **Setup guides, with screenshots and troubleshooting:** [Connect Google Ads to Claude](https://camberstack.io/google-ads-claude) ·
 [Connect Google Ads to ChatGPT](https://camberstack.io/google-ads-chatgpt) · [every tool](https://camberstack.io/tools) ·
