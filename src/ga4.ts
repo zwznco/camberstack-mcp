@@ -1,6 +1,6 @@
 /**
  * Google Analytics 4: reports (what happened on the site after the click) and the property reads the setup changes
- * (ga4-changes.ts) need. Its scopes are sensitive, so they aren't in the main Google consent: the first call without
+ * (ga4-changes.ts) need. Its scopes are asked for at sign-in, as an untickable box; the first call without
  * them returns a personal /connect/analytics link (grant.ts) that adds them to the user's existing connection.
  *
  * The demo property (DEMO_PROPERTY) answers the same calls with sample data, like the demo Ads account and site.

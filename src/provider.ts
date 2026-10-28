@@ -2,7 +2,7 @@
  * The OAuth 2.1 authorization server that MCP clients (Claude, ChatGPT, Cursor…) talk to.
  *
  * The flow chains two consents:
- *   MCP client ──/authorize──▶ us ──redirect──▶ Google consent (adwords + email)
+ *   MCP client ──/authorize──▶ us ──redirect──▶ Google consent (email + Ads, Search Console, Analytics; any one is enough)
  *   Google ──/oauth/google/callback──▶ us: store the Google refresh token (encrypted),
  *   issue OUR authorization code ──▶ MCP client ──/token──▶ OUR access + refresh tokens.
  *

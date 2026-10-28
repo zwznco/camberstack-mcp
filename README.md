@@ -82,8 +82,8 @@ Google can't hide it again; importing again restores it.) Search Console is read
 ## How auth works
 
 Camberstack is an OAuth 2.1 authorization server for MCP clients (dynamic client registration,
-PKCE). Its `/authorize` sends the user to Google for `adwords` + `openid email`, plus `webmasters.readonly`
-(Search Console). Either is enough to connect ("à la carte"): a tool that needs a missing one, or Google Analytics, returns a personal
+PKCE). Its `/authorize` sends the user to Google for `openid email` plus `adwords` (Google Ads), `webmasters.readonly`
+(Search Console) and `analytics.readonly` + `analytics.edit` (Google Analytics). Any one is enough to connect ("à la carte"), Google Ads included: a tool that needs a missing one returns a personal
 `/connect/<google-ads|search-console|analytics>` link that adds just that service to the same Google account. The Google refresh
 token is stored AES-256-GCM encrypted and never leaves the server. The MCP client gets
 Camberstack's own tokens, which are stored only as SHA-256 hashes.

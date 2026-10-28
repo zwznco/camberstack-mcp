@@ -1,15 +1,16 @@
 /**
- * Google OAuth (the user's consent to Google Ads access) and a thin Google Ads REST client.
+ * Google OAuth (the user's consent to Google access) and a thin Google Ads REST client.
  *
- * Scopes requested: `adwords` (the Ads API, required), `webmasters.readonly` (Search Console, read-only and
- * optional: the user can untick it and the Ads tools still work) and `openid email` (to know who the user
- * is, so a reconnect finds the same account and change log). Nothing else from the Google account is touched.
+ * Scopes requested at sign-in: `adwords` (the Ads API), `webmasters.readonly` (Search Console, read-only), the Google
+ * Analytics pair (provider.ts extraGoogleScopes) and `openid email` (to know who the user is, so a reconnect finds the same
+ * account and change log). Each service is an untickable box and any one is enough to connect (provider.ts callback);
+ * a missing one is added later by link (grant.ts). Nothing else from the Google account is touched.
  */
 
 export const ADS_SCOPE = "https://www.googleapis.com/auth/adwords";
 export const SEARCH_CONSOLE_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
-/** Google Analytics (GA4): reports, and setup changes (properties, key events, Google Ads links). Not in the main consent: asked
- *  for together, separately, when a GA4 tool first needs them (ga4.ts). */
+/** Google Analytics (GA4): reports, and setup changes (properties, key events, Google Ads links). Asked for together at
+ *  sign-in (server.ts extraGoogleScopes), and by link when a connection lacks them (ga4.ts). */
 export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
