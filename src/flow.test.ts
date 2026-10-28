@@ -16,6 +16,7 @@ import { AdsApiError, NotGrantedError } from "./google.js";
 import { io, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
+import { plansPage } from "./pages.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 
@@ -815,7 +816,7 @@ describe("OAuth + MCP end to end", () => {
     expect(blocked.text).not.toMatch(/word for word|Show the user/i);
 
     // ChatGPT connections (known by their chatgpt.com redirect) get the same limit with no plan pitch or checkout link:
-    // its plugin guidelines bar promoting upgrades.
+    // its plugin guidelines bar promoting upgrades. The one link is /plans, which its guidelines allow (facts only).
     const clientId = (db.prepare("SELECT client_id FROM tool_calls WHERE client_id IS NOT NULL ORDER BY id DESC LIMIT 1").get() as { client_id: string }).client_id;
     const info = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(clientId) as { info: string }).info;
     db.prepare("UPDATE clients SET info = ? WHERE client_id = ?")
@@ -824,9 +825,14 @@ describe("OAuth + MCP end to end", () => {
     expect(gpt.text).toContain("Plan limit:");
     expect(gpt.text).toContain("More accounts at a time need a different plan.");
     expect(gpt.text).not.toMatch(/upgrade|\bPro\b|\$|pricing/i);
+    expect(gpt.text).toContain(`"plans_page": "${base}/plans"`);
     const gptPlan = await call(token, "billing", {});
-    expect(gptPlan.json).toMatchObject({ plan: "free", accounts_included: 1 });
-    expect(JSON.stringify(gptPlan.json)).not.toMatch(/upgrade|\bPro\b|\$|account_page|https?:/i);
+    expect(gptPlan.json).toMatchObject({ plan: "free", accounts_included: 1, plans_page: `${base}/plans` });
+    expect(JSON.stringify(gptPlan.json).replaceAll(`${base}/plans`, "")).not.toMatch(/upgrade|\bPro\b|\$|account_page|https?:/i);
+    // The page it links to describes plans and starts nothing: no upgrade buttons, no checkout links.
+    const plansHtml = await (await fetch(`${base}/plans`)).text();
+    expect(plansHtml).toContain("<h2>Pro · $15/month</h2>");
+    expect(plansHtml).not.toMatch(/upgrade=|\/checkout|Upgrade to/i);
     const list = await fetch(`${base}/mcp`, { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/list" }),
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
     const billingTool = (await list.json()).result.tools.find((t: { name: string }) => t.name === "billing");
@@ -2566,6 +2572,16 @@ describe("OAuth + MCP end to end", () => {
       if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
       db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-one-service");
     }
+  });
+
+  it("describes whichever Free plan is live on /plans", () => {
+    const off = plansPage("https://x.test", { freeOneService: false }), on = plansPage("https://x.test", { freeOneService: true });
+    expect(off).toContain("on <strong>1 Google Ads account</strong> at a time");
+    expect(off).toContain("Search Console and Google Analytics are included and don't count");
+    expect(on).toContain("<strong>one Google service at a time</strong>");
+    expect(on).toContain("Google Ads, Search Console and Google Analytics together, on <strong>up to 5 Google Ads accounts</strong>");
+    // The body (the site header's nav is every page's): nothing that starts an upgrade or links the account page.
+    for (const h of [off, on]) expect(h.slice(h.indexOf('<div class="legal">'))).not.toMatch(/upgrade=|Upgrade to|href="\/account/i);
   });
 
   it("names the Google services a call uses: none for the demo, listings, lookups and proposal bookkeeping", () => {

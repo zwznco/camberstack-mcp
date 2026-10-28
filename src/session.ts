@@ -295,7 +295,8 @@ export class UserSession {
           + `Nothing has run yet. Ask the user which one they want to use for the next ${ACCOUNT_WINDOW_DAYS} days, then make the call for that service: `
           + `the first one made in the next ${SERVICE_CHOICE_SECONDS / 60} minutes becomes the plan's service, and the others wait until ${ACCOUNT_WINDOW_DAYS} days after it was last used.`
           + (this.chatgpt ? "" : ` Pro (${PRO_PRICE_LABEL}) covers all three together.`),
-          { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: Object.values(SERVICE_LABELS), window_days: ACCOUNT_WINDOW_DAYS });
+          { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: Object.values(SERVICE_LABELS), window_days: ACCOUNT_WINDOW_DAYS,
+            ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
       }
       serviceAsked.delete(this.user.id);
     }
@@ -311,7 +312,7 @@ export class UserSession {
       const head = `${SERVICE_LIMIT_PREFIX} the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and ${why}.`
         + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
       const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
-      if (this.chatgpt) throw new SwitchNotice(`${head} Using several together needs a different plan.`, common);
+      if (this.chatgpt) throw new SwitchNotice(`${head} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
       const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
       throw new SwitchNotice(`${head} Pro (${PRO_PRICE_LABEL}) covers all three together, so ${want} works right away.`,
         { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: "Google Ads, Search Console and Google Analytics together", cancel: "any time",
@@ -453,7 +454,8 @@ export class UserSession {
       { status: "switch_confirmation_needed", plan: this.planName, switch_to: cid, locks_account: locks,
         locked_until: reopens, accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
         to_go_ahead: `once the user agrees, call switch_account with customer_id ${cid}, then this tool again`,
-        ...(next ? { keep_both: { ...next, pricing_page: next.upgrade_url ? null : `${this.deps.baseUrl}/#pricing` } } : {}) });
+        ...(next ? { keep_both: { ...next, pricing_page: next.upgrade_url ? null : `${this.deps.baseUrl}/#pricing` } } : {}),
+        ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
   }
 
   private refuse(cid: string, st: ReturnType<UserSession["planState"]>): never {
@@ -475,7 +477,7 @@ export class UserSession {
     const wait = st.used.includes(cid) ? `${cid} opens again on ${st.switchOpens}` : `the next switch opens on ${st.switchOpens}`;
     if (this.chatgpt) {
       throw new PlanLimitError(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}: the current plan ${rule} `
-        + `More accounts at a time need a different plan.`, { error: "plan_limit", ...common });
+        + `More accounts at a time need a different plan.`, { error: "plan_limit", ...common, plans_page: this.plansPage });
     }
     const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     const agency = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;
@@ -487,6 +489,12 @@ export class UserSession {
           pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` },
         ...(agency ? { or_agency: { plan: "agency", price: AGENCY_PRICE_LABEL, accounts_included: this.deps.agencyAccounts, upgrade_url: agency } } : {}) });
   }
+
+  /**
+   * What ChatGPT connections link to about plans: facts only, no upgrade buttons (pages.ts plansPage). Its guidelines allow
+   * explaining that a feature needs a different plan and linking "an informational page describing available plans".
+   */
+  private get plansPage(): string { return `${this.deps.baseUrl}/plans`; }
 
   private freeIncluded(): string {
     return this.deps.freeOneService
@@ -504,9 +512,9 @@ export class UserSession {
   plan() {
     if (this.chatgpt) {
       const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
-      return this.isPro ? { plan: this.planName, ...usage }
+      return this.isPro ? { plan: this.planName, ...usage, plans_page: this.plansPage }
         : { plan: "free", ...usage, ...this.serviceUsage(), included: this.freeIncluded(),
-            note: "More accounts at a time need a different plan." };
+            note: "More accounts at a time need a different plan.", plans_page: this.plansPage };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     const agencyUrl = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;

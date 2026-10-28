@@ -25,7 +25,7 @@ import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
 import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
-import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
+import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
@@ -347,6 +347,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   for (const [path, html] of Object.entries(pages)) app.get(path, page(html));
   for (const alias of ["/contact", "/contact-us", "/about-us"]) app.get(alias, (_q, r) => r.redirect(301, "/about"));
   app.get("/google-ads-gemini", page(geminiGuidePage(cfg.baseUrl)));
+  // Not in the sitemap: the homepage #pricing is the page for search; this one is what ChatGPT connections link to.
+  app.get("/plans", page(plansPage(cfg.baseUrl, { freeOneService: cfg.freeOneService ?? false })));
   const indexed = Object.fromEntries(SITEMAP_PATHS.map((p) => [p, pages[p]!]));
   const { dates: lastmod, changed: changedPages } = pageDates(db, indexed, cfg.gitCommitDate);
   const inKey = indexNowKey(cfg.encryptionKey);

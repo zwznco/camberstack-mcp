@@ -1057,6 +1057,40 @@ Changes are validated with Google before you approve them and are limited to the
   });
 }
 
+/**
+ * What each plan includes, as facts only: no upgrade buttons and no checkout links. The one plans page a ChatGPT connection
+ * may link to (its guidelines allow "an informational page describing available plans", not a page that "explicitly
+ * initiates the process to upgrade"; the homepage #pricing has upgrade buttons). Follows FREE_ONE_SERVICE, so it describes
+ * whichever Free is live.
+ */
+export function plansPage(baseUrl: string, o: { freeOneService: boolean }): string {
+  const free = o.freeOneService
+    ? `<p>Every tool, with unlimited applied changes and undo, on <strong>one Google service at a time</strong>: Google Ads
+(1 account), Search Console or Google Analytics. Your AI asks which one before the first is used; another opens
+${ACCOUNT_WINDOW_DAYS} days after the current one was last used.</p>`
+    : `<p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong> at a time, with one switch
+to another account every ${ACCOUNT_WINDOW_DAYS} days. Search Console and Google Analytics are included and don't count.</p>`;
+  const all = o.freeOneService ? "Google Ads, Search Console and Google Analytics together, on" : "Everything in Free, on";
+  return layout({
+    baseUrl, path: "/plans",
+    title: "Plans | Camberstack",
+    description: "What Camberstack's Free, Pro and Agency plans include.",
+    body: `<div class="legal">
+<h1>Plans</h1>
+<h2>Free · $0</h2>
+${free}
+<h2>Pro · ${PRO_PRICE_LABEL}</h2>
+<p>${all} <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>. Cancel any time.</p>
+<h2>Agency · ${AGENCY_PRICE_LABEL}</h2>
+<p>${all} <strong>up to ${AGENCY_ACCOUNTS} Google Ads accounts</strong>. Cancel any time.</p>
+<h2>On every plan</h2>
+<p>Nothing changes until you approve the proposal, every applied change can be undone, and undo and change history always
+work. Plans count Google Ads accounts used in the last ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) accounts and the demo account never count.</p>
+<p class="muted">Your current plan is on your account page at camberstack.io/account.</p>
+</div>`,
+  });
+}
+
 export function termsPage(baseUrl: string): string {
   return layout({
     baseUrl, path: "/terms",
