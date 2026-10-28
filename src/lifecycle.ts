@@ -7,7 +7,8 @@
  *                  spend it, still free the next morning (6+ hours later) → the plan that covers all their accounts
  *                  (Pro, or Agency past Pro's limit), its upgrade link. One upgrade email per user: never both this and limit_reached
  *   service_limit  the one-service gate (FREE_ONE_SERVICE) stopped a Free user's AI asking for a second Google service, still
- *                  free the next morning (6+ hours later) → which service they use, when the other opens, Pro covering all three
+ *                  free the next morning (6+ hours later) → which service they use, when the other opens, Pro covering all three.
+ *                  Still one upgrade email per user: none of limit_reached, switch_wanted and service_limit follows another
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on Pro with a Stripe subscription → what Pro adds, where billing lives
@@ -105,7 +106,7 @@ export class Lifecycle {
     // send window. `error` is the latest refusal's (SQLite takes bare columns from the max() row).
     const limit = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.ok = 0 AND c.error LIKE ?
-      WHERE ${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")}
+      WHERE ${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("service_limit")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // Stopped by the switch notice (session.ts noticeSwitch), the last one 6 hours to 30 days ago, with no switch spent
@@ -113,7 +114,7 @@ export class Lifecycle {
     // since 0.19.0 logs a notice as ok (it was ok = 0 before).
     const wanted = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.ads_accounts, max(c.at) last
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ?
-      WHERE ${eligible} AND ${notSent("switch_wanted")} AND ${notSent("limit_reached")}
+      WHERE ${eligible} AND ${notSent("switch_wanted")} AND ${notSent("limit_reached")} AND ${notSent("service_limit")}
         AND NOT EXISTS (SELECT 1 FROM tool_calls s WHERE s.user_id = u.id AND s.tool = 'switch_account' AND s.ok = 1 AND s.at >= c.at)
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${SWITCH_NOTICE_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; ads_accounts: number | null; last: number }[];
@@ -121,7 +122,7 @@ export class Lifecycle {
     // (a SwitchNotice), so it's matched on the text; `error` is the latest one's, which names both services and the open date.
     const service = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ?
-      WHERE ${eligible} AND ${notSent("service_limit")}
+      WHERE ${eligible} AND ${notSent("service_limit")} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${SERVICE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // First applied change to a real account (not the demo, not an undo) 2–14 days ago; any plan, connected or not.

@@ -2553,6 +2553,15 @@ describe("OAuth + MCP end to end", () => {
       expect(sc1.json).toMatchObject({ stop: "service_limit", service_in_use: "Google Ads", service_requested: "Search Console" });
       expect(sc1.text).toContain("Service limit: the Free plan covers one Google service at a time");
       expect(sc1.text).toContain("Pro ($15/month) covers all three together");
+      // ChatGPT connections: the same stop with no paid plan named, as every other ChatGPT plan text.
+      const gptClient = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
+      const gptInfo = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(gptClient) as { info: string }).info;
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(gptInfo), redirect_uris: ["https://chatgpt.com/connector/oauth/one"] }), gptClient);
+      const gptStop = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
+      expect(gptStop.text).toContain("Service limit: the current plan covers one Google service at a time");
+      expect(gptStop.text).toContain("Using several together needs a different plan.");
+      expect(gptStop.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bFree plan\b|\bPro\b|\$|upgrade/i);
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(gptInfo, gptClient);
       // A refused call takes nothing: Ads still works, and billing names it.
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
       const plan = (await call(t, "billing")).json;
@@ -2633,7 +2642,8 @@ describe("OAuth + MCP end to end", () => {
 
   it("reads FREE_ONE_SERVICE as 1 (on), a date (announced until then), or off", () => {
     expect(parseFreeOneService("1")).toBe(0);
-    expect(parseFreeOneService("2026-11-16")).toBe(Date.UTC(2026, 10, 16) / 1000);
+    // 08:00 UTC = midnight Pacific: it's the 16th in the Americas too when it starts.
+    expect(parseFreeOneService("2026-11-16")).toBe(Date.UTC(2026, 10, 16, 8) / 1000);
     for (const v of [undefined, "", "0", "true", "2026-13-40", "11/16/2026"]) expect(parseFreeOneService(v)).toBeUndefined();
     const from = Date.UTC(2026, 10, 16) / 1000;
     expect(freePlan(undefined, from)).toEqual({ kind: "accounts" });

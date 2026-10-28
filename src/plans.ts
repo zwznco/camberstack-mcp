@@ -40,10 +40,14 @@ export type FreePlan = { kind: "accounts" } | { kind: "upcoming"; from: number }
 export function freePlan(from: number | undefined, t = Math.floor(Date.now() / 1000)): FreePlan {
   return from === undefined ? { kind: "accounts" } : t < from ? { kind: "upcoming", from } : { kind: "one_service", from };
 }
-/** FREE_ONE_SERVICE → when one-service Free starts: "1" = always (0), "YYYY-MM-DD" = that day 00:00 UTC, else off. */
+/**
+ * FREE_ONE_SERVICE → when one-service Free starts: "1" = always (0), "YYYY-MM-DD" = that day at 08:00 UTC, else off.
+ * 08:00 UTC is midnight Pacific (PST), so it's already that date in the Americas, Europe and Asia when it starts; at 00:00
+ * UTC it would still be the day before across the Americas, while the notice names the day.
+ */
 export function parseFreeOneService(v: string | undefined): number | undefined {
   if (v === "1") return 0;
-  const m = /^\d{4}-\d{2}-\d{2}$/.test(v ?? "") ? Date.parse(`${v}T00:00:00Z`) : NaN;
+  const m = /^\d{4}-\d{2}-\d{2}$/.test(v ?? "") ? Date.parse(`${v}T08:00:00Z`) : NaN;
   return Number.isNaN(m) ? undefined : m / 1000;
 }
 /** "November 16". */

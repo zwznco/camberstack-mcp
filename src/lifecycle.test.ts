@@ -72,6 +72,9 @@ describe("lifecycle emails", () => {
     user("recent", "recent@example.com", 10); stopped("recent", 0.2, limit);                 // under 6 hours ago
     user("chose", "chose@example.com", 10); stopped("chose", 0.3, "Service choice: The Free plan covers one Google service");  // not a stop
     user("pro", "pro@example.com", 10, "pro"); stopped("pro", 0.3, limit);
+    // One upgrade email per user: an account-limit email already sent rules this one out.
+    user("had", "had@example.com", 10); stopped("had", 0.3, limit);
+    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - DAY);
     expect(await lc.run()).toBe(2);
     const sc = sent.find((m) => m.to[0] === "sc@example.com"), both = sent.find((m) => m.to[0] === "both@example.com");
     expect(sc.subject).toBe("Using Google Ads, Search Console and Analytics together");
@@ -80,6 +83,10 @@ describe("lifecycle emails", () => {
     expect(sc.text).toContain("https://camberstack.io/upgrade?t=sc.sig");
     expect(sc.text).toContain("every tool and unlimited changes keep working on Search Console");
     expect(both.text).toContain("tried to use Search Console and Google Ads. The Free plan covers one Google service at a time.");
+    expect(await lc.run()).toBe(0);
+    // ...and the other way: after service_limit, an account-limit refusal sends nothing.
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'sc', 'account_overview', 0, ?, 10, 10)")
+      .run(now() - 0.3 * DAY, "Plan limit: Camberstack has been used on 2 Google Ads accounts; the next opens 2026-11-13.");
     expect(await lc.run()).toBe(0);
   });
 

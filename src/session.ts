@@ -312,7 +312,7 @@ export class UserSession {
       const last = used.find((u) => u.s === covered)?.last ?? (covered ? now() : undefined);
       const opens = last ? new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10) : null;
       const why = have ? `this login uses it for ${have}` : `${want} together need more than one`;
-      const head = `${SERVICE_LIMIT_PREFIX} the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and ${why}.`
+      const head = `${SERVICE_LIMIT_PREFIX} ${this.chatgpt ? "the current plan" : "the Free plan"} covers one Google service at a time (Google Ads, Search Console or Google Analytics), and ${why}.`
         + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
       const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
       if (this.chatgpt) throw new SwitchNotice(`${head} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
