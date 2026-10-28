@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, isPaid, type Plan, type Service } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, isPaid, type Plan, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -63,6 +63,8 @@ const gateQueue = new Map<string, Promise<void>>();
 const inFlight = new Map<string, Map<string, number>>();
 /** Services a user's running calls use, so parallel calls can't take two services at once (checkService). */
 const servicesInFlight = new Map<string, Map<Service, number>>();
+/** When each user was last asked to pick Free's service (checkService). In memory: a restart just asks again. */
+const serviceAsked = new Map<string, number>();
 
 /**
  * `fn` over `items`, at most `limit` at a time, results in input order. If any fail, throws the error of the
@@ -273,28 +275,45 @@ export class UserSession {
 
   /**
    * The one-service gate (FREE_ONE_SERVICE, Free only): a call may use only the service the plan covers, which is the
-   * most recently used one, or, with none used yet, the one this call uses (a call needing two, paid_organic_overlap,
-   * needs a paid plan). Another service opens 30 days after the covered one was last used, or with plan_reset_at.
+   * most recently used one (a call needing two, paid_organic_overlap, needs a paid plan). Another service opens 30 days
+   * after the covered one was last used, or with plan_reset_at. With none used yet, the first real call stops with a
+   * Service choice notice so the AI asks the user which service to keep for 30 days; the next real call within
+   * SERVICE_CHOICE_SECONDS is the answer and takes the plan. Both stops are SwitchNotices, normal results rather than
+   * errors (errors count against the directories' reliability metrics).
    * Returns a release to call once the call is logged: until then its service counts as in use.
    */
   checkService(services: Service[]): () => void {
     if (!this.deps.freeOneService || this.isPro) return () => {};
     const running = [...(servicesInFlight.get(this.user.id)?.keys() ?? [])];
     const used = this.servicesInUse();
+    if (!running.length && !used.length && services.length === 1) {
+      const asked = serviceAsked.get(this.user.id);
+      if (!asked || now() - asked > SERVICE_CHOICE_SECONDS) {
+        serviceAsked.set(this.user.id, now());
+        const plan = this.chatgpt ? "The current plan" : "The Free plan";
+        throw new SwitchNotice(`${SERVICE_CHOICE_PREFIX} ${plan} covers one Google service at a time: Google Ads, Search Console or Google Analytics. `
+          + `Nothing has run yet. Ask the user which one they want to use for the next ${ACCOUNT_WINDOW_DAYS} days, then make the call for that service: `
+          + `the first one made in the next ${SERVICE_CHOICE_SECONDS / 60} minutes becomes the plan's service, and the others wait until ${ACCOUNT_WINDOW_DAYS} days after it was last used.`
+          + (this.chatgpt ? "" : ` Pro (${PRO_PRICE_LABEL}) covers all three together.`),
+          { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: Object.values(SERVICE_LABELS), window_days: ACCOUNT_WINDOW_DAYS });
+      }
+      serviceAsked.delete(this.user.id);
+    }
     const covered = running[0] ?? used[0]?.s ?? (services.length === 1 ? services[0]! : undefined);
     const extra = services.filter((s) => s !== covered);
     if (!covered || extra.length) {
       const have = covered ? SERVICE_LABELS[covered] : null;
       const want = extra.map((s) => SERVICE_LABELS[s]).join(" and ") || services.map((s) => SERVICE_LABELS[s]).join(" and ");
-      const last = used.find((u) => u.s === covered)?.last;
+      // A covered service still in flight (parallel calls) has no logged use yet: it's being used now.
+      const last = used.find((u) => u.s === covered)?.last ?? (covered ? now() : undefined);
       const opens = last ? new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10) : null;
       const why = have ? `this login uses it for ${have}` : `${want} together need more than one`;
       const head = `${SERVICE_LIMIT_PREFIX} the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and ${why}.`
         + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
-      const common = { error: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
-      if (this.chatgpt) throw new PlanLimitError(`${head} Using several together needs a different plan.`, common);
+      const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
+      if (this.chatgpt) throw new SwitchNotice(`${head} Using several together needs a different plan.`, common);
       const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-      throw new PlanLimitError(`${head} Pro (${PRO_PRICE_LABEL}) covers all three together, so ${want} works right away.`,
+      throw new SwitchNotice(`${head} Pro (${PRO_PRICE_LABEL}) covers all three together, so ${want} works right away.`,
         { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: "Google Ads, Search Console and Google Analytics together", cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
     }

@@ -24,8 +24,12 @@ export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
  */
 export type Service = "ads" | "search_console" | "analytics";
 export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", search_console: "Search Console", analytics: "Google Analytics" };
-/** Error text the service gate starts with. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
+/** Text of the service gate's refusal. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
 export const SERVICE_LIMIT_PREFIX = "Service limit:";
+/** Text of the notice before Free's one service is picked: the user chooses, so 30 days aren't spent on whatever the AI called first. */
+export const SERVICE_CHOICE_PREFIX = "Service choice:";
+/** How long after a Service choice notice the next real call counts as the user's answer (session.ts checkService). */
+export const SERVICE_CHOICE_SECONDS = 15 * 60;
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number) => `${n} Google Ads account${n === 1 ? "" : "s"}`;
@@ -39,7 +43,8 @@ export class PlanLimitError extends Error {
 }
 
 /**
- * The notice before a plan's switch is spent (SWITCH_NOTICE_PREFIX). Thrown to stop the tool, but returned as a normal
- * result, not isError: nothing failed, and an error here counted against the directory's reliability metrics.
+ * The notice before a plan's switch is spent (SWITCH_NOTICE_PREFIX), and the service gate's choice and refusal
+ * (SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX). Thrown to stop the tool, but returned as a normal result, not isError:
+ * nothing failed, and an error here counted against the directory's reliability metrics.
  */
 export class SwitchNotice extends PlanLimitError {}

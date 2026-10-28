@@ -2527,16 +2527,22 @@ describe("OAuth + MCP end to end", () => {
       // The demo site uses no service, so it doesn't pick one.
       expect((await call(t, "search_console_summary", { site_url: "sc-domain:northwind-plumbing.example", days: 28 })).isError).toBe(false);
       expect((await call(t, "billing")).json).toMatchObject({ plan: "free", service_in_use: null, services_included: 1 });
-      // The first real service is the one Free covers.
+      // The first real call asks instead of picking: nothing runs, nothing is taken, and it isn't an error.
       expect((await call(t, "switch_account", { customer_id: "111-222-3333" })).isError).toBe(false);
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
+      const ask = await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 });
+      expect(ask.isError).toBe(false);
+      expect(ask.json).toMatchObject({ stop: "service_choice", this_call_uses: "Google Ads" });
+      expect(ask.text).toContain("Service choice: The Free plan covers one Google service at a time");
+      expect((await call(t, "billing")).json.service_in_use).toBeNull();
+      // The next real call is the user's answer and takes the plan.
+      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
       const sc1 = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      expect(sc1.isError).toBe(true);
+      expect(sc1.isError).toBe(false);  // a stop, not a failure
+      expect(sc1.json).toMatchObject({ stop: "service_limit", service_in_use: "Google Ads", service_requested: "Search Console" });
       expect(sc1.text).toContain("Service limit: the Free plan covers one Google service at a time");
-      expect(sc1.text).toContain("this login uses it for Google Ads");
       expect(sc1.text).toContain("Pro ($15/month) covers all three together");
       // A refused call takes nothing: Ads still works, and billing names it.
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
+      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
       const plan = (await call(t, "billing")).json;
       expect(plan).toMatchObject({ service_in_use: "Google Ads" });
       expect(plan.included).toContain("1 Google service at a time");
@@ -2544,7 +2550,8 @@ describe("OAuth + MCP end to end", () => {
       // A reset by hand clears it: Search Console becomes the one, and Ads waits.
       db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = ?").run(now() + 1, uid);
       await new Promise((r) => setTimeout(r, 1100));
-      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).isError).toBe(false);
+      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.stop).toBe("service_choice");
+      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).toContain("this login uses it for Search Console");
       // Paid plans cover all three.
       db.prepare("UPDATE users SET plan = 'pro' WHERE id = ?").run(uid);
