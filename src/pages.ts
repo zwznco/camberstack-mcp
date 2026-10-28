@@ -28,8 +28,8 @@ const paidCovers = () => (fp.kind === "accounts" ? "Everything in Free, on" : `$
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
-const PRIVACY_UPDATED = "2026-10-29";
-const TERMS_UPDATED = "2026-10-22";
+const PRIVACY_UPDATED = "2026-10-28";
+const TERMS_UPDATED = "2026-10-28";
 
 const CSS = `
 .linkish{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
@@ -1115,7 +1115,7 @@ to another account every ${ACCOUNT_WINDOW_DAYS} days. Search Console and Google 
   return layout({
     baseUrl, path: "/plans",
     title: "Plans | Camberstack",
-    description: "What Camberstack's Free, Pro and Agency plans include.",
+    description: "What each of Camberstack's plans includes.",
     body: `<div class="legal">
 <h1>Plans</h1>
 <h2>Free · $0</h2>
@@ -1146,9 +1146,9 @@ export function termsPage(baseUrl: string): string {
 <p>Camberstack lets an AI assistant read your Google Ads account and, when you approve a specific proposal, change it.
 If you add them to your connection, it can also read your Search Console data (read-only) and your Google Analytics data,
 and change your Google Analytics setup when you approve a specific proposal.
-There is a free plan and two paid plans, Pro and Agency, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
+There is a free plan and paid plans, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
 <h2>Paid subscriptions</h2>
-<p>Pro and Agency are billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; your plan continues until the end of the period you paid for, and we don't refund partial months. Switching between Pro and Agency takes effect right away, and Stripe prorates the difference. If we change the price we will email you at least 30 days before it applies to you.</p>
+<p>Paid plans are billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; your plan continues until the end of the period you paid for, and we don't refund partial months. Switching between Pro and Agency takes effect right away, and Stripe prorates the difference. If we change the price we will email you at least 30 days before it applies to you.</p>
 <h2>You stay in control, and responsible</h2>
 <p>Recommendations are generated from your account data and may be wrong. You decide what to approve, and you are responsible
 for changes you approve, for your Google Ads spend, and for the tracking and consent on any website you measure with Google Analytics. Review proposals before approving them.</p>

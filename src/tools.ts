@@ -539,7 +539,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "Plan and billing",
     description: o.chatgpt
       ? "Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers. This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend."
-      : `Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}). Returns personal links to upgrade (Free, or Pro to Agency) or to change card and cancel (Pro, Agency). This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend.`,
+      : `Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Plus 1, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}), and on Free which Google service it covers. Returns personal links to upgrade (Free to Plus or Pro, Plus to Pro, Pro to Agency) or to change card and cancel (paid plans). This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend.`,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, () => session().plan());
 

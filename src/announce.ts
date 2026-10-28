@@ -20,7 +20,7 @@ import { esc } from "./pages.js";
 import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS } from "./plans.js";
 
 export type Audience = "all" | "free" | "pro";
-export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Paid plans (Pro, Agency)" };
+export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Paid and complimentary plans (Plus, Pro, Agency)" };
 
 export interface Preset {
   id: string;

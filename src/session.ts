@@ -550,8 +550,8 @@ export class UserSession {
     const usage = { accounts_in_use: this.accountsInUse(), accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS };
     return this.isPro
       ? { plan: this.planName, account_page, ...usage,
-          // Paid is plan = 'pro' or 'agency' (a live subscription). Pro any other way is complimentary (PRO_EMAILS):
-          // nothing to manage or cancel, even if an old Stripe customer is still on record.
+          // Paid is plan = 'plus', 'pro' or 'agency' with a Stripe customer. Otherwise it's complimentary (PRO_EMAILS, or
+          // grandfathered Plus with no subscription): nothing to manage or cancel.
           ...(isPaid(this.user.plan) && this.user.stripe_customer
             ? { manage_billing: this.deps.billingLink?.("billing", this.user.id) ?? null }
             : { complimentary: true, manage_billing: null }),
