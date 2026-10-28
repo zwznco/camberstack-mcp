@@ -65,6 +65,20 @@ describe("buildReport", () => {
     expect(ret.find((r) => r.weeks.length > 1)).toMatchObject({ weeks: [1, 1, 0], done: 2 });
   });
 
+  it("counts, per cohort, who applied a real change in each week since signup, and who pays", () => {
+    const db = openDb(":memory:");
+    const t = now(), u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, ?, ?)");
+    u.run("a", "g1", "a@x.com", "pro", t - 15 * 86400);
+    u.run("b", "g2", "b@x.com", "free", t - 15 * 86400 + 60);
+    const p = db.prepare("INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at) VALUES (?, ?, ?, '[]', '', ?, ?, ?)");
+    p.run("p1", "a", "1", "applied", t - 15 * 86400 + 600, t - 15 * 86400 + 600);  // week 0
+    p.run("p2", "a", "1", "applied", t - 86400, t - 86400);                         // week 2
+    p.run("p3", "b", "0000000001", "applied", t - 86400, t - 86400);                // demo: not counted
+    p.run("p4", "b", "1", "proposed", t - 86400, null);                             // never applied
+    const c = buildReport(db, { days: 1, exclude: [] }).retention.find((r) => r.users === 2);
+    expect(c).toMatchObject({ appliers: 1, paid: 1, applied: [1, 0, 1] });
+  });
+
   it("counts applied changes by when they were applied, not by when the user signed up", () => {
     const db = seed();
     const p = db.prepare("INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at) VALUES (?, 'paid', ?, '[]', '', ?, ?, ?)");

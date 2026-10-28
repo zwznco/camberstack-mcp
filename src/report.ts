@@ -192,22 +192,32 @@ export const RETENTION_WEEKS = 8;
  * Ignores the admin's day window: a cohort needs weeks to say anything. Weeks count from each user's own signup, so
  * `weeks` stops at the last week its earliest signup has begun, and only the first `done` have ended for its latest one.
  * Past `done` a cell is still filling in, not a drop.
+ * `applied[n]` counts the cohort's users who applied a real-account proposal in week n, out of `appliers` (those who ever
+ * applied one), and `paid` those now on a paid plan: whether the users who make changes keep making them is what pricing rests on.
  */
 function retention(q: <T>(sql: string, ...p: unknown[]) => T[], t = now()) {
   // Day 0 of the epoch was a Thursday, so a day's Monday is (day + 3) % 7 days back.
   const monday = (col: string) => `(${col} - ${col} % 86400 - ((${col} / 86400 + 3) % 7) * 86400)`;
   const since = t - (t % 86400) - ((Math.floor(t / 86400) + 3) % 7) * 86400 - (RETENTION_WEEKS - 1) * 7 * 86400;
-  const sizes = q<{ start: number; users: number; first: number; last: number }>(
-    `SELECT ${monday("u.created_at")} start, count(*) users, min(u.created_at) first, max(u.created_at) last FROM {U} u WHERE u.created_at >= ? GROUP BY 1 ORDER BY 1 DESC`, since);
+  const sizes = q<{ start: number; users: number; first: number; last: number; paid: number; appliers: number }>(
+    `SELECT ${monday("u.created_at")} start, count(*) users, min(u.created_at) first, max(u.created_at) last, sum(u.plan != 'free') paid,
+       sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}')) appliers
+     FROM {U} u WHERE u.created_at >= ? GROUP BY 1 ORDER BY 1 DESC`, since);
   const back = q<{ start: number; wk: number; users: number }>(
     `SELECT ${monday("u.created_at")} start, (c.at - u.created_at) / 604800 wk, count(DISTINCT u.id) users
      FROM {U} u JOIN tool_calls c ON c.user_id = u.id AND c.ok = 1 AND c.at >= u.created_at
      WHERE u.created_at >= ? AND c.at < u.created_at + ${RETENTION_WEEKS} * 604800 GROUP BY 1, 2`, since);
+  const applied = q<{ start: number; wk: number; users: number }>(
+    `SELECT ${monday("u.created_at")} start, (p.applied_at - u.created_at) / 604800 wk, count(DISTINCT u.id) users
+     FROM {U} u JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}' AND p.applied_at >= u.created_at
+     WHERE u.created_at >= ? AND p.applied_at < u.created_at + ${RETENTION_WEEKS} * 604800 GROUP BY 1, 2`, since);
   return sizes.map((c) => {
     const begun = Math.min(RETENTION_WEEKS, Math.floor((t - c.first) / 604800) + 1);
     return {
       week: new Date(c.start * 1000).toISOString().slice(0, 10), users: c.users, done: Math.min(begun, Math.floor((t - c.last) / 604800)),
       weeks: Array.from({ length: begun }, (_, n) => back.find((b) => b.start === c.start && b.wk === n)?.users ?? 0),
+      appliers: c.appliers, paid: c.paid,
+      applied: Array.from({ length: begun }, (_, n) => applied.find((b) => b.start === c.start && b.wk === n)?.users ?? 0),
     };
   });
 }

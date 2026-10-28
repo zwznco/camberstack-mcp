@@ -380,9 +380,15 @@ function retentionCard(v: View): string {
     return open ? `<span class="ret open" title="${n} of ${of} so far · week still under way">${p}%</span>`
       : `<span class="ret" style="background:color-mix(in srgb,var(--bar) ${Math.round(p * 0.6)}%,transparent)" title="${n} of ${of}">${p}%</span>`;
   };
-  return card("Retention", table(["signup week", ["users", "r"], ...Array.from({ length: RETENTION_WEEKS }, (_, n): [string, "r"] => [`W${n}`, "r"])],
+  const wks = Array.from({ length: RETENTION_WEEKS }, (_, n): [string, "r"] => [`W${n}`, "r"]);
+  return card("Retention", table(["signup week", ["users", "r"], ...wks],
     rows.map((c) => [c.week, num(c.users), ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.weeks.length ? cell(c.weeks[n]!, c.users, n >= c.done) : "")]),
-    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="W0 is each user's first 7 days; Wn counts a successful tool call 7n–7n+7 days after their own signup. Outlined: still under way.">all time · tool call in week N</small>`);
+    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="W0 is each user's first 7 days; Wn counts a successful tool call 7n–7n+7 days after their own signup. Outlined: still under way.">all time · tool call in week N</small>`)
+  // The pricing read (projects/camberstack/PRICING-TEST.md): of those who applied a change, how many keep applying, and who pays.
+  + card("Retention · applied a change", table(["signup week", ["users", "r"], ["applied", "r"], ["paid", "r"], ...wks],
+    rows.map((c) => [c.week, num(c.users), num(c.appliers), num(c.paid),
+      ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.applied.length && c.appliers ? cell(c.applied[n]!, c.appliers, n >= c.done) : "")]),
+    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="Of each week's users who ever applied a real-account change, the share that applied one 7n–7n+7 days after their own signup. Demo account excluded. Paid: on a paid plan now.">all time · applied in week N, of appliers</small>`);
 }
 
 function usersPage(v: View): string {
