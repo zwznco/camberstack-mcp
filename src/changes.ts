@@ -999,17 +999,24 @@ export async function resolveChange(
       };
     }
     case "set_conversion_counting": {
-      const [a] = await q(`SELECT conversion_action.name, conversion_action.counting_type, conversion_action.type FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
+      const [a] = await q(`SELECT conversion_action.name, conversion_action.counting_type, conversion_action.type, conversion_action.google_analytics_4_settings.property_id, `
+        + `conversion_action.google_analytics_4_settings.event_name FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
       if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
       // An analytics import takes its counting from where it's imported from, and Google refuses the change outright: a paying
       // user's proposal got MUTATE_NOT_ALLOWED + IMMUTABLE_FIELD + INVALID_VALUE at once, and stopped there (2026-10-26).
       const type = String(a.conversionAction.type ?? "");
       if (ANALYTICS_IMPORT.test(type)) {
-        const ga4 = type.startsWith("GOOGLE_ANALYTICS_4");
+        // A GA4 import's counting is its key event's, which Camberstack can change (set_key_event_counting): before, this sent the
+        // user to GA4's admin, and the model tried mark_key_event, which leaves an existing key event alone (prod, 2026-10-28).
+        const ga4 = type.startsWith("GOOGLE_ANALYTICS_4"), g = a.conversionAction.googleAnalytics4Settings;
+        const recount = ga4 && g?.propertyId && g?.eventName
+          ? `Its key event can be recounted in GA4 instead: propose the Google Analytics change set_key_event_counting with property_id ${g.propertyId}, `
+            + `event_name ${g.eventName}, counting ${change.counting === "ONE_PER_CLICK" ? "ONCE_PER_SESSION" : "ONCE_PER_EVENT"} (Ads' `
+            + `${change.counting === "ONE_PER_CLICK" ? "one per click" : "every conversion"}); this action follows it. `
+          : ga4 ? "In GA4: Admin → Data display → Key events → the event's ⋮ → Change counting method (once per event, or once per session). "
+          : "Change it in the app that sends it (Firebase or the analytics tool). ";
         throw new Error(`Conversion action "${a.conversionAction.name}" is imported (${type}), so its counting comes from ${ga4 ? "GA4" : "its source"}, `
-          + "and Google won't change it through the API. "
-          + (ga4 ? "In GA4: Admin → Data display → Key events → the event's ⋮ → Change counting method (once per event, or once per session). "
-            : "Change it in the app that sends it (Firebase or the analytics tool). ")
+          + "and Google won't change it through the Google Ads API. " + recount
           + "Or count with a different conversion action. Nothing was proposed.");
       }
       const before = a.conversionAction.countingType as "ONE_PER_CLICK" | "MANY_PER_CLICK";

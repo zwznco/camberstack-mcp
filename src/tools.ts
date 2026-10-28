@@ -413,7 +413,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     description: "Checks Google Analytics setup changes against the live property and stores them as a proposal with a plain-English summary; "
       + "nothing is changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). "
       + "Supported: create_ga4_property (a property plus a web stream; the applied result gives the measurement ID and the tag the site needs), "
-      + "mark_key_event / unmark_key_event (GA4's conversions), link_google_ads / unlink_google_ads. Point out any ⚠ line before they approve.",
+      + "mark_key_event / unmark_key_event (GA4's conversions), set_key_event_counting (also recounts a Google Ads import of it), link_google_ads / unlink_google_ads. Point out any ⚠ line before they approve.",
     inputSchema: { changes: z.array(PublicGaChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, ({ changes }: { changes: unknown[] }) => session().propose(GA_TARGET, changes));

@@ -112,11 +112,12 @@ class FakeAds {
     if (q.includes("FROM ad_group WHERE")) return [{ adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Search", status: this.campaignStatus } }];
     if (q.includes("FROM ad_group_ad")) return [{ adGroupAd: { status: "ENABLED", ad: { finalUrls: ["https://example.com/old"] } }, adGroup: { name: "AG" }, campaign: { name: "Search" } }];
     if (q.includes("FROM conversion_action WHERE conversion_action.name")) return [];
-    if (q.includes("google_analytics_4_settings.event_name")) {
+    if (q.includes("AND conversion_action.google_analytics_4_settings.event_name")) {
       return q.includes("property_id = 321") && q.includes("'generate_lead'") ? [{ conversionAction: { resourceName: "customers/1112223333/conversionActions/90",
         name: "Site (web) generate_lead", category: "SUBMIT_LEAD_FORM", ...this.ga4Lead } }] : [];
     }
-    if (q.includes("FROM conversion_action WHERE conversion_action.id = 78")) return [{ conversionAction: { name: "Site (web) generate_lead", countingType: "MANY_PER_CLICK", type: "GOOGLE_ANALYTICS_4_CUSTOM" } }];
+    if (q.includes("FROM conversion_action WHERE conversion_action.id = 78")) return [{ conversionAction: { name: "Site (web) generate_lead", countingType: "MANY_PER_CLICK", type: "GOOGLE_ANALYTICS_4_CUSTOM",
+      googleAnalytics4Settings: { propertyId: "321", eventName: "generate_lead" } } }];
     if (q.includes("FROM conversion_action WHERE conversion_action.id")) return [{ conversionAction: { name: "Signup", countingType: "MANY_PER_CLICK", type: "WEBPAGE" } }];
     if (q.includes("campaign.name = ")) return q.includes("campaign.name = 'Search'") ? [{ campaign: { id: "10" } }] : [];
     if (q.includes("FROM bidding_strategy WHERE bidding_strategy.name")) return q.includes("'Taken'") ? [{ biddingStrategy: { id: "5" } }] : [];
@@ -2304,7 +2305,7 @@ describe("OAuth + MCP end to end", () => {
     // A GA4 import's counting is GA4's: refused before Google is asked, with where to change it.
     const ga4Count = (await call(token, "propose_changes", { customer_id: "1112223333", changes: [{ type: "set_conversion_counting", conversion_action_id: "78", counting: "ONE_PER_CLICK" }] })).text;
     expect(ga4Count).toContain('"Site (web) generate_lead" is imported (GOOGLE_ANALYTICS_4_CUSTOM)');
-    expect(ga4Count).toContain("Change counting method");
+    expect(ga4Count).toContain("set_key_event_counting with property_id 321, event_name generate_lead, counting ONCE_PER_SESSION");
 
     // Importing a GA4 key event enables Google's HIDDEN copy; Google can't hide it again, so undo removes it, and undoing that re-enables it.
     const imp = await propose([{ type: "import_ga4_key_event", property_id: "321", event_name: "generate_lead" }]);

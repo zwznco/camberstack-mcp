@@ -264,6 +264,11 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
         + "Find them: SELECT campaign.id, campaign.name FROM campaign WHERE campaign.missing_eu_political_advertising_declaration = TRUE "
         + "AND campaign.status != 'REMOVED'. Ask the user whether any of them run EU political ads (it is their legal declaration; most "
         + "businesses answer no), propose set_eu_political_advertising for each in one proposal, apply it, then retry this change.";
+    case "CANNOT_MODIFY_FOR_TRIAL_CAMPAIGN":
+      // Google's message says what's locked but not why or what to do; the model dropped the pause unexplained (prod, 2026-10-28).
+      return "this campaign is the trial arm of a Google Ads experiment, which takes its dates, budget and status from the experiment. "
+        + "Camberstack can't end experiments: in Google Ads → Campaigns → Experiments, end it (the original campaign keeps running) or apply it "
+        + "(the trial's changes move to the original). Other changes to the trial campaign, such as keywords or ads, can still be proposed.";
     case "POLICY_FINDING":
       return "Google's ad policy check rejected the ad text, images or video. Change what any [policy …] above flags. Common causes: repeated punctuation (\"!!\"), "
         + "ALL CAPS, symbols or emoji used for emphasis, phone numbers in headlines, or a video or landing page that breaks policy. "
@@ -277,7 +282,7 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       return /counting_type$/.test(field)
         ? "Google fixes the counting of some conversion actions (imports such as GA4 or Firebase, and Google-managed actions). "
           + "Check it with SELECT conversion_action.name, conversion_action.type FROM conversion_action, and change the counting where "
-          + "the action comes from (in GA4 for a GA4 import), or count with a different conversion action."
+          + "the action comes from (for a GA4 import, propose the Google Analytics change set_key_event_counting), or count with a different conversion action."
         : null;
     case "ASPECT_RATIO_NOT_ALLOWED":
       return "an image has the wrong shape for its slot: marketing images 1.91:1, square images and square logos 1:1, landscape logos 4:1.";
