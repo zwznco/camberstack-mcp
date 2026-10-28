@@ -2540,6 +2540,7 @@ describe("OAuth + MCP end to end", () => {
       const plan = (await call(t, "billing")).json;
       expect(plan).toMatchObject({ service_in_use: "Google Ads" });
       expect(plan.included).toContain("1 Google service at a time");
+      expect(plan.pro).toContain("Google Ads, Search Console and Google Analytics together");
       // A reset by hand clears it: Search Console becomes the one, and Ads waits.
       db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = ?").run(now() + 1, uid);
       await new Promise((r) => setTimeout(r, 1100));

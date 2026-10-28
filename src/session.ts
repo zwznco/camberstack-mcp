@@ -505,7 +505,8 @@ export class UserSession {
           ...(this.planName === "pro" ? agency : {}) }
       : { plan: "free", account_page, ...usage, ...this.serviceUsage(),
           included: this.freeIncluded(),
-          pro: `up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, upgrade_url: upgrade, ...agency,
+          pro: `${this.deps.freeOneService ? "Google Ads, Search Console and Google Analytics together, on " : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
+          upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
   }
 
