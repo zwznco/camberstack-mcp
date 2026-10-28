@@ -90,6 +90,25 @@ describe("lifecycle emails", () => {
     expect(await lc.run()).toBe(0);
   });
 
+  it("pitches Plus in service_limit when it's sold, and welcomes a Plus subscriber with what Plus adds", async () => {
+    const { db, lc, sent, user } = setup();
+    (lc as any).d.plusLink = (u: string) => `https://camberstack.io/upgrade?t=${u}.sig&plan=plus`;
+    user("sc", "sc@example.com", 10);
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'sc', 'account_overview', 1, ?, 10, 10)").run(now() - 0.3 * DAY,
+      "Service limit: the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and this login "
+      + "uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used.");
+    expect(await lc.run()).toBe(1);
+    expect(sent[0].text).toContain("Camberstack Plus covers Google Ads, Search Console and Google Analytics together on one Google Ads account");
+    expect(sent[0].text).toContain("for $7/month; cancel any time. Pro ($15/month) does the same on up to 5 accounts.");
+    expect(sent[0].text).toContain("https://camberstack.io/upgrade?t=sc.sig&plan=plus");
+    expect(sent[0].html).toContain(">Get Plus</a>");
+    db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES ('pl', 'g-pl', 'pl@example.com', 'plus', 'sub_pl', ?)").run(now());
+    expect(await lc.transactional()).toBe(1);
+    expect(sent.at(-1).subject).toBe("You're on Camberstack Plus");
+    expect(sent.at(-1).text).toContain("What Plus adds: Google Ads, Search Console and Google Analytics together, on one Google Ads account.");
+    expect(sent.at(-1).text).toContain("$7/month, renewing monthly");
+  });
+
   it("describes whichever Free is live in the welcome: by account, announced with its date, or one service", async () => {
     const welcomeText = async (freeOneServiceFrom?: number) => {
       const sent: any[] = [];
@@ -101,8 +120,8 @@ describe("lifecycle emails", () => {
     };
     const off = await welcomeText(), soon = await welcomeText(Date.UTC(2099, 10, 16) / 1000), on = await welcomeText(0);
     expect(off).toContain("Free covers one Google Ads account; Pro ($15/month) covers up to 5, and Agency ($49/month) up to 25.\n");
-    expect(soon).toContain("up to 25. From November 16, Free covers one Google service at a time: Google Ads (1 account), Search Console or Google Analytics; Pro and Agency cover all three together.");
-    expect(on).toContain("Free covers one Google service at a time: Google Ads (1 account), Search Console or Google Analytics; Pro ($15/month) covers Google Ads, Search Console and Google Analytics together on up to 5 Google Ads accounts");
+    expect(soon).toContain("up to 25. From November 16, Free covers one Google service at a time: Google Ads (1 account), Search Console or Google Analytics; Plus ($7/month) covers all three together on 1 Google Ads account, and Pro and Agency on more.");
+    expect(on).toContain("Free covers one Google service at a time: Google Ads (1 account), Search Console or Google Analytics; Plus ($7/month) covers Google Ads, Search Console and Google Analytics together on 1 Google Ads account, Pro ($15/month) on up to 5");
     expect(on).not.toContain("From November");
   });
 

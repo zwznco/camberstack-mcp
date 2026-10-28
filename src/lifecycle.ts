@@ -11,7 +11,7 @@
  *                  Still one upgrade email per user: none of limit_reached, switch_wanted and service_limit follows another
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
- *   pro_welcome    on Pro with a Stripe subscription → what Pro adds, where billing lives
+ *   pro_welcome    on a paid plan (Plus, Pro, Agency) with a Stripe subscription → what it adds, where billing lives
  * Those two are transactional: sent within a minute (transactional(), every minute), not held for the morning.
  * The first three go out in the user's morning (SEND_HOURS in the time zone of their Google Ads account, or FALLBACK_TZ),
  * so being due only holds it until the next hourly run inside that window.
@@ -27,7 +27,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, ALL_THREE, ONE_SERVICE_FREE, PLAN_LIMIT_PREFIX, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, freePlan, freePlanChange, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, ALL_THREE, ONE_SERVICE_FREE, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, freePlan, freePlanChange, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 
@@ -47,6 +47,8 @@ export interface LifecycleDeps {
   upgradeLink: (userId: string) => string | null;
   /** The upgrade link for Agency (billing.ts link "agency"); null or unset when Agency isn't sold. */
   agencyLink?: (userId: string) => string | null;
+  /** The upgrade link for Plus (billing.ts link "plus"); null or unset when Plus isn't sold. service_limit pitches it. */
+  plusLink?: (userId: string) => string | null;
   /** FREE_ONE_SERVICE's start (plans.ts FreePlan): the welcome describes whichever Free is live. */
   freeOneServiceFrom?: number;
   fetch?: typeof fetch;
@@ -163,7 +165,7 @@ export class Lifecycle {
     return this.deliver(this.due(), (u) => u.kind === "first_steps" ? firstSteps(u.days)
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
       : u.kind === "switch_wanted" ? this.switchWantedFor(u.id, u.accounts ?? 2)
-      : u.kind === "service_limit" ? serviceLimit(this.d.baseUrl, this.d.upgradeLink(u.id), u.error ?? "") : checkInEmail());
+      : u.kind === "service_limit" ? serviceLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.error ?? "") : checkInEmail());
   }
 
   /** Agency only when they have more accounts than Pro covers and Agency is sold; otherwise Pro. */
@@ -182,7 +184,7 @@ export class Lifecycle {
    */
   async transactional(): Promise<number> {
     if (!this.d.mail) return 0;
-    const pros = (this.d.db.prepare(`SELECT u.id, u.email, u.plan FROM users u WHERE u.plan IN ('pro', 'agency') AND u.stripe_sub IS NOT NULL AND u.stripe_sub != ''
+    const pros = (this.d.db.prepare(`SELECT u.id, u.email, u.plan FROM users u WHERE u.plan IN ('plus', 'pro', 'agency') AND u.stripe_sub IS NOT NULL AND u.stripe_sub != ''
       AND u.email_opt_out = 0 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = 'pro_welcome')`)
       .all() as { id: string; email: string; plan: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
@@ -242,11 +244,12 @@ export class Lifecycle {
     await this.send(to, firstSteps(3), "preview");
     await this.send(to, limitReached(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "2026-11-13"), "preview");
     await this.send(to, switchWanted(this.d.baseUrl, 5, "pro", `${this.d.baseUrl}/account?upgrade=1`), "preview");
-    await this.send(to, serviceLimit(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "Service limit: the Free plan covers one Google service at a time "
+    await this.send(to, serviceLimit(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=plus`, `${this.d.baseUrl}/account?upgrade=1`, "Service limit: the Free plan covers one Google service at a time "
       + "(Google Ads, Search Console or Google Analytics), and this login uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used."), "preview");
     await this.send(to, checkInEmail(), "preview");
     await this.send(to, welcome(this.d.baseUrl, freePlan(this.d.freeOneServiceFrom)), "preview");
     await this.send(to, proWelcome(this.d.baseUrl, "pro"), "preview");
+    await this.send(to, proWelcome(this.d.baseUrl, "plus"), "preview");
   }
 
   mount(app: Express, page: (title: string, body: string) => string): void {
@@ -331,15 +334,21 @@ Camberstack`,
  * Service names and a date only, read back from the stop's own text (session.ts checkService): "… this login uses it for
  * Search Console. Google Ads opens on Free on 2026-11-27, …", or "… Search Console and Google Ads together need more than one."
  */
-function serviceLimit(base: string, upgrade: string | null, error: string) {
+function serviceLimit(base: string, plus: string | null, upgrade: string | null, error: string) {
   const have = /uses it for ([^.]+)\./.exec(error)?.[1];
   const opens = /\. (.+?) opens on Free on (\d{4}-\d{2}-\d{2})/.exec(error);
   const want = opens?.[1] ?? /and (.+?) together need more than one/.exec(error)?.[1] ?? "another Google service";
   const when = opens && new Date(`${opens[2]}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
   const stopped = `Camberstack stopped when your AI tried to use ${want}. The Free plan covers one Google service at a time`
     + (have ? `, and you're using it for ${have}${when ? `; ${want} opens on Free on ${when}` : ""}.` : ".");
-  const pro = `Camberstack Pro covers Google Ads, Search Console and Google Analytics together, including the tools that use them side by side, `
-    + `such as finding searches you pay for that already rank, for ${PRO_PRICE_LABEL}; cancel any time.`;
+  // Plus when it's sold: the same one account, all three services, which is what this stop is about.
+  const pro = plus
+    ? `Camberstack Plus covers Google Ads, Search Console and Google Analytics together on one Google Ads account, including the tools `
+      + `that use them side by side, such as finding searches you pay for that already rank, for ${PLUS_PRICE_LABEL}; cancel any time. `
+      + `Pro (${PRO_PRICE_LABEL}) does the same on up to ${PRO_ACCOUNTS} accounts.`
+    : `Camberstack Pro covers Google Ads, Search Console and Google Analytics together, including the tools that use them side by side, `
+      + `such as finding searches you pay for that already rank, for ${PRO_PRICE_LABEL}; cancel any time.`;
+  const link = plus ?? upgrade;
   const free = `On Free, every tool and unlimited changes keep working${have ? ` on ${have}` : ""}, and undo and history always work.`;
   return {
     subject: "Using Google Ads, Search Console and Analytics together",
@@ -347,7 +356,7 @@ function serviceLimit(base: string, upgrade: string | null, error: string) {
 
 ${stopped}
 
-${pro}${upgrade ? `\n${upgrade}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
+${pro}${link ? `\n${link}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
 
 ${free} Your plan: ${base}/account
 
@@ -356,7 +365,7 @@ This is the only email about it. Questions? Just reply.
 Adam
 Camberstack`,
     html: wrap(p("Hi,") + p(stopped) + p(pro)
-      + `<p style="margin:0 0 18px"><a href="${upgrade ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">Upgrade to Pro</a></p>`
+      + `<p style="margin:0 0 18px"><a href="${link ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">${plus ? "Get Plus" : "Upgrade to Pro"}</a></p>`
       + p(`${free} Your plan is on <a href="${base}/account">your account page</a>.`)
       + p("This is the only email about it. Questions? Just reply.") + p("Adam<br>Camberstack")),
   };
@@ -421,7 +430,7 @@ camberstack.io`,
 function welcome(base: string, fp: FreePlan = { kind: "accounts" }) {
   const ask = "How did each of my Google Ads campaigns do last month?";
   const plans = fp.kind === "one_service"
-    ? `Free covers ${ONE_SERVICE_FREE}; Pro (${PRO_PRICE_LABEL}) covers ${ALL_THREE} on up to ${PRO_ACCOUNTS} Google Ads accounts, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`
+    ? `Free covers ${ONE_SERVICE_FREE}; Plus (${PLUS_PRICE_LABEL}) covers ${ALL_THREE} on 1 Google Ads account, Pro (${PRO_PRICE_LABEL}) on up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`
     : `Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.${fp.kind === "upcoming" ? ` ${freePlanChange(fp)}` : ""}`;
   return {
     subject: "Welcome to Camberstack",
@@ -448,8 +457,40 @@ Camberstack`,
 }
 
 /** Transactional: confirms the upgrade. Billing changes and cancelling live on /account (Stripe's portal), receipts come from Stripe. */
+/** Plus adds services, not accounts: Google Ads, Search Console and Google Analytics together on the one account. */
+function plusWelcome(base: string) {
+  const ask = "Which searches do I pay for that already rank on Google?";
+  const adds = `Google Ads, Search Console and Google Analytics together, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
+  const same = "every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.";
+  const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from your account page`;
+  return {
+    subject: "You're on Camberstack Plus",
+    text: `Hi,
+
+Thanks for subscribing to Camberstack Plus. It's active now.
+
+What Plus adds: ${adds}
+
+What stays the same: ${same}
+
+Billing: ${billing}:
+${base}/account
+
+If anything doesn't work the way you expected, just reply. I read every email.
+
+Adam
+Camberstack`,
+    html: wrap(p("Hi,") + p("Thanks for subscribing to Camberstack Plus. It's active now.")
+      + p(`<strong>What Plus adds:</strong> ${adds.replace(`"${ask}"`, `<em>“${ask}”</em>`)}`)
+      + p(`<strong>What stays the same:</strong> ${same}`)
+      + p(`<strong>Billing:</strong> ${billing}: <a href="${base}/account">your account page</a>.`)
+      + p("If anything doesn't work the way you expected, just reply. I read every email.") + p("Adam<br>Camberstack")),
+  };
+}
+
 /** The welcome for a new subscriber, on the plan they bought (Pro or Agency; the kind stays pro_welcome for both). */
 function proWelcome(base: string, plan: string) {
+  if (plan === "plus") return plusWelcome(base);
   const ask = "List my Google Ads accounts";
   const [name, accounts, price] = plan === "agency" ? ["Agency", AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL] : ["Pro", PRO_ACCOUNTS, PRO_PRICE_LABEL];
   return {

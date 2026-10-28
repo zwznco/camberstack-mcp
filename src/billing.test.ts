@@ -36,7 +36,7 @@ describe("Agency plan billing", () => {
   const db = openDb(":memory:");
   const stripe = fakeStripe();
   const billing = new Billing({ db, baseUrl: "http://x", signingKey: Buffer.alloc(32, 1), fetch: stripe.f,
-    stripe: { secretKey: "sk", proPriceId: PRO, agencyPriceId: AGENCY } });
+    stripe: { secretKey: "sk", proPriceId: PRO, agencyPriceId: AGENCY, plusPriceId: "price_plus" } });
   let base = "";
   let server: ReturnType<ReturnType<typeof express>["listen"]>;
   const plan = (id: string) => (db.prepare("SELECT plan FROM users WHERE id = ?").get(id) as { plan: string }).plan;
@@ -72,6 +72,31 @@ describe("Agency plan billing", () => {
     const page = await visit(`${base}/upgraded?session_id=cs_b`);
     expect(await page.text()).toContain("you're on Camberstack Agency");
     expect(plan("b")).toBe("agency");
+  });
+
+  it("checks out Plus on its own price and settles a Plus subscription as plus; a paying Plus user moves to Pro in the portal", async () => {
+    user("p");
+    const link = billing.link("plus", "p", "tool")!;
+    expect(link).toMatch(/&plan=plus&src=tool$/);
+    expect((await visit(link)).headers.get("location")).toBe("https://checkout.stripe.test/price_plus");
+    expect(stripe.created.at(-1)).toMatchObject({ "line_items[0][price]": "price_plus", "metadata[plan]": "plus" });
+    stripe.subs.set("sub_p", { status: "active", price: "price_plus" });
+    stripe.sessions.set("cs_p", { id: "cs_p", status: "complete", metadata: { app: "camberstack-mcp" }, client_reference_id: "p", customer: "cus_p", subscription: "sub_p" });
+    const page = await (await visit(`${base}/upgraded?session_id=cs_p`)).text();
+    expect(page).toContain("you're on Camberstack Plus");
+    expect(page).toContain("Plus covers Google Ads, Search Console and Google Analytics together on 1 Google Ads account.");
+    expect(plan("p")).toBe("plus");
+    // The sweep keeps Plus as Plus, follows a portal switch to Pro, and drops it when it ends.
+    await billing.sweep();
+    expect(plan("p")).toBe("plus");
+    stripe.subs.set("sub_p", { status: "active", price: PRO });
+    await billing.sweep();
+    expect(plan("p")).toBe("pro");
+    // Paying already: Pro goes to the billing portal, never a second checkout.
+    db.prepare("UPDATE users SET plan = 'plus' WHERE id = 'p'").run();
+    expect((await visit(billing.link("upgrade", "p")!)).headers.get("location")).toBe("https://billing.stripe.test/portal");
+    const noPlus = new Billing({ db, baseUrl: "http://x", signingKey: Buffer.alloc(32, 1), stripe: { secretKey: "sk", proPriceId: PRO } });
+    expect(noPlus.link("plus", "p")).toBeNull();
   });
 
   it("tracks the paywall funnel: upgrade clicks by where the link came from, one paid event per subscription, /plans links", async () => {

@@ -14,7 +14,7 @@ import type { DB, UserRow } from "./db.js";
 import { now } from "./db.js";
 import { safeEqual, sign } from "./crypto.js";
 import { esc } from "./pages.js";
-import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, isPaid, type Plan } from "./plans.js";
+import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, isPaid, planLabel, type Plan } from "./plans.js";
 
 const LINK_TTL = 7 * 86400;
 /** Subscription statuses that keep Pro (past_due: Stripe is still retrying the card). */
@@ -29,7 +29,7 @@ export interface BillingDeps {
   baseUrl: string;
   /** Signs billing links; derived from ENCRYPTION_KEY so no new secret is needed. */
   signingKey: Buffer;
-  stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string };
+  stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string; plusPriceId?: string };
   fetch?: typeof fetch;
 }
 
@@ -43,17 +43,18 @@ export class Billing {
   }
 
   get agencyEnabled(): boolean { return this.enabled && Boolean(this.d.stripe?.agencyPriceId); }
+  get plusEnabled(): boolean { return this.enabled && Boolean(this.d.stripe?.plusPriceId); }
 
   /**
-   * A link for one user, valid for a week. Null when billing (or, for "agency", the Agency plan) isn't configured.
-   * "agency" is the upgrade link with plan=agency: which plan to buy is the user's choice, so it isn't signed.
+   * A link for one user, valid for a week. Null when billing (or, for "agency"/"plus", that plan) isn't configured.
+   * "agency" and "plus" are the upgrade link with plan=…: which plan to buy is the user's choice, so it isn't signed.
    */
-  link(kind: "upgrade" | "billing" | "agency", userId: string, src?: LinkSrc): string | null {
-    if (!this.enabled || (kind === "agency" && !this.agencyEnabled)) return null;
-    const k = kind === "agency" ? "upgrade" : kind;
+  link(kind: "upgrade" | "billing" | "agency" | "plus", userId: string, src?: LinkSrc): string | null {
+    if (!this.enabled || (kind === "agency" && !this.agencyEnabled) || (kind === "plus" && !this.plusEnabled)) return null;
+    const k = kind === "agency" || kind === "plus" ? "upgrade" : kind;
     const payload = `${userId}.${now() + LINK_TTL}`;
     // src isn't signed: it only labels the click for the funnel.
-    return `${this.d.baseUrl}/${k}?t=${payload}.${this.sign(`${k}:${payload}`)}${kind === "agency" ? "&plan=agency" : ""}${src && k === "upgrade" ? `&src=${src}` : ""}`;
+    return `${this.d.baseUrl}/${k}?t=${payload}.${this.sign(`${k}:${payload}`)}${kind === "agency" || kind === "plus" ? `&plan=${kind}` : ""}${src && k === "upgrade" ? `&src=${src}` : ""}`;
   }
 
   /**
@@ -72,10 +73,11 @@ export class Billing {
     } catch { /* best effort */ }
   }
 
-  /** The plan a live subscription pays for: Agency by its price, anything else Pro (the old $49 Pro price included). */
+  /** The plan a live subscription pays for: Agency or Plus by its price, anything else Pro (the old $49 Pro price included). */
   private planOf(sub: any): Plan {
     const prices = (sub?.items?.data ?? []).map((i: any) => i.price?.id);
-    return this.d.stripe?.agencyPriceId && prices.includes(this.d.stripe.agencyPriceId) ? "agency" : "pro";
+    if (this.d.stripe?.agencyPriceId && prices.includes(this.d.stripe.agencyPriceId)) return "agency";
+    return this.d.stripe?.plusPriceId && prices.includes(this.d.stripe.plusPriceId) ? "plus" : "pro";
   }
 
   verify(kind: "upgrade" | "billing" | "plans", t: unknown): string | null {
@@ -142,12 +144,12 @@ export class Billing {
     try { return (await this.settleCompleted(userId)).includes(userId); } catch { return false; }
   }
 
-  /** Hourly backstop: settle missed checkouts; follow a switch between Pro and Agency; drop a plan whose subscription has ended. */
+  /** Hourly backstop: settle missed checkouts; follow a switch between paid plans; drop a plan whose subscription has ended. */
   async sweep(): Promise<void> {
     if (!this.enabled) return;
     // One bad answer from Stripe must not stop the rest: each step and each user fails on its own.
     try { await this.settleCompleted(); } catch (e) { console.error(`billing sweep: settle: ${(e as Error).message}`); }
-    const paying = this.d.db.prepare("SELECT id, plan, stripe_sub FROM users WHERE plan IN ('pro', 'agency') AND stripe_sub IS NOT NULL AND stripe_sub != ''").all() as
+    const paying = this.d.db.prepare("SELECT id, plan, stripe_sub FROM users WHERE plan IN ('plus', 'pro', 'agency') AND stripe_sub IS NOT NULL AND stripe_sub != ''").all() as
       { id: string; plan: Plan; stripe_sub: string }[];
     for (const p of paying) {
       let sub: any;
@@ -186,8 +188,8 @@ export class Billing {
       const u = userId ? this.user(userId) : undefined;
       if (!u || !this.enabled) return expired(res);
       this.track(u.id, "upgrade_click", SRCS.has(String(req.query.src)) ? String(req.query.src) : null);
-      const want: Plan = req.query.plan === "agency" && this.agencyEnabled ? "agency" : "pro";
-      const name = want === "agency" ? "Agency" : "Pro";
+      const want: Plan = req.query.plan === "agency" && this.agencyEnabled ? "agency" : req.query.plan === "plus" && this.plusEnabled ? "plus" : "pro";
+      const name = planLabel(want);
       if (u.plan === want) return send(res, 200, `Already on ${name}`, `<p>${esc(u.email)} is already on Camberstack ${name}. Go back to your AI assistant and carry on.</p>`);
       // Already paying for the other plan: a second subscription would bill twice, so switch in Stripe's billing portal.
       if (isPaid(u.plan) && u.stripe_customer) {
@@ -203,7 +205,7 @@ export class Billing {
       try {
         const s = await this.stripe("checkout/sessions", {
           mode: "subscription",
-          "line_items[0][price]": want === "agency" ? this.d.stripe!.agencyPriceId! : this.d.stripe!.proPriceId,
+          "line_items[0][price]": want === "agency" ? this.d.stripe!.agencyPriceId! : want === "plus" ? this.d.stripe!.plusPriceId! : this.d.stripe!.proPriceId,
           "metadata[plan]": want,
           "line_items[0][quantity]": "1",
           client_reference_id: u.id,
@@ -229,9 +231,10 @@ export class Billing {
         const sub = session?.subscription ? await this.stripe(`subscriptions/${session.subscription}`) : null;
         const ok = sub && LIVE.has(sub.status) && this.settle(session, sub);
         if (!ok) return send(res, 400, "Payment not complete", `<p>We could not confirm this payment. If you were charged, email us and we will sort it out.</p>`);
-        const agency = this.planOf(sub) === "agency", name = agency ? "Agency" : "Pro";
+        const plan = this.planOf(sub), name = planLabel(plan);
         send(res, 200, `You're on ${name}`, `<p><strong>Thanks, you're on Camberstack ${name}.</strong></p>
-<p>Go back to your AI assistant and ask it to try again. ${name} covers up to ${agency ? AGENCY_ACCOUNTS : PRO_ACCOUNTS} Google Ads accounts.</p>
+<p>Go back to your AI assistant and ask it to try again. ${plan === "plus" ? "Plus covers Google Ads, Search Console and Google Analytics together on 1 Google Ads account."
+  : `${name} covers up to ${plan === "agency" ? AGENCY_ACCOUNTS : PRO_ACCOUNTS} Google Ads accounts.`}</p>
 <p><a class="btn" href="/account">Go to your account</a></p>
 <p class="muted">Change your card or cancel any time from your account page.</p>`);
       } catch (e) {

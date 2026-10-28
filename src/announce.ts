@@ -72,7 +72,7 @@ What stays the same on Free:
 
 How it works: the first time you use Camberstack from November 16, your AI asks which service you want. Another one opens ${ACCOUNT_WINDOW_DAYS} days after you last used the first.
 
-If you use them together, Camberstack Pro covers Google Ads, Search Console and Google Analytics at once, including the tools that use them side by side (like finding searches you pay for that already rank), on up to ${PRO_ACCOUNTS} Google Ads accounts. What each plan includes and costs: https://camberstack.io/plans
+If you use them together, there's a new plan for that: Camberstack Plus covers Google Ads, Search Console and Google Analytics at once on one Google Ads account, including the tools that use them side by side (like finding searches you pay for that already rank). Pro does the same on up to ${PRO_ACCOUNTS} accounts. What each plan includes and costs: https://camberstack.io/plans
 
 Nothing changes for Pro and Agency.
 

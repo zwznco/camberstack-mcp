@@ -210,7 +210,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           ? `One switch per ${ACCOUNT_WINDOW_DAYS} days: using a "switch" account makes it active and locks ${st.active.at(-1)}, `
             + "switching back included. Nothing is spent until the user agrees and switch_account is called."
           : `This ${ACCOUNT_WINDOW_DAYS}-day switch is used; locked accounts open up from ${st.switchOpens}`
-            + (s.chatgpt || s.planName === "agency" ? "." : s.isPro ? ", or on Agency, which covers more (the billing tool has the switch link)."
+            + (s.chatgpt || s.planName === "agency" ? "." : s.planName === "plus" ? ", or on Pro or Agency, which cover more (the billing tool has the switch link)."
+              : s.isPro ? ", or on Agency, which covers more (the billing tool has the switch link)."
               : ", or on Pro or Agency, which cover more (the billing tool has the upgrade links)."),
       } } : {}),
       // Before the limit, the first accounts any tool touches become the plan's, unasked: a Free user with 5 accounts was

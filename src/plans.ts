@@ -1,14 +1,22 @@
 /** What the paid plan costs and includes: the one copy every page, email and tool reads. */
 
 export const PRO_PRICE_LABEL = "$15/month";
+/**
+ * Plus (2026-10-28, projects/camberstack/PRICING-TEST.md): Google Ads, Search Console and Google Analytics together on one
+ * Google Ads account, for people who want the bridge, not more accounts. Offered once one-service Free is announced.
+ */
+export const PLUS_PRICE_LABEL = "$7/month";
+export const PLUS_ACCOUNTS = 1;
 /** Google Ads accounts Pro covers at a time (PRO_ACCOUNTS overrides it, e.g. in tests). Was 10 until 2026-10-22. */
 export const PRO_ACCOUNTS = 5;
 export const AGENCY_PRICE_LABEL = "$49/month";
 /** Google Ads accounts Agency covers at a time (AGENCY_ACCOUNTS overrides it). */
 export const AGENCY_ACCOUNTS = 25;
 /** users.plan: free, or a paid plan its Stripe subscription's price decides (billing.ts). */
-export type Plan = "free" | "pro" | "agency";
-export const isPaid = (plan: string | null | undefined) => plan === "pro" || plan === "agency";
+export type Plan = "free" | "plus" | "pro" | "agency";
+export const isPaid = (plan: string | null | undefined) => plan === "plus" || plan === "pro" || plan === "agency";
+/** "Plus" / "Pro" / "Agency" / "Free". */
+export const planLabel = (plan: string) => plan === "agency" ? "Agency" : plan === "pro" ? "Pro" : plan === "plus" ? "Plus" : "Free";
 /** Plans are sized in Google Ads accounts used over this rolling window (session.ts accountsInUse). */
 export const ACCOUNT_WINDOW_DAYS = 30;
 /** Error text the account gate starts with; lifecycle.ts finds blocked users by it in tool_calls. */
@@ -63,7 +71,7 @@ export const ALL_THREE = "Google Ads, Search Console and Google Analytics togeth
 export const freePlanChange = (fp: FreePlan, neutral = false) =>
   fp.kind !== "upcoming" ? ""
     : `From ${dateLabel(fp.from)}, ${neutral ? "the current plan" : "Free"} covers ${ONE_SERVICE_FREE}; `
-      + (neutral ? "using several together needs a different plan." : "Pro and Agency cover all three together.");
+      + (neutral ? "using several together needs a different plan." : `Plus (${PLUS_PRICE_LABEL}) covers all three together on 1 Google Ads account, and Pro and Agency on more.`);
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number) => `${n} Google Ads account${n === 1 ? "" : "s"}`;

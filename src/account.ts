@@ -13,7 +13,7 @@ import { SignIn } from "./signin.js";
 import { appPage, cmd, COPY_JS, esc, infoPage } from "./pages.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, planLabel } from "./plans.js";
 
 export interface AccountDeps {
   db: DB;
@@ -21,7 +21,7 @@ export interface AccountDeps {
   baseUrl: string;
   fetch?: typeof fetch;
   session: (userId: string, o?: { seen?: boolean }) => UserSession;
-  billingLink: (kind: "upgrade" | "billing" | "agency", userId: string) => string | null;
+  billingLink: (kind: "upgrade" | "billing" | "agency" | "plus", userId: string) => string | null;
   /** The admin site's origin: where ending a "Log in as user" session returns to. */
   adminUrl?: string;
 }
@@ -83,7 +83,8 @@ export function mountAccount(app: Express, d: AccountDeps): SignIn {
   app.get("/account/login", (req, res) => {
     if (!d.google.clientId) { res.status(503).type("html").send(page("Sign-in unavailable", "<p>Google sign-in is not configured.</p>")); return; }
     // Only a sign-in started from the upgrade screen continues to checkout.
-    auth.start(res, req.query.next === "upgrade" ? "/account?upgrade=1" : req.query.next === "agency" ? "/account?upgrade=agency" : undefined);
+    auth.start(res, req.query.next === "upgrade" ? "/account?upgrade=1" : req.query.next === "agency" ? "/account?upgrade=agency"
+      : req.query.next === "plus" ? "/account?upgrade=plus" : undefined);
   });
 
   app.get("/account/callback", async (req, res) => {
@@ -152,20 +153,22 @@ Your AI app can no longer use Camberstack until you connect again.</p>
   app.get("/account", (req, res) => {
     const me = signedIn(req);
     const u = me?.u, by = me?.by ?? null;
-    // "Upgrade to Pro" on the pricing section lands on /account?upgrade=1 (Agency: ?upgrade=agency). Signed in: a free user goes
+    // "Upgrade to Pro" on the pricing section lands on /account?upgrade=1 (Agency: ?upgrade=agency, Plus: ?upgrade=plus). Signed in: a free user goes
     // straight to Stripe Checkout. Signed out: the sign-in link carries the intent through Google (in
     // the sign-in's own state, so an abandoned click can't hijack a later, ordinary sign-in).
-    const agency = req.query.upgrade === "agency", wantsUpgrade = req.query.upgrade === "1" || agency;
+    const agency = req.query.upgrade === "agency", plus = req.query.upgrade === "plus", wantsUpgrade = req.query.upgrade === "1" || agency || plus;
+    const wantName = agency ? "Agency" : plus ? "Plus" : "Pro";
     if (u && wantsUpgrade && !by) {
       const p = d.session(u.id).plan();
-      const to = agency ? ("agency_upgrade_url" in p ? p.agency_upgrade_url : null) : ("upgrade_url" in p ? p.upgrade_url : null);
+      const to = agency ? ("agency_upgrade_url" in p ? p.agency_upgrade_url : null) : plus ? ("plus_upgrade_url" in p ? p.plus_upgrade_url : null)
+        : ("upgrade_url" in p ? p.upgrade_url : "pro_upgrade_url" in p ? p.pro_upgrade_url : null);
       if (to) { res.redirect(303, to); return; }
     }
     if (!u) {
       res.type("html").send(shell("Your account", `<div class="signin"><div class="card">
 <h1 style="font-size:26px;margin:0">Your Camberstack account</h1>
-<p class="muted">${wantsUpgrade ? `Sign in to upgrade to ${agency ? "Agency" : "Pro"}. You'll go straight to checkout.` : "See your plan, every change Camberstack made to your Google Ads, and manage billing or disconnect."}</p>
-<a class="btn" href="/account/login${wantsUpgrade ? `?next=${agency ? "agency" : "upgrade"}` : ""}">Sign in with Google</a>
+<p class="muted">${wantsUpgrade ? `Sign in to upgrade to ${wantName}. You'll go straight to checkout.` : "See your plan, every change Camberstack made to your Google Ads, and manage billing or disconnect."}</p>
+<a class="btn" href="/account/login${wantsUpgrade ? `?next=${agency ? "agency" : plus ? "plus" : "upgrade"}` : ""}">Sign in with Google</a>
 <p class="muted" style="font-size:14px">Use the Google account you connected to your AI app. We only ask for your email address here.</p>
 <p class="muted" style="font-size:14px">New to Camberstack? <a href="/#setup">Connect it to your AI app first</a>: that creates your account.</p>
 </div></div>`));
@@ -189,9 +192,10 @@ Your AI app can no longer use Camberstack until you connect again.</p>
     const entries = days ? all.filter((h) => at(h) >= now - days * DAY) : all;
 
     const planCard = plan.plan !== "free"
-      ? `<div class="card"><p class="label">Plan</p><p class="big">${plan.plan === "agency" ? "Agency" : "Pro"}${"complimentary" in plan ? ` <span class="chip">complimentary</span>` : ""}</p>
-<p class="muted">${plan.accounts_in_use.length} of ${plan.accounts_included} Google Ads accounts in use (last ${ACCOUNT_WINDOW_DAYS} days).${"complimentary" in plan ? " No subscription on this account, so nothing to manage or cancel." : ""}</p>
+      ? `<div class="card"><p class="label">Plan</p><p class="big">${planLabel(plan.plan)}${"complimentary" in plan ? ` <span class="chip">complimentary</span>` : ""}</p>
+<p class="muted">${plan.plan === "plus" ? "Google Ads, Search Console and Google Analytics together. " : ""}${plan.accounts_in_use.length} of ${plan.accounts_included} Google Ads account${plan.accounts_included === 1 ? "" : "s"} in use (last ${ACCOUNT_WINDOW_DAYS} days).${"complimentary" in plan ? " No subscription on this account, so nothing to manage or cancel." : ""}</p>
 ${!by && "manage_billing" in plan && plan.manage_billing ? `<a class="btn" href="${esc(plan.manage_billing)}">Manage billing</a>` : ""}
+${!by && "pro_upgrade_url" in plan && plan.pro_upgrade_url ? `<a class="btn" href="${esc(plan.pro_upgrade_url)}">Switch to Pro · ${PRO_PRICE_LABEL}</a>` : ""}
 ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="btn" href="${esc(plan.agency_upgrade_url)}">Switch to Agency · ${AGENCY_PRICE_LABEL}</a>` : ""}</div>`
       : (() => {
         const used = plan.accounts_in_use;
@@ -200,9 +204,10 @@ ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="bt
   ? `Every tool, with unlimited applied changes, on one Google service at a time (Google Ads on ${plan.accounts_included} account, Search Console or Google Analytics). In use: <strong style="color:var(--fg)">${esc(plan.service_in_use ?? "none yet; your AI asks which before the first")}</strong>.`
   : `Every tool, with unlimited applied changes, on ${plan.accounts_included} Google Ads account.`}
 ${used.length ? `Google Ads accounts in use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on a Google Ads account yet."}
-Pro covers ${"services_included" in plan ? `all three together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
+${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? `Plus covers all three together on 1 account; ` : ""}Pro covers ${"services_included" in plan || "plus_upgrade_url" in plan ? `all three together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
 ${"free_plan_change" in plan && plan.free_plan_change ? `<p class="muted"><strong style="color:var(--fg)">${esc(plan.free_plan_change)}</strong></p>` : ""}
 <p class="muted">To move to a different account, ask your AI to switch to it: Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.</p>
+${!by && "plus_upgrade_url" in plan && plan.plus_upgrade_url ? `<a class="btn" href="${esc(plan.plus_upgrade_url)}">Plus · ${PLUS_PRICE_LABEL}</a>` : ""}
 ${!by && "upgrade_url" in plan && plan.upgrade_url ? `<a class="btn" href="${esc(plan.upgrade_url)}">Upgrade to Pro · ${PRO_PRICE_LABEL}</a>` : ""}
 ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="btn" href="${esc(plan.agency_upgrade_url)}">Agency · ${AGENCY_PRICE_LABEL}</a>` : ""}</div>`;
       })();

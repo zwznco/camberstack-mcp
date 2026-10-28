@@ -76,6 +76,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     signingKey: lifecycleSigningKey(cfg.encryptionKey),
     upgradeLink: (userId) => billing.link("upgrade", userId, "email"),
     agencyLink: (userId) => billing.link("agency", userId, "email"),
+    plusLink: (userId) => billing.link("plus", userId, "email"),
     freeOneServiceFrom: cfg.freeOneServiceFrom,
   });
   const announcements = new Announcements({ db, lifecycle, internalEmails, canSend: !!cfg.mail });
@@ -91,7 +92,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   const deps: SessionDeps = {
     db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
     freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails, freeOneServiceFrom: cfg.freeOneServiceFrom,
-    agencyAccounts: billing.agencyEnabled ? cfg.agencyAccounts : undefined,
+    agencyAccounts: billing.agencyEnabled ? cfg.agencyAccounts : undefined, plusAvailable: billing.plusEnabled,
     billingLink: (kind, userId) => billing.link(kind, userId, "tool"), plansLink: (userId) => billing.plansLink(userId),
     refreshPlan: (userId) => billing.refreshPlan(userId),
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,

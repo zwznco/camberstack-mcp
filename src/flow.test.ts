@@ -377,7 +377,7 @@ beforeAll(async () => {
   const cfg: Config = {
     baseUrl: "http://localhost", port: 0, dataDir: ":memory:", encryptionKey: key,
     google: { clientId: "gid", clientSecret: "gsecret" },
-    freeAccounts: 1, proAccounts: 5, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
+    freeAccounts: 1, proAccounts: 5, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro", plusPriceId: "price_plus" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
   };
   // Bind first so baseUrl (the OAuth issuer) is the real test origin.
   server = await new Promise<Server>((resolve) => { const s = createApp(cfg, db).app.listen(0, () => resolve(s)); });
@@ -2533,6 +2533,7 @@ describe("OAuth + MCP end to end", () => {
   it("with FREE_ONE_SERVICE, covers one Google service on Free: the demo is free, another service waits or needs Pro", async () => {
     googleUser.sub = "google-sub-one-service"; googleUser.email = "oneservice@example.com";
     deps.freeOneServiceFrom = 0;
+    deps.plusAvailable = false;  // Plus not sold: the stop pitches Pro (the next test covers Plus)
     try {
       const t = await connect();
       const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-one-service") as { id: string }).id;
@@ -2579,6 +2580,7 @@ describe("OAuth + MCP end to end", () => {
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
     } finally {
       deps.freeOneServiceFrom = undefined;
+      deps.plusAvailable = true;
       googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
       const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-one-service") as { id: string } | undefined;
       // Every table keyed by user, so later tests see only the users they made.
@@ -2586,6 +2588,48 @@ describe("OAuth + MCP end to end", () => {
         .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
       if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
       db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-one-service");
+    }
+  });
+
+  it("with Plus sold, a second-service stop offers Plus (Pro beside it); Plus covers all three on one account, and more accounts point to Pro", async () => {
+    googleUser.sub = "google-sub-plus"; googleUser.email = "plus@example.com";
+    deps.freeOneServiceFrom = 0;
+    try {
+      const t = await connect();
+      const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-plus") as { id: string }).id;
+      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.stop).toBe("service_choice");
+      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
+      const stop = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
+      expect(stop.text).toContain("Plus ($7/month) covers all three together on 1 Google Ads account, so Search Console works right away; Pro ($15/month) does on up to 5.");
+      expect(stop.json).toMatchObject({ stop: "service_limit", upgrade: { plan: "plus", price: "$7/month" }, or_pro: { plan: "pro", price: "$15/month" } });
+      expect(stop.json.upgrade.upgrade_url).toMatch(/\/upgrade\?t=[\w.-]+&plan=plus&src=tool$/);
+      const free = (await call(t, "billing")).json;
+      expect(free.plus).toBe("Google Ads, Search Console and Google Analytics together, on 1 Google Ads account, $7/month, cancel any time");
+      expect(free.plus_upgrade_url).toContain("&plan=plus");
+      // ChatGPT connections are never pitched Plus (or any plan): the same stop, neutral.
+      const pc = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
+      const pi = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(pc) as { info: string }).info;
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(pi), redirect_uris: ["https://chatgpt.com/connector/oauth/p"] }), pc);
+      const gpt = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
+      expect(gpt.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bPlus\b|\bPro\b|\$|upgrade/i);
+      expect(JSON.stringify((await call(t, "billing")).json).replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bPlus\b|plus_upgrade|\$/i);
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(pi, pc);
+      // On Plus (as Stripe would settle it): no service gate, one Google Ads account, Pro as the way to more.
+      db.prepare("UPDATE users SET plan = 'plus', stripe_customer = 'cus_p', stripe_sub = 'sub_p' WHERE id = ?").run(uid);
+      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
+      const plus = (await call(t, "billing")).json;
+      expect(plus).toMatchObject({ plan: "plus", accounts_included: 1 });
+      expect(plus.pro_upgrade_url).toContain("/upgrade?t=");
+      expect(plus).not.toHaveProperty("plus_upgrade_url");
+      expect(plus).not.toHaveProperty("service_in_use");
+    } finally {
+      deps.freeOneServiceFrom = undefined;
+      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
+      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-plus") as { id: string } | undefined;
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
+        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
+      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
+      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-plus");
     }
   });
 
@@ -2597,7 +2641,7 @@ describe("OAuth + MCP end to end", () => {
       // Announced: every service works, billing says what changes and when, and nothing counts as picked.
       expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
       const before = (await call(t, "billing")).json;
-      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console or Google Analytics; Pro and Agency cover all three together\.$/);
+      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console or Google Analytics; Plus \(\$7\/month\) covers all three together on 1 Google Ads account, and Pro and Agency on more\.$/);
       expect(before.included).toBe("every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work");
       expect(before.pro).toContain("Google Ads, Search Console and Google Analytics together");
       expect(before).not.toHaveProperty("service_in_use");
@@ -2682,6 +2726,16 @@ describe("OAuth + MCP end to end", () => {
     expect(on).not.toMatch(/Free on one Google Ads account|One Google Ads account is free|Free plan covers 1 Google Ads account|on 1 Google Ads account\. No card/);
     expect(on).toContain('"Service limit"');
     expect(on).toContain("What does Free cover?");
+    // Plus: absent while off (it would equal Free), named with its date while announced (nothing to buy yet), sold once on.
+    expect(off).not.toMatch(/\bPlus\b|upgrade=plus/);
+    expect(soon).toContain("<h3>Plus</h3>");
+    expect(soon).toContain("Available from November 16.");
+    expect(soon).not.toContain("upgrade=plus");
+    expect(on).toContain('<a class="btn btn-ghost" href="/account?upgrade=plus">Get Plus</a>');
+    expect(on).toContain("Using it together with Google Ads or Analytics needs <a href=\"/#pricing\">Plus</a> ($7/month)");
+    expect(on).toContain("<h2>Plus · $7/month</h2>");
+    expect(on).toContain("Plus $7/month covers all three together on 1 Google Ads account");
+    expect(on).toContain('"name":"Plus","price":"7"');
   });
 
   it("names the Google services a call uses: none for the demo, listings, lookups and proposal bookkeeping", () => {

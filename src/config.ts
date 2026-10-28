@@ -30,8 +30,8 @@ export interface Config {
   /** FREE_ONE_SERVICE: when Free starts covering one Google service at a time (plans.ts parseFreeOneService). Off unless set. */
   freeOneServiceFrom?: number;
   /** Pro subscription; unset = no upgrade links (free users stop at the limit with no way to pay). */
-  /** agencyPriceId: STRIPE_AGENCY_PRICE_ID; unset = no Agency plan offered. */
-  stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string };
+  /** agencyPriceId: STRIPE_AGENCY_PRICE_ID, plusPriceId: STRIPE_PLUS_PRICE_ID; unset = that plan isn't offered. */
+  stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string; plusPriceId?: string };
   /** Emails treated as Pro regardless of billing (the operator, testers). */
   proEmails: Set<string>;
   /** Origin of the admin site (its own host, e.g. https://admin.camberstack.io); unset = no admin site. */
@@ -87,7 +87,7 @@ export function loadConfig(): Config {
     agencyAccounts: Number(process.env.AGENCY_ACCOUNTS ?? AGENCY_ACCOUNTS),
     stripe: process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID
       ? { secretKey: process.env.STRIPE_SECRET_KEY, proPriceId: process.env.STRIPE_PRO_PRICE_ID,
-          agencyPriceId: process.env.STRIPE_AGENCY_PRICE_ID || undefined }
+          agencyPriceId: process.env.STRIPE_AGENCY_PRICE_ID || undefined, plusPriceId: process.env.STRIPE_PLUS_PRICE_ID || undefined }
       : undefined,
     proEmails: emails(process.env.PRO_EMAILS),
     adminUrl: process.env.ADMIN_URL?.replace(/\/+$/, "") || undefined,

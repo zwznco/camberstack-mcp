@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, ALL_THREE, PLAN_LIMIT_PREFIX, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, freePlan, freePlanChange, isPaid, type FreePlan, type Plan, type Service } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, ALL_THREE, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, freePlan, freePlanChange, isPaid, planLabel, type FreePlan, type Plan, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -96,11 +96,13 @@ export interface SessionDeps {
   freeOneServiceFrom?: number;
   /** Agency's accounts at a time; unset = no Agency plan (tests, and billing without STRIPE_AGENCY_PRICE_ID). */
   agencyAccounts?: number;
+  /** Plus is sold (STRIPE_PLUS_PRICE_ID). It's offered only once one-service Free is announced: before, Free is the same. */
+  plusAvailable?: boolean;
   proEmails: Set<string>;
   /** Asks Stripe whether this user just paid; true when that made them Pro (billing.ts refreshPlan). */
   refreshPlan?: (userId: string) => Promise<boolean>;
   /** Signed per-user billing links (billing.ts); null when billing isn't configured. */
-  billingLink?: (kind: "upgrade" | "billing" | "agency", userId: string) => string | null;
+  billingLink?: (kind: "upgrade" | "billing" | "agency" | "plus", userId: string) => string | null;
   /** A personal /plans link, so a view counts in the paywall funnel (billing.ts plansLink). */
   plansLink?: (userId: string) => string;
   /** Tests inject a fake. */
@@ -220,25 +222,28 @@ export class UserSession {
     }
   }
 
-  /** On a paid plan (Pro or Agency), or complimentary Pro (PRO_EMAILS). */
+  /** On a paid plan (Plus, Pro or Agency), or complimentary Pro (PRO_EMAILS): all three Google services, no one-service gate. */
   get isPro(): boolean {
     return isPaid(this.user.plan) || this.deps.proEmails.has(this.user.email.toLowerCase());
   }
 
   get planName(): Plan {
-    return this.user.plan === "agency" ? "agency" : this.isPro ? "pro" : "free";
+    return this.user.plan === "agency" ? "agency" : this.user.plan === "plus" ? "plus" : this.isPro ? "pro" : "free";
   }
 
   get accountLimit(): number {
     const p = this.planName;
-    return p === "agency" ? this.deps.agencyAccounts ?? this.deps.proAccounts : p === "pro" ? this.deps.proAccounts : this.deps.freeAccounts;
+    return p === "agency" ? this.deps.agencyAccounts ?? this.deps.proAccounts : p === "pro" ? this.deps.proAccounts : p === "plus" ? PLUS_ACCOUNTS : this.deps.freeAccounts;
   }
 
-  /** The plan above this one, if it's offered: Pro from Free, Agency from Pro. Never on ChatGPT (no upgrade pitches there). */
+  /**
+   * The plan with more Google Ads accounts, if it's offered: Pro from Free or Plus, Agency from Pro. Never on ChatGPT (no
+   * upgrade pitches there). A paying Plus user's link goes to Stripe's billing portal, which switches the subscription.
+   */
   private nextPlan(): { plan: Plan; price: string; accounts_included: number; upgrade_url: string | null } | null {
     if (this.chatgpt) return null;
     const p = this.planName;
-    if (p === "free") return { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts, upgrade_url: this.deps.billingLink?.("upgrade", this.user.id) ?? null };
+    if (p === "free" || p === "plus") return { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts, upgrade_url: this.deps.billingLink?.("upgrade", this.user.id) ?? null };
     // Paid Pro switches in Stripe's billing portal (the agency link sends a paying user there); complimentary Pro checks out.
     if (p === "pro" && this.deps.agencyAccounts) {
       const url = this.deps.billingLink?.("agency", this.user.id) ?? null;
@@ -297,7 +302,7 @@ export class UserSession {
         throw new SwitchNotice(`${SERVICE_CHOICE_PREFIX} ${plan} covers one Google service at a time: Google Ads, Search Console or Google Analytics. `
           + `Nothing has run yet. Ask the user which one they want to use for the next ${ACCOUNT_WINDOW_DAYS} days, then make the call for that service: `
           + `the first one made in the next ${SERVICE_CHOICE_SECONDS / 60} minutes becomes the plan's service, and the others wait until ${ACCOUNT_WINDOW_DAYS} days after it was last used.`
-          + (this.chatgpt ? "" : ` Pro (${PRO_PRICE_LABEL}) covers all three together.`),
+          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers all three together.` : ` Pro (${PRO_PRICE_LABEL}) covers all three together.`),
           { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: Object.values(SERVICE_LABELS), window_days: ACCOUNT_WINDOW_DAYS,
             ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
       }
@@ -316,6 +321,15 @@ export class UserSession {
         + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
       const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
       if (this.chatgpt) throw new SwitchNotice(`${head} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
+      const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
+      if (plusUrl) {
+        const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+        throw new SwitchNotice(`${head} Plus (${PLUS_PRICE_LABEL}) covers all three together on 1 Google Ads account, so ${want} works right away; `
+          + `Pro (${PRO_PRICE_LABEL}) does on up to ${this.deps.proAccounts}.`,
+          { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${ALL_THREE}, on 1 Google Ads account`, cancel: "any time",
+            upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" },
+            or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `${ALL_THREE}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
+      }
       const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
       throw new SwitchNotice(`${head} Pro (${PRO_PRICE_LABEL}) covers all three together, so ${want} works right away.`,
         { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: "Google Ads, Search Console and Google Analytics together", cancel: "any time",
@@ -470,9 +484,9 @@ export class UserSession {
       switching: `one switch per ${ACCOUNT_WINDOW_DAYS} days, already used; the next opens ${st.switchOpens}`,
       still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"] };
     if (this.isPro) {
-      const next = this.nextPlan(), name = this.planName === "agency" ? "Agency" : "Pro";
+      const next = this.nextPlan(), name = planLabel(this.planName);
       throw new PlanLimitError(`${used}; ${name} ${rule}`
-        + (next ? ` Agency (${AGENCY_PRICE_LABEL}) covers up to ${next.accounts_included}, switched to from the billing page (upgrade_url).` : ""),
+        + (next ? ` ${planLabel(next.plan)} (${next.price}) covers up to ${next.accounts_included}, switched to from the billing page (upgrade_url).` : ""),
         { error: "plan_limit", ...common, ...(next ? { upgrade: { ...next, cancel: "any time", upgrade_url_expires: next.upgrade_url ? "7 days; personal to this user" : null } } : {}),
           contact: "adam@camberstack.io" });
     }
@@ -498,6 +512,9 @@ export class UserSession {
    * explaining that a feature needs a different plan and linking "an informational page describing available plans".
    */
   private get plansPage(): string { return this.deps.plansLink?.(this.user.id) ?? `${this.deps.baseUrl}/plans`; }
+
+  /** Plus is pitched once one-service Free is on, outside ChatGPT, when it's sold. Before that it would equal Free. */
+  private get plusOffered(): boolean { return !this.chatgpt && !!this.deps.plusAvailable && this.freePlan.kind === "one_service"; }
 
   /** Which Free is live now (plans.ts freePlan): FREE_ONE_SERVICE's date can pass while the server runs. */
   private get freePlan(): FreePlan { return freePlan(this.deps.freeOneServiceFrom); }
@@ -526,6 +543,7 @@ export class UserSession {
             note: "More accounts at a time need a different plan.", plans_page: this.plansPage };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const plusUrl = this.plusOffered && !this.isPro ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
     const agencyUrl = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;
     const agency = agencyUrl ? { agency: `up to ${accountsLabel(this.deps.agencyAccounts!)}, ${AGENCY_PRICE_LABEL}, cancel any time`, agency_upgrade_url: agencyUrl } : {};
     const account_page = `${this.deps.baseUrl}/account`;
@@ -537,10 +555,12 @@ export class UserSession {
           ...(isPaid(this.user.plan) && this.user.stripe_customer
             ? { manage_billing: this.deps.billingLink?.("billing", this.user.id) ?? null }
             : { complimentary: true, manage_billing: null }),
-          // Pro → Agency switches on the billing page (Stripe's portal), with the difference prorated.
-          ...(this.planName === "pro" ? agency : {}) }
+          // Plus → Pro and Pro → Agency switch on the billing page (Stripe's portal), with the difference prorated.
+          ...(this.planName === "pro" ? agency : {}),
+          ...(this.planName === "plus" && upgrade ? { pro: `${ALL_THREE}, on up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
       : { plan: "free", account_page, ...usage, ...this.serviceUsage(),
           included: this.freeIncluded(),
+          ...(plusUrl ? { plus: `${ALL_THREE}, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
           pro: `${this.freePlan.kind !== "accounts" ? `${ALL_THREE}, on ` : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
           upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
