@@ -17,6 +17,7 @@
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { unsupported } from "./alerts.js";
 import { fetchImage } from "./fetch-safe.js";
 import { micros, toMicros, type AdsClient } from "./google.js";
 
@@ -447,7 +448,7 @@ export async function resolveChange(
           campaign_budget.explicitly_shared FROM campaign WHERE campaign.id = ${change.campaign_id}`);
       if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
       if (c.campaignBudget.explicitlyShared) {
-        throw new Error(`Campaign "${c.campaign.name}" uses a shared budget; changing it would change every campaign on it. Edit it in Google Ads instead.`);
+        throw unsupported(`Campaign "${c.campaign.name}" uses a shared budget; changing it would change every campaign on it. Edit it in Google Ads instead.`);
       }
       const before = micros(c.campaignBudget.amountMicros);
       const same = before === change.amount;
@@ -826,7 +827,7 @@ export async function resolveChange(
       const prev = shared
         ? { bidding: { biddingStrategy: shared.resourceName }, mask: "bidding_strategy", label: `shared strategy "${shared.name}"` }
         : biddingOf(t, c.campaign);
-      if (!prev) throw new Error(`Campaign "${c.campaign.name}" uses ${t}, which Camberstack can't restore on undo; change it in Google Ads.`);
+      if (!prev) throw unsupported(`Campaign "${c.campaign.name}" uses ${t}, which Camberstack can't restore on undo; change it in Google Ads.`);
       const next = biddingOf(change.strategy === "MAXIMIZE_CLICKS" ? "TARGET_SPEND" : change.strategy, {
         targetSpend: { cpcBidCeilingMicros: change.max_cpc_ceiling ? toMicros(change.max_cpc_ceiling) : undefined },
         maximizeConversions: { targetCpaMicros: change.target_cpa ? toMicros(change.target_cpa) : undefined },
@@ -862,7 +863,7 @@ export async function resolveChange(
         };
       }
       const field = SHARED_FIELDS[s.type];
-      if (!field) throw new Error(`Shared strategy "${s.name}" is ${s.type}, which Camberstack can't change; edit it in Google Ads.`);
+      if (!field) throw unsupported(`Shared strategy "${s.name}" is ${s.type}, which Camberstack can't change; edit it in Google Ads.`);
       const want: [SharedSetting, number | undefined][] = [["target_cpa", change.target_cpa], ["target_roas", change.target_roas], ["max_cpc_ceiling", change.max_cpc_ceiling]];
       const given = want.filter(([, v]) => v !== undefined);
       if (!given.length) throw new Error("Give target_cpa, target_roas or max_cpc_ceiling.");
@@ -915,7 +916,7 @@ export async function resolveChange(
         const prev = shared
           ? { bidding: { biddingStrategy: shared.resourceName }, mask: "bidding_strategy", label: `shared strategy "${shared.name}"` }
           : biddingOf(c.campaign.biddingStrategyType as string, c.campaign);
-        if (!prev) throw new Error(`Campaign "${c.campaign.name}" uses ${c.campaign.biddingStrategyType}, which Camberstack can't restore on undo; move it in Google Ads.`);
+        if (!prev) throw unsupported(`Campaign "${c.campaign.name}" uses ${c.campaign.biddingStrategyType}, which Camberstack can't restore on undo; move it in Google Ads.`);
         moved.push({ campaign_id: cid, name: c.campaign.name, ...prev });
         ops.push({ campaignOperation: { update: { resourceName: `customers/${customerId}/campaigns/${cid}`, biddingStrategy: strategyRn }, updateMask: "bidding_strategy" } });
       }

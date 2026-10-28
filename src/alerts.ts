@@ -15,6 +15,13 @@ import { now } from "./db.js";
 import { esc } from "./pages.js";
 import { isPaid, PLAN_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, ACCOUNT_CHOICE_PREFIX } from "./plans.js";
 
+/**
+ * Starts our refusals of something Camberstack doesn't do (yet). No retry gets past one, so the model never repeats it
+ * MIN_REPEATS times: it gets the feedback link and the operator a mail on the first, whatever the plan.
+ */
+export const UNSUPPORTED_PREFIX = "Not supported:";
+export const unsupported = (message: string) => new Error(`${UNSUPPORTED_PREFIX} ${message}`);
+
 /** How long a later success of the same tool has to turn up before the error counts as unrecovered. */
 export const RECOVERY = 10 * 60;
 /** Unrecovered errors with the same key that make a free user's episode worth a mail. */
@@ -61,7 +68,9 @@ const ACCOUNT_REFUSALS = /EU_POLITICAL_ADVERTISING|POLICY_FINDING|IMMUTABLE_FIEL
 
 /** Whether it's worth acting on, and what to do. Rules, not judgment: the email carries the trace to check it. */
 export function verdict(code: string, error: string, recoveredLater: boolean): { act: boolean; why: string } {
-  if (recoveredLater) return { act: false, why: "Recovered later (a success of this tool after the alert window). Nothing to do." };
+  if (recoveredLater && !error.startsWith(UNSUPPORTED_PREFIX)) return { act: false, why: "Recovered later (a success of this tool after the alert window). Nothing to do." };
+  if (error.startsWith(UNSUPPORTED_PREFIX))
+    return { act: true, why: "Camberstack doesn't do this, and the user wanted it. Consider building it; email them when it ships." };
   if (/^HTTP_5\d\d$/.test(code)) return { act: false, why: "Google was down (5xx). Transient; act only if it keeps happening (Bugsink tracks these)." };
   if (error.startsWith(PLAN_LIMIT_PREFIX)) return { act: true, why: "Plan limit: working as designed, but they wanted more. An upgrade nudge may land." };
   if (error.startsWith(SWITCH_NOTICE_PREFIX) || error.startsWith(ACCOUNT_CHOICE_PREFIX))
@@ -83,6 +92,7 @@ export function verdict(code: string, error: string, recoveredLater: boolean): {
  * the call is logged, so the error being returned is the latest row.
  */
 export function stuckNow(db: DB, userId: string, tool: string, error: string, t = now()): boolean {
+  if (error.startsWith(UNSUPPORTED_PREFIX)) return true;
   const code = errorCode(error);
   if (error.startsWith(PLAN_LIMIT_PREFIX) || /access isn't part of this Google connection|needs its edit access/.test(error)) return false;
   if (!verdict(code, error, false).act) return false;
@@ -113,7 +123,8 @@ export function findStuck(db: DB, internalEmails: Set<string>, t = now(), mailed
     const fam = family(e.tool);
     const calls = callsOf(e.user_id);
     // Recovered: the same tool worked for this user within RECOVERY. Then this error isn't part of any episode.
-    if (calls.some((c) => c.ok && family(c.tool) === fam && c.at >= e.at && c.at <= e.at + RECOVERY && c.id > e.id)) continue;
+    // Not for an unsupported refusal: another proposal working later doesn't get them the thing we refused.
+    if (!e.error?.startsWith(UNSUPPORTED_PREFIX) && calls.some((c) => c.ok && family(c.tool) === fam && c.at >= e.at && c.at <= e.at + RECOVERY && c.id > e.id)) continue;
     const code = errorCode(e.error ?? "");
     const key = `${e.user_id}|${fam}|${code}`;
     if (e.id <= (mailed.get(key) ?? 0)) continue;
@@ -124,7 +135,7 @@ export function findStuck(db: DB, internalEmails: Set<string>, t = now(), mailed
 
   const out: Episode[] = [];
   for (const g of groups.values()) {
-    if (!(isPaid(g.plan) || g.errors.length >= MIN_REPEATS)) continue;
+    if (!(isPaid(g.plan) || g.errors.length >= MIN_REPEATS || g.code === UNSUPPORTED_PREFIX.slice(0, -1))) continue;
     const last = g.errors[g.errors.length - 1];
     const calls = callsOf(g.userId);
     g.after = calls.filter((c) => c.id > last.id && c.at <= last.at + 1800).slice(0, 8);
