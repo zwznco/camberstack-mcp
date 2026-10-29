@@ -24,6 +24,8 @@ import { micros, toMicros, type AdsClient } from "./google.js";
 export const MAX_CHANGES = 50;
 const SOURCE_LABEL = { UPLOAD_CLICKS: "uploaded click ids", WEBPAGE: "website tag", AD_CALL: "calls from ads", WEBSITE_CALL: "calls from the website" } as const;
 /** conversion_action.type values imported from an analytics tool, whose counting the tool decides. */
+/** Enabled responsive search ads Google allows in one ad group. */
+const RSA_LIMIT = 3;
 const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTICS|UNIVERSAL_ANALYTICS)/;
 
 const id = z.string().regex(/^\d+$/, "numeric id");
@@ -670,6 +672,16 @@ export async function resolveChange(
     case "add_responsive_search_ad": {
       const [g] = await q(`SELECT ad_group.name, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
       if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      // Google allows 3 enabled responsive search ads per ad group and answers a 4th with a bare RESOURCE_LIMIT: a user's
+      // assistant was left with no reason and replaced an ad only 52 minutes later (prod, 2026-10-29). Each change dry-runs
+      // on its own, so a pause in the same proposal doesn't make room: it has to be applied first.
+      const live = await q(`SELECT ad_group_ad.ad.id, ad_group_ad.ad.responsive_search_ad.headlines FROM ad_group_ad
+        WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.status = 'ENABLED' AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'`);
+      if (live.length >= RSA_LIMIT) {
+        const ads = live.map((r) => `${r.adGroupAd.ad.id} ("${r.adGroupAd.ad.responsiveSearchAd?.headlines?.[0]?.text ?? "?"}")`).join(", ");
+        throw new Error(`Ad group "${g.adGroup.name}" already has ${live.length} enabled responsive search ads, Google's limit is ${RSA_LIMIT}: ${ads}. `
+          + `Ask the user which to replace, propose pause_ad for it and apply that, then propose this ad again. Nothing was proposed.`);
+      }
       return {
         change, service: "adGroupAds",
         operations: [{ create: adCreate(`customers/${customerId}/adGroups/${change.ad_group_id}`, change.ad) }],

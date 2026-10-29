@@ -110,6 +110,9 @@ class FakeAds {
         resourceName: `customers/1112223333/campaignConversionGoals/10~${cat}~WEBSITE`, category: cat, origin: "WEBSITE", biddable } }));
     }
     if (q.includes("FROM ad_group WHERE")) return [{ adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Search", status: this.campaignStatus } }];
+    if (q.includes("ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'")) {
+      return Array.from({ length: this.rsas }, (_, i) => ({ adGroupAd: { ad: { id: String(900 + i), responsiveSearchAd: { headlines: [{ text: `Ad ${i + 1}` }] } } } }));
+    }
     if (q.includes("FROM ad_group_ad")) return [{ adGroupAd: { status: "ENABLED", ad: { finalUrls: ["https://example.com/old"] } }, adGroup: { name: "AG" }, campaign: { name: "Search" } }];
     if (q.includes("FROM conversion_action WHERE conversion_action.name")) return [];
     if (q.includes("AND conversion_action.google_analytics_4_settings.event_name")) {
@@ -178,6 +181,7 @@ class FakeAds {
   /** Campaigns a strategy-membership query returns; default: Search and Brand. */
   strategyCampaigns: { id: string; name: string }[] | undefined;
   agBid = "1000000";
+  rsas = 1;
   kwBid: string | undefined;
   removed: string[] = [];
   /** A test can make Google refuse operations mentioning `text`: at validation too, or only on the real write. */
@@ -2029,6 +2033,13 @@ describe("OAuth + MCP end to end", () => {
     expect(ads.mutations.length).toBe(sent);
     expect((await propose([{ type: "add_responsive_search_ad", ad_group_id: "20", ad: { ...ad, headlines: ["Start Free", "start free", "Pay By Card"] } }])).summary)
       .toContain("3 headlines");
+    // A 4th enabled responsive search ad: Google's RESOURCE_LIMIT says nothing of why, so it's refused first, naming the ads to pause.
+    ads.rsas = 3;
+    const sentBefore = ads.mutations.length;
+    await expect(propose([{ type: "add_responsive_search_ad", ad_group_id: "20", ad }]))
+      .rejects.toThrow('already has 3 enabled responsive search ads, Google\'s limit is 3: 900 ("Ad 1"), 901 ("Ad 2"), 902 ("Ad 3"). Ask the user which to replace, propose pause_ad');
+    expect(ads.mutations.length).toBe(sentBefore);
+    ads.rsas = 1;
 
     const before = ads.mutations.length;
     const p = await propose([campaign]);
