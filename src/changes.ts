@@ -288,13 +288,22 @@ export const PUBLIC_CHANGES = [
     event_name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/).describe("The GA4 key event, e.g. generate_lead, purchase, sign_up"),
     primary: z.boolean().default(true).describe("Primary actions count in Conversions and can steer bidding") })
     .describe("Import a GA4 key event into Google Ads as a conversion action, so campaigns can count and bid on it. The GA4 property must be linked to this account"),
+  z.object({ type: z.literal("remove_conversion_action"), conversion_action_id: id.describe("conversion_action.id from run_gaql") })
+    .describe("Remove a conversion action. Permanent unless a GA4 import: say so before they approve"),
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
 export const PublicChangeSchema = z.discriminatedUnion("type", [...PUBLIC_CHANGES]);
 
+/** An undo of create_conversion_action stored before remove_conversion_action was public named the action by resource name. */
+const byId = (c: unknown) => {
+  const o = c as { type?: string; resource_name?: string; conversion_action_id?: string } | null;
+  return o?.type === "remove_conversion_action" && o.resource_name && !o.conversion_action_id
+    ? { type: o.type, conversion_action_id: o.resource_name.split("/").at(-1) } : c;
+};
+
 /** Everything the server accepts, including the change only undo creates. */
-export const ChangeSchema = z.discriminatedUnion("type", [
+export const ChangeSchema = z.preprocess(byId, z.discriminatedUnion("type", [
   ...PUBLIC_CHANGES,
   // Used only by undo: remove what this service created, or restore what it replaced. Not offered to the AI.
   z.object({ type: z.literal("remove_negative_keywords"), campaign_id: id, resource_names: z.array(z.string()).min(1) }),
@@ -308,11 +317,10 @@ export const ChangeSchema = z.discriminatedUnion("type", [
     restore: z.array(z.object({ campaign_id: id, name: z.string(), bidding: z.record(z.string(), z.any()), mask: z.string(), label: z.string() })).default([]) }),
   z.object({ type: z.literal("restore_shared_bid_strategy"), bidding_strategy_id: id, fields: z.record(z.string(), z.any()), mask: z.string(), label: z.string() }),
   z.object({ type: z.literal("remove_campaign_criteria"), campaign_id: id, resource_names: z.array(z.string()).min(1), what: z.string() }),
-  z.object({ type: z.literal("remove_conversion_action"), resource_name: z.string(), name: z.string() }),
   z.object({ type: z.literal("remove_imported_conversion_action"), resource_name: z.string(), name: z.string(), property_id: id, event_name: z.string(), primary: z.boolean(),
     category: z.string(), biddable_before: z.array(z.string()) }),
   z.object({ type: z.literal("restore_conversion_goals"), campaign_id: id, goals: z.array(z.object({ resource_name: z.string(), biddable: z.boolean() })).min(1) }),
-]);
+]));
 export type Change = z.infer<typeof ChangeSchema>;
 
 /** A change resolved against the account: the exact API operation plus what it looked like before. */
@@ -1091,8 +1099,22 @@ export async function resolveChange(
     }
     case "remove_campaign_criteria":
       return { change, service: "campaignCriteria", operations: change.resource_names.map((r) => ({ remove: r })), describe: `Remove ${change.what}` };
-    case "remove_conversion_action":
-      return { change, service: "conversionActions", operations: [{ remove: change.resource_name }], describe: `Remove conversion action "${change.name}" that Camberstack created` };
+    case "remove_conversion_action": {
+      const [a] = await q(`SELECT conversion_action.name, conversion_action.status, conversion_action.type, `
+        + `conversion_action.primary_for_goal, conversion_action.google_analytics_4_settings.property_id, `
+        + `conversion_action.google_analytics_4_settings.event_name FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
+      if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
+      const c = a.conversionAction, g = c.googleAnalytics4Settings;
+      if (c.status === "REMOVED") return { change, service: "conversionActions", operations: [], describe: `Remove conversion action "${c.name}" (already in place)` };
+      // Google can't bring a removed action back, except a GA4 import: importing it again re-enables it.
+      const ga4 = String(c.type ?? "").startsWith("GOOGLE_ANALYTICS_4") && g?.propertyId && g?.eventName;
+      return {
+        change, service: "conversionActions", operations: [{ remove: `customers/${customerId}/conversionActions/${change.conversion_action_id}` }],
+        describe: `Remove conversion action "${c.name}" (${c.status === "HIDDEN" ? "not imported" : c.primaryForGoal ? "primary" : "secondary"}); its past conversions stay in reports`
+          + (ga4 ? "" : " ⚠ Google can't restore a removed conversion action, so this can't be undone"),
+        inverse: ga4 ? { type: "import_ga4_key_event", property_id: String(g.propertyId), event_name: g.eventName, primary: !!c.primaryForGoal } : undefined,
+      };
+    }
     case "remove_negative_keywords": {
       const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
       const name = c ? `"${c.campaign.name}"` : change.campaign_id;
@@ -1425,7 +1447,7 @@ export function inverseAfterApply(r: ResolvedChange, resourceNames: string[]): C
   if (c.type === "add_campaign_targeting" && resourceNames.length) {
     return { type: "remove_campaign_criteria", campaign_id: c.campaign_id, resource_names: resourceNames, what: `${resourceNames.length} targeting criteria Camberstack added` };
   }
-  if (c.type === "create_conversion_action" && resourceNames[0]) return { type: "remove_conversion_action", resource_name: resourceNames[0], name: c.name };
+  if (c.type === "create_conversion_action" && resourceNames[0]) return { type: "remove_conversion_action", conversion_action_id: resourceNames[0].split("/").at(-1)! };
   if (c.type === "create_shared_bid_strategy" && of("biddingStrategies")[0] && r.inverse?.type === "remove_shared_bid_strategy") {
     return { ...r.inverse, resource_name: of("biddingStrategies")[0]! };
   }

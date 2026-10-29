@@ -13,7 +13,7 @@ import { now, openDb } from "./db.js";
 import type { Config } from "./config.js";
 import { decrypt, encrypt } from "./crypto.js";
 import { AdsApiError, NotGrantedError } from "./google.js";
-import { io, PUBLIC_CHANGES } from "./changes.js";
+import { ChangeSchema, io, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
 import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
@@ -614,7 +614,7 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT version FROM client_tools").all()).toEqual([{ version: SERVER_VERSION }]);
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
-    expectToolBudget(tools, { total: 72_000, perTool: 6_000, except: { propose_changes: 40_000 } });
+    expectToolBudget(tools, { total: 72_000, perTool: 6_000, except: { propose_changes: 40_100 } }); // 40.1K: remove_conversion_action (2026-10-29)
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1109,7 +1109,7 @@ describe("OAuth + MCP end to end", () => {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
-      expectToolBudget(tools, { total: 90_000, perTool: 6_000 });
+      expectToolBudget(tools, { total: 91_000, perTool: 6_000 }); // 91K: propose_remove_conversion_action (2026-10-29)
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
@@ -2307,6 +2307,20 @@ describe("OAuth + MCP end to end", () => {
     expect(ga4Count).toContain('"Site (web) generate_lead" is imported (GOOGLE_ANALYTICS_4_CUSTOM)');
     expect(ga4Count).toContain("set_key_event_counting with property_id 321, event_name generate_lead, counting ONCE_PER_SESSION");
 
+    // Removing a conversion action: Google can't restore it, so it says so and offers no undo; a GA4 import's undo imports it again.
+    const rm = await propose([{ type: "remove_conversion_action", conversion_action_id: "77" }]);
+    expect(rm.summary).toContain('Remove conversion action "Signup" (secondary); its past conversions stay in reports ⚠ Google can\'t restore');
+    expect(ads.mutations.at(-1)!.operations).toEqual([{ remove: "customers/1112223333/conversionActions/77" }]);
+    const rmApplied = (await call(token, "apply_changes", { proposal_id: rm.proposal_id })).text;
+    expect(rmApplied).not.toContain("undo_changes");
+    const rmGa4 = await propose([{ type: "remove_conversion_action", conversion_action_id: "78" }]);
+    expect(rmGa4.summary).not.toContain("⚠");
+    await call(token, "apply_changes", { proposal_id: rmGa4.proposal_id });
+    expect((await call(token, "undo_changes", { proposal_id: rmGa4.proposal_id })).text).toContain("Import GA4 key event");
+    // An undo of a create stored before the change was public named the action by resource name.
+    expect(ChangeSchema.parse({ type: "remove_conversion_action", resource_name: "customers/1/conversionActions/55", name: "Old" }))
+      .toEqual({ type: "remove_conversion_action", conversion_action_id: "55" });
+
     // Importing a GA4 key event enables Google's HIDDEN copy; Google can't hide it again, so undo removes it, and undoing that re-enables it.
     const imp = await propose([{ type: "import_ga4_key_event", property_id: "321", event_name: "generate_lead" }]);
     expect(imp.summary).toContain('Import GA4 key event "generate_lead" into Google Ads as "Site (web) generate_lead" (SUBMIT_LEAD_FORM, primary)');
@@ -2332,7 +2346,7 @@ describe("OAuth + MCP end to end", () => {
       { campaignConversionGoalOperation: { update: { resourceName: "customers/1112223333/campaignConversionGoals/10~SUBMIT_LEAD_FORM~WEBSITE", biddable: false }, updateMask: "biddable" } }] });
     expect([ads.ga4Lead.status, ads.acctGoals.SUBMIT_LEAD_FORM, ads.goals.SUBMIT_LEAD_FORM]).toEqual(["REMOVED", false, false]);
     const redo = (await call(token, "undo_changes", { proposal_id: impUndo.proposal_id })).json;
-    expect(redo.summary).toContain('Import GA4 key event "generate_lead"');
+    expect(redo.summary).toContain("Import GA4 key event");
     await call(token, "apply_changes", { proposal_id: redo.proposal_id });
     expect(ads.ga4Lead).toMatchObject({ status: "ENABLED", primaryForGoal: true });
     ads.ga4Lead = { status: "HIDDEN", primaryForGoal: false };

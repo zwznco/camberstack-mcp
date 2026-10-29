@@ -72,12 +72,14 @@ What a proposal can do:
 - **Tune:** keyword and ad group bids, bid strategy, location and language targeting, presence-only location
   mode, final URL suffix, and a campaign's EU political advertising declaration (Google refuses every change to an
   account while any campaign lacks one).
-- **Measure:** create a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
+- **Measure:** create or remove a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 
 Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, more than doubling a budget or a
-bid, switching bid strategy, removing the last location, a new primary conversion action. Undo removes only
-what Camberstack itself created; nothing the user built is ever deleted. (Undoing a GA4 import removes the action, since
-Google can't hide it again; importing again restores it.) Search Console is read-only.
+bid, switching bid strategy, removing the last location, a new primary conversion action, removing a conversion
+action. Undo removes only what Camberstack itself created. The one deletion a user can propose is
+`remove_conversion_action`, and Google can't restore it, so it carries a ⚠ and no undo (a GA4 import is the exception:
+undo imports it again). (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
+restores it.) Search Console is read-only.
 
 ## How auth works
 
