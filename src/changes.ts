@@ -17,6 +17,7 @@
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { unsupported } from "./alerts.js";
 import { fetchImage } from "./fetch-safe.js";
 import { micros, toMicros, type AdsClient } from "./google.js";
 
@@ -291,13 +292,22 @@ export const PUBLIC_CHANGES = [
     .describe("Link a Merchant Center account to this Google Ads account, so Shopping and Performance Max campaigns can use its products (the user must be an admin of both)"),
   z.object({ type: z.literal("unlink_merchant_center"), merchant_center_id: z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID (from merchant_accounts)") })
     .describe("Remove the link between a Merchant Center account and this Google Ads account; Shopping and Performance Max campaigns using its products stop serving"),
+  z.object({ type: z.literal("remove_conversion_action"), conversion_action_id: id.describe("conversion_action.id from run_gaql") })
+    .describe("Remove a conversion action. Permanent unless a GA4 import: say so before they approve"),
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
 export const PublicChangeSchema = z.discriminatedUnion("type", [...PUBLIC_CHANGES]);
 
+/** An undo of create_conversion_action stored before remove_conversion_action was public named the action by resource name. */
+const byId = (c: unknown) => {
+  const o = c as { type?: string; resource_name?: string; conversion_action_id?: string } | null;
+  return o?.type === "remove_conversion_action" && o.resource_name && !o.conversion_action_id
+    ? { type: o.type, conversion_action_id: o.resource_name.split("/").at(-1) } : c;
+};
+
 /** Everything the server accepts, including the change only undo creates. */
-export const ChangeSchema = z.discriminatedUnion("type", [
+export const ChangeSchema = z.preprocess(byId, z.discriminatedUnion("type", [
   ...PUBLIC_CHANGES,
   // Used only by undo: remove what this service created, or restore what it replaced. Not offered to the AI.
   z.object({ type: z.literal("remove_negative_keywords"), campaign_id: id, resource_names: z.array(z.string()).min(1) }),
@@ -311,11 +321,10 @@ export const ChangeSchema = z.discriminatedUnion("type", [
     restore: z.array(z.object({ campaign_id: id, name: z.string(), bidding: z.record(z.string(), z.any()), mask: z.string(), label: z.string() })).default([]) }),
   z.object({ type: z.literal("restore_shared_bid_strategy"), bidding_strategy_id: id, fields: z.record(z.string(), z.any()), mask: z.string(), label: z.string() }),
   z.object({ type: z.literal("remove_campaign_criteria"), campaign_id: id, resource_names: z.array(z.string()).min(1), what: z.string() }),
-  z.object({ type: z.literal("remove_conversion_action"), resource_name: z.string(), name: z.string() }),
   z.object({ type: z.literal("remove_imported_conversion_action"), resource_name: z.string(), name: z.string(), property_id: id, event_name: z.string(), primary: z.boolean(),
     category: z.string(), biddable_before: z.array(z.string()) }),
   z.object({ type: z.literal("restore_conversion_goals"), campaign_id: id, goals: z.array(z.object({ resource_name: z.string(), biddable: z.boolean() })).min(1) }),
-]);
+]));
 export type Change = z.infer<typeof ChangeSchema>;
 
 /** A change resolved against the account: the exact API operation plus what it looked like before. */
@@ -468,7 +477,7 @@ export async function resolveChange(
           campaign_budget.explicitly_shared FROM campaign WHERE campaign.id = ${change.campaign_id}`);
       if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
       if (c.campaignBudget.explicitlyShared) {
-        throw new Error(`Campaign "${c.campaign.name}" uses a shared budget; changing it would change every campaign on it. Edit it in Google Ads instead.`);
+        throw unsupported(`Campaign "${c.campaign.name}" uses a shared budget; changing it would change every campaign on it. Edit it in Google Ads instead.`);
       }
       const before = micros(c.campaignBudget.amountMicros);
       const same = before === change.amount;
@@ -836,7 +845,7 @@ export async function resolveChange(
     }
     case "set_bidding_strategy": {
       const [c] = await q(`SELECT campaign.name, campaign.bidding_strategy_type, campaign.bidding_strategy, campaign.target_spend.cpc_bid_ceiling_micros,
-          campaign.maximize_conversions.target_cpa_micros
+          campaign.maximize_conversions.target_cpa_micros, campaign.maximize_conversion_value.target_roas
         FROM campaign WHERE campaign.id = ${change.campaign_id}`);
       if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
       // On a shared (portfolio) strategy: this campaign moves onto its own strategy; undo puts it back on the shared one.
@@ -847,7 +856,7 @@ export async function resolveChange(
       const prev = shared
         ? { bidding: { biddingStrategy: shared.resourceName }, mask: "bidding_strategy", label: `shared strategy "${shared.name}"` }
         : biddingOf(t, c.campaign);
-      if (!prev) throw new Error(`Campaign "${c.campaign.name}" uses ${t}, which Camberstack can't restore on undo; change it in Google Ads.`);
+      if (!prev) throw unsupported(`Campaign "${c.campaign.name}" uses ${t}, which Camberstack can't restore on undo; change it in Google Ads.`);
       const next = biddingOf(change.strategy === "MAXIMIZE_CLICKS" ? "TARGET_SPEND" : change.strategy, {
         targetSpend: { cpcBidCeilingMicros: change.max_cpc_ceiling ? toMicros(change.max_cpc_ceiling) : undefined },
         maximizeConversions: { targetCpaMicros: change.target_cpa ? toMicros(change.target_cpa) : undefined },
@@ -883,7 +892,7 @@ export async function resolveChange(
         };
       }
       const field = SHARED_FIELDS[s.type];
-      if (!field) throw new Error(`Shared strategy "${s.name}" is ${s.type}, which Camberstack can't change; edit it in Google Ads.`);
+      if (!field) throw unsupported(`Shared strategy "${s.name}" is ${s.type}, which Camberstack can't change; edit it in Google Ads.`);
       const want: [SharedSetting, number | undefined][] = [["target_cpa", change.target_cpa], ["target_roas", change.target_roas], ["max_cpc_ceiling", change.max_cpc_ceiling]];
       const given = want.filter(([, v]) => v !== undefined);
       if (!given.length) throw new Error("Give target_cpa, target_roas or max_cpc_ceiling.");
@@ -928,14 +937,15 @@ export async function resolveChange(
       const moved: { campaign_id: string; name: string; bidding: Record<string, unknown>; mask: string; label: string }[] = [];
       for (const cid of [...new Set(change.campaign_ids)]) {
         const [c] = await q(`SELECT campaign.name, campaign.status, campaign.bidding_strategy_type, campaign.bidding_strategy,
-            campaign.target_spend.cpc_bid_ceiling_micros, campaign.maximize_conversions.target_cpa_micros FROM campaign WHERE campaign.id = ${cid}`);
+            campaign.target_spend.cpc_bid_ceiling_micros, campaign.maximize_conversions.target_cpa_micros,
+            campaign.maximize_conversion_value.target_roas FROM campaign WHERE campaign.id = ${cid}`);
         if (!c) throw new Error(`Campaign ${cid} not found`);
         if (c.campaign.status === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
         const shared = c.campaign.biddingStrategy ? await sharedStrategy(q, c.campaign.biddingStrategy as string) : null;
         const prev = shared
           ? { bidding: { biddingStrategy: shared.resourceName }, mask: "bidding_strategy", label: `shared strategy "${shared.name}"` }
           : biddingOf(c.campaign.biddingStrategyType as string, c.campaign);
-        if (!prev) throw new Error(`Campaign "${c.campaign.name}" uses ${c.campaign.biddingStrategyType}, which Camberstack can't restore on undo; move it in Google Ads.`);
+        if (!prev) throw unsupported(`Campaign "${c.campaign.name}" uses ${c.campaign.biddingStrategyType}, which Camberstack can't restore on undo; move it in Google Ads.`);
         moved.push({ campaign_id: cid, name: c.campaign.name, ...prev });
         ops.push({ campaignOperation: { update: { resourceName: `customers/${customerId}/campaigns/${cid}`, biddingStrategy: strategyRn }, updateMask: "bidding_strategy" } });
       }
@@ -1018,17 +1028,24 @@ export async function resolveChange(
       };
     }
     case "set_conversion_counting": {
-      const [a] = await q(`SELECT conversion_action.name, conversion_action.counting_type, conversion_action.type FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
+      const [a] = await q(`SELECT conversion_action.name, conversion_action.counting_type, conversion_action.type, conversion_action.google_analytics_4_settings.property_id, `
+        + `conversion_action.google_analytics_4_settings.event_name FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
       if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
       // An analytics import takes its counting from where it's imported from, and Google refuses the change outright: a paying
       // user's proposal got MUTATE_NOT_ALLOWED + IMMUTABLE_FIELD + INVALID_VALUE at once, and stopped there (2026-10-26).
       const type = String(a.conversionAction.type ?? "");
       if (ANALYTICS_IMPORT.test(type)) {
-        const ga4 = type.startsWith("GOOGLE_ANALYTICS_4");
+        // A GA4 import's counting is its key event's, which Camberstack can change (set_key_event_counting): before, this sent the
+        // user to GA4's admin, and the model tried mark_key_event, which leaves an existing key event alone (prod, 2026-10-28).
+        const ga4 = type.startsWith("GOOGLE_ANALYTICS_4"), g = a.conversionAction.googleAnalytics4Settings;
+        const recount = ga4 && g?.propertyId && g?.eventName
+          ? `Its key event can be recounted in GA4 instead: propose the Google Analytics change set_key_event_counting with property_id ${g.propertyId}, `
+            + `event_name ${g.eventName}, counting ${change.counting === "ONE_PER_CLICK" ? "ONCE_PER_SESSION" : "ONCE_PER_EVENT"} (Ads' `
+            + `${change.counting === "ONE_PER_CLICK" ? "one per click" : "every conversion"}); this action follows it. `
+          : ga4 ? "In GA4: Admin → Data display → Key events → the event's ⋮ → Change counting method (once per event, or once per session). "
+          : "Change it in the app that sends it (Firebase or the analytics tool). ";
         throw new Error(`Conversion action "${a.conversionAction.name}" is imported (${type}), so its counting comes from ${ga4 ? "GA4" : "its source"}, `
-          + "and Google won't change it through the API. "
-          + (ga4 ? "In GA4: Admin → Data display → Key events → the event's ⋮ → Change counting method (once per event, or once per session). "
-            : "Change it in the app that sends it (Firebase or the analytics tool). ")
+          + "and Google won't change it through the Google Ads API. " + recount
           + "Or count with a different conversion action. Nothing was proposed.");
       }
       const before = a.conversionAction.countingType as "ONE_PER_CLICK" | "MANY_PER_CLICK";
@@ -1103,8 +1120,22 @@ export async function resolveChange(
     }
     case "remove_campaign_criteria":
       return { change, service: "campaignCriteria", operations: change.resource_names.map((r) => ({ remove: r })), describe: `Remove ${change.what}` };
-    case "remove_conversion_action":
-      return { change, service: "conversionActions", operations: [{ remove: change.resource_name }], describe: `Remove conversion action "${change.name}" that Camberstack created` };
+    case "remove_conversion_action": {
+      const [a] = await q(`SELECT conversion_action.name, conversion_action.status, conversion_action.type, `
+        + `conversion_action.primary_for_goal, conversion_action.google_analytics_4_settings.property_id, `
+        + `conversion_action.google_analytics_4_settings.event_name FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
+      if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
+      const c = a.conversionAction, g = c.googleAnalytics4Settings;
+      if (c.status === "REMOVED") return { change, service: "conversionActions", operations: [], describe: `Remove conversion action "${c.name}" (already in place)` };
+      // Google can't bring a removed action back, except a GA4 import: importing it again re-enables it.
+      const ga4 = String(c.type ?? "").startsWith("GOOGLE_ANALYTICS_4") && g?.propertyId && g?.eventName;
+      return {
+        change, service: "conversionActions", operations: [{ remove: `customers/${customerId}/conversionActions/${change.conversion_action_id}` }],
+        describe: `Remove conversion action "${c.name}" (${c.status === "HIDDEN" ? "not imported" : c.primaryForGoal ? "primary" : "secondary"}); its past conversions stay in reports`
+          + (ga4 ? "" : " ⚠ Google can't restore a removed conversion action, so this can't be undone"),
+        inverse: ga4 ? { type: "import_ga4_key_event", property_id: String(g.propertyId), event_name: g.eventName, primary: !!c.primaryForGoal } : undefined,
+      };
+    }
     case "remove_negative_keywords": {
       const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
       const name = c ? `"${c.campaign.name}"` : change.campaign_id;
@@ -1141,6 +1172,11 @@ function biddingOf(type: string, c: any): { bidding: Record<string, unknown>; ma
       const cpa = c.maximizeConversions?.targetCpaMicros;
       return { bidding: { maximizeConversions: cpa && Number(cpa) ? { targetCpaMicros: String(cpa) } : {} }, mask: "maximize_conversions.target_cpa_micros",
         label: `maximize conversions${cpa && Number(cpa) ? ` (target ${money(cpa)}/conversion)` : ""}` };
+    }
+    case "MAXIMIZE_CONVERSION_VALUE": {
+      const roas = c.maximizeConversionValue?.targetRoas;
+      return { bidding: { maximizeConversionValue: roas ? { targetRoas: roas } : {} }, mask: "maximize_conversion_value.target_roas",
+        label: `maximize conversion value${roas ? ` (target ROAS ${Math.round(roas * 100)}%)` : ""}` };
     }
     default:
       return null;
@@ -1433,7 +1469,7 @@ export function inverseAfterApply(r: ResolvedChange, resourceNames: string[]): C
   if (c.type === "add_campaign_targeting" && resourceNames.length) {
     return { type: "remove_campaign_criteria", campaign_id: c.campaign_id, resource_names: resourceNames, what: `${resourceNames.length} targeting criteria Camberstack added` };
   }
-  if (c.type === "create_conversion_action" && resourceNames[0]) return { type: "remove_conversion_action", resource_name: resourceNames[0], name: c.name };
+  if (c.type === "create_conversion_action" && resourceNames[0]) return { type: "remove_conversion_action", conversion_action_id: resourceNames[0].split("/").at(-1)! };
   if (c.type === "create_shared_bid_strategy" && of("biddingStrategies")[0] && r.inverse?.type === "remove_shared_bid_strategy") {
     return { ...r.inverse, resource_name: of("biddingStrategies")[0]! };
   }

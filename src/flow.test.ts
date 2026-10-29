@@ -13,7 +13,7 @@ import { now, openDb } from "./db.js";
 import type { Config } from "./config.js";
 import { decrypt, encrypt } from "./crypto.js";
 import { AdsApiError, NotGrantedError } from "./google.js";
-import { io, PUBLIC_CHANGES } from "./changes.js";
+import { ChangeSchema, io, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
@@ -113,11 +113,12 @@ class FakeAds {
     if (q.includes("FROM ad_group WHERE")) return [{ adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Search", status: this.campaignStatus } }];
     if (q.includes("FROM ad_group_ad")) return [{ adGroupAd: { status: "ENABLED", ad: { finalUrls: ["https://example.com/old"] } }, adGroup: { name: "AG" }, campaign: { name: "Search" } }];
     if (q.includes("FROM conversion_action WHERE conversion_action.name")) return [];
-    if (q.includes("google_analytics_4_settings.event_name")) {
+    if (q.includes("AND conversion_action.google_analytics_4_settings.event_name")) {
       return q.includes("property_id = 321") && q.includes("'generate_lead'") ? [{ conversionAction: { resourceName: "customers/1112223333/conversionActions/90",
         name: "Site (web) generate_lead", category: "SUBMIT_LEAD_FORM", ...this.ga4Lead } }] : [];
     }
-    if (q.includes("FROM conversion_action WHERE conversion_action.id = 78")) return [{ conversionAction: { name: "Site (web) generate_lead", countingType: "MANY_PER_CLICK", type: "GOOGLE_ANALYTICS_4_CUSTOM" } }];
+    if (q.includes("FROM conversion_action WHERE conversion_action.id = 78")) return [{ conversionAction: { name: "Site (web) generate_lead", countingType: "MANY_PER_CLICK", type: "GOOGLE_ANALYTICS_4_CUSTOM",
+      googleAnalytics4Settings: { propertyId: "321", eventName: "generate_lead" } } }];
     if (q.includes("FROM conversion_action WHERE conversion_action.id")) return [{ conversionAction: { name: "Signup", countingType: "MANY_PER_CLICK", type: "WEBPAGE" } }];
     if (q.includes("campaign.name = ")) return q.includes("campaign.name = 'Search'") ? [{ campaign: { id: "10" } }] : [];
     if (q.includes("FROM bidding_strategy WHERE bidding_strategy.name")) return q.includes("'Taken'") ? [{ biddingStrategy: { id: "5" } }] : [];
@@ -130,8 +131,8 @@ class FakeAds {
     }
     if (q.includes("FROM campaign")) {
       return [{ campaign: { id: "10", name: "Search", status: this.campaignStatus, endDateTime: this.campaignEnd, advertisingChannelType: "SEARCH",
-          ...(this.portfolio ? { biddingStrategyType: "TARGET_CPA", biddingStrategy: `customers/1112223333/biddingStrategies/${this.portfolio.id}` }
-            : { biddingStrategyType: "MANUAL_CPC", manualCpc: { enhancedCpcEnabled: false } }), finalUrlSuffix: "",
+          ...(this.bidding ?? (this.portfolio ? { biddingStrategyType: "TARGET_CPA", biddingStrategy: `customers/1112223333/biddingStrategies/${this.portfolio.id}` }
+            : { biddingStrategyType: "MANUAL_CPC", manualCpc: { enhancedCpcEnabled: false } })), finalUrlSuffix: "",
           containsEuPoliticalAdvertising: this.euPolitical },
         campaignBudget: { resourceName: "customers/1112223333/campaignBudgets/99", amountMicros: "20000000", explicitlyShared: false },
         metrics: { costMicros: "200000000", clicks: "80", impressions: "900", conversions: 4, conversionsValue: 400 } }];
@@ -174,6 +175,7 @@ class FakeAds {
   acctGoals: Record<string, boolean> = { PURCHASE: true, SIGNUP: false };
   /** When set, campaign 10 is on this shared (portfolio) Target CPA strategy, with campaign "Brand". */
   portfolio: { id: string; cpa: string } | undefined;
+  bidding: Record<string, unknown> | undefined;
   /** Campaigns a strategy-membership query returns; default: Search and Brand. */
   strategyCampaigns: { id: string; name: string }[] | undefined;
   agBid = "1000000";
@@ -615,8 +617,8 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT version FROM client_tools").all()).toEqual([{ version: SERVER_VERSION }]);
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
-    // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink.
-    expectToolBudget(tools, { total: 88_000, perTool: 6_000, except: { propose_changes: 41_000, propose_merchant_changes: 11_000 } });
+    // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29).
+    expectToolBudget(tools, { total: 89_000, perTool: 6_000, except: { propose_changes: 41_100, propose_merchant_changes: 11_000 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1111,8 +1113,8 @@ describe("OAuth + MCP end to end", () => {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
-      // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K.
-      expectToolBudget(tools, { total: 110_000, perTool: 6_000 });
+      // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29).
+      expectToolBudget(tools, { total: 112_000, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
@@ -2200,6 +2202,16 @@ describe("OAuth + MCP end to end", () => {
     await call(token, "apply_changes", { proposal_id: stratUndo.proposal_id });
     expect(last().operations[0]).toMatchObject({ update: { manualCpc: { enhancedCpcEnabled: false } }, updateMask: "manual_cpc.enhanced_cpc_enabled" });
 
+    // Off maximize conversion value: undo restores it with its target ROAS.
+    ads.bidding = { biddingStrategyType: "MAXIMIZE_CONVERSION_VALUE", maximizeConversionValue: { targetRoas: 4 } };
+    const mcv = await propose([{ type: "set_bidding_strategy", campaign_id: "10", strategy: "MAXIMIZE_CONVERSIONS" }]);
+    expect(mcv.summary).toContain("from maximize conversion value (target ROAS 400%) to maximize conversions");
+    const mcvUndo = await applyUndo(mcv.proposal_id);
+    expect(mcvUndo.summary).toContain("back to maximize conversion value (target ROAS 400%)");
+    await call(token, "apply_changes", { proposal_id: mcvUndo.proposal_id });
+    expect(last().operations[0]).toMatchObject({ update: { maximizeConversionValue: { targetRoas: 4 } }, updateMask: "maximize_conversion_value.target_roas" });
+    ads.bidding = undefined;
+
     // On a shared (portfolio) strategy: one campaign moves off it, and undo puts it back on.
     ads.portfolio = { id: "88", cpa: "30000000" };
     const off = await propose([{ type: "set_bidding_strategy", campaign_id: "10", strategy: "MAXIMIZE_CLICKS" }]);
@@ -2298,7 +2310,21 @@ describe("OAuth + MCP end to end", () => {
     // A GA4 import's counting is GA4's: refused before Google is asked, with where to change it.
     const ga4Count = (await call(token, "propose_changes", { customer_id: "1112223333", changes: [{ type: "set_conversion_counting", conversion_action_id: "78", counting: "ONE_PER_CLICK" }] })).text;
     expect(ga4Count).toContain('"Site (web) generate_lead" is imported (GOOGLE_ANALYTICS_4_CUSTOM)');
-    expect(ga4Count).toContain("Change counting method");
+    expect(ga4Count).toContain("set_key_event_counting with property_id 321, event_name generate_lead, counting ONCE_PER_SESSION");
+
+    // Removing a conversion action: Google can't restore it, so it says so and offers no undo; a GA4 import's undo imports it again.
+    const rm = await propose([{ type: "remove_conversion_action", conversion_action_id: "77" }]);
+    expect(rm.summary).toContain('Remove conversion action "Signup" (secondary); its past conversions stay in reports ⚠ Google can\'t restore');
+    expect(ads.mutations.at(-1)!.operations).toEqual([{ remove: "customers/1112223333/conversionActions/77" }]);
+    const rmApplied = (await call(token, "apply_changes", { proposal_id: rm.proposal_id })).text;
+    expect(rmApplied).not.toContain("undo_changes");
+    const rmGa4 = await propose([{ type: "remove_conversion_action", conversion_action_id: "78" }]);
+    expect(rmGa4.summary).not.toContain("⚠");
+    await call(token, "apply_changes", { proposal_id: rmGa4.proposal_id });
+    expect((await call(token, "undo_changes", { proposal_id: rmGa4.proposal_id })).text).toContain("Import GA4 key event");
+    // An undo of a create stored before the change was public named the action by resource name.
+    expect(ChangeSchema.parse({ type: "remove_conversion_action", resource_name: "customers/1/conversionActions/55", name: "Old" }))
+      .toEqual({ type: "remove_conversion_action", conversion_action_id: "55" });
 
     // Importing a GA4 key event enables Google's HIDDEN copy; Google can't hide it again, so undo removes it, and undoing that re-enables it.
     const imp = await propose([{ type: "import_ga4_key_event", property_id: "321", event_name: "generate_lead" }]);
@@ -2325,7 +2351,7 @@ describe("OAuth + MCP end to end", () => {
       { campaignConversionGoalOperation: { update: { resourceName: "customers/1112223333/campaignConversionGoals/10~SUBMIT_LEAD_FORM~WEBSITE", biddable: false }, updateMask: "biddable" } }] });
     expect([ads.ga4Lead.status, ads.acctGoals.SUBMIT_LEAD_FORM, ads.goals.SUBMIT_LEAD_FORM]).toEqual(["REMOVED", false, false]);
     const redo = (await call(token, "undo_changes", { proposal_id: impUndo.proposal_id })).json;
-    expect(redo.summary).toContain('Import GA4 key event "generate_lead"');
+    expect(redo.summary).toContain("Import GA4 key event");
     await call(token, "apply_changes", { proposal_id: redo.proposal_id });
     expect(ads.ga4Lead).toMatchObject({ status: "ENABLED", primaryForGoal: true });
     ads.ga4Lead = { status: "HIDDEN", primaryForGoal: false };

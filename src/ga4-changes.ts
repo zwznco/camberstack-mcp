@@ -30,6 +30,9 @@ export const PUBLIC_GA_CHANGES = [
     .describe("Mark an event as a key event (GA4's conversion), so it is counted and can be imported into Google Ads"),
   z.object({ type: z.literal("unmark_key_event"), property_id: propertyId, event_name: eventName })
     .describe("Stop counting an event as a key event"),
+  z.object({ type: z.literal("set_key_event_counting"), property_id: propertyId, event_name: eventName,
+    counting: counting.describe("ONCE_PER_EVENT: every time; ONCE_PER_SESSION: one per visit") })
+    .describe("Recount an existing key event; a Google Ads action imported from it follows (ONCE_PER_SESSION is Ads' one per click)"),
   z.object({ type: z.literal("link_google_ads"), property_id: propertyId, customer_id: adsCustomer })
     .describe("Link a GA4 property to a Google Ads account, so Ads can import its key events and GA4 shows ad clicks and cost (the user must be an admin of both)"),
   z.object({ type: z.literal("unlink_google_ads"), property_id: propertyId, customer_id: adsCustomer })
@@ -45,7 +48,7 @@ export const GaChangeSchema = z.discriminatedUnion("type", [
 export type GaChange = z.infer<typeof GaChangeSchema>;
 
 export interface GaOp {
-  method: "POST" | "DELETE";
+  method: "POST" | "PATCH" | "DELETE";
   path: string;
   body?: object;
   /** create_ga4_property: the web stream to add once the property exists (its path depends on the new property's id). */
@@ -108,6 +111,23 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
           + (k ? " ⚠ Google Ads conversion actions imported from it stop receiving conversions" : ""),
         inverse: k ? { type: "mark_key_event", property_id: change.property_id, event_name: change.event_name,
           counting: k.countingMethod === "ONCE_PER_SESSION" ? "ONCE_PER_SESSION" : "ONCE_PER_EVENT" } : undefined };
+    }
+    case "set_key_event_counting": {
+      // mark_key_event leaves an existing key event as it is, so recounting one needs its own change. The Ads side refuses
+      // to recount a GA4 import (set_conversion_counting), and before this the user was sent to GA4's admin (prod, 2026-10-28).
+      const name = await propertyName(change.property_id);
+      const have = ((await ga.admin("GET", `properties/${change.property_id}/keyEvents?pageSize=200`)).keyEvents ?? []) as
+        { name: string; eventName: string; countingMethod: string }[];
+      const k = have.find((x) => x.eventName === change.event_name);
+      if (!k) throw new Error(`"${change.event_name}" isn't a key event in GA4 property "${name}". Mark it with mark_key_event, which sets its counting.`);
+      const before = k.countingMethod === "ONCE_PER_SESSION" ? "ONCE_PER_SESSION" : "ONCE_PER_EVENT";
+      const label = (c: string) => (c === "ONCE_PER_SESSION" ? "once per session" : "every time");
+      return { ...base,
+        operations: before === change.counting ? [] : [{ method: "PATCH", path: `${k.name}?updateMask=counting_method`, body: { countingMethod: change.counting } }],
+        describe: `Count key event "${change.event_name}" in GA4 property "${name}" ${label(change.counting)} (was ${label(before)}). `
+          + "Google Ads conversion actions imported from it follow",
+        inverse: before === change.counting ? undefined
+          : { type: "set_key_event_counting", property_id: change.property_id, event_name: change.event_name, counting: before } };
     }
     case "link_google_ads":
     case "unlink_google_ads": {

@@ -22,6 +22,7 @@ describe("AdsApiError fix hints", () => {
     [{ queryError: "EXPECTED_FILTERS_ON_DATE_RANGE" }, "Expects filters on the following field to limit a finite date range: 'segments.date'.", undefined, "finite range"],
     [{ fieldError: "INVALID_VALUE" }, "The input has an invalid value.", "geo_target_constants", "FROM geo_target_constant"],
     [{ queryError: "PROHIBITED_RESOURCE_TYPE_IN_SELECT_CLAUSE" }, "Cannot select fields from the following resource: 'CAMPAIGN_BUDGET', since the resource is incompatible with the resource in FROM clause.", undefined, "FROM campaign_budget"],
+    [{ campaignError: "CANNOT_MODIFY_FOR_TRIAL_CAMPAIGN" }, "Cannot modify dates, budget or status of a trial campaign.", "operations.update.status", "end it (the original campaign keeps running)"],
     [{ policyFindingError: "POLICY_FINDING" }, "The resource has been disapproved since the policy summary includes policy topics of type PROHIBITED.", "ad", "repeated punctuation"],
     [{ policyViolationError: "POLICY_ERROR" }, "A policy was violated. See PolicyViolationDetails for more detail.", "mutate_operations.ad_group_criterion_operation.create.keyword.text", "Drop or reword that keyword"],
     [{ fieldError: "IMMUTABLE_FIELD" }, "The field attempted to be mutated is immutable.", "operations.update.counting_type", "conversion_action.type"],

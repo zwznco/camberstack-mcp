@@ -31,7 +31,7 @@ import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
 import { teeToFile } from "./logfile.js";
-import { ErrorAlerts, stuckNow } from "./alerts.js";
+import { ErrorAlerts, stuckNow, UNSUPPORTED_PREFIX } from "./alerts.js";
 const DRAIN_FILE = "/tmp/drain";
 
 /** brand/ sits beside src/ and dist/ at the package root. */
@@ -255,10 +255,12 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const merchant = cfg.merchantPublic || (!!email && internalEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null);
-    }, [], { chatgpt, merchant, stuck: (tool, error) => (userId && stuckNow(db, userId, tool, error)
-      ? `This is the same error a third time. If you can't get the user what they asked for, tell them they can report it `
-        + `to Camberstack's maintainer at ${cfg.baseUrl}/feedback, saying what they were trying to get.`
-      : null) });
+    }, [], { chatgpt, merchant, stuck: (tool, error) => (!userId || !stuckNow(db, userId, tool, error) ? null
+      : error.startsWith(UNSUPPORTED_PREFIX)
+        ? `Tell the user Camberstack can't do this yet, and that they can ask for it at ${cfg.baseUrl}/feedback: `
+          + `the maintainer reads every request.`
+        : `This is the same error a third time. If you can't get the user what they asked for, tell them they can report it `
+          + `to Camberstack's maintainer at ${cfg.baseUrl}/feedback, saying what they were trying to get.`) });
   };
   // 2026-07-28 traffic (server/discover, per-request _meta envelope). The SDK's own legacy leg would
   // answer 2025-era requests over SSE, so it is off and those keep the JSON-response wiring below.

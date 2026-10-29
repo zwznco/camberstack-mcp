@@ -102,20 +102,22 @@ What a proposal can do:
 - **Tune:** keyword and ad group bids, bid strategy, location and language targeting, presence-only location
   mode, final URL suffix, and a campaign's EU political advertising declaration (Google refuses every change to an
   account while any campaign lacks one).
-- **Measure:** create a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
+- **Measure:** create or remove a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 - **Connect:** link or unlink a Merchant Center account (`productLinks:create`/`:remove`; neither dry-runs: create has
   none and remove's always answers 500, so propose checks the account is reachable and not a test account, which Google won't link).
 
 Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, more than doubling a budget or a
-bid, switching bid strategy, removing the last location, a new primary conversion action. Undo removes only
-what Camberstack itself created; nothing the user built is ever deleted. (Undoing a GA4 import removes the action, since
-Google can't hide it again; importing again restores it.) Search Console is read-only.
+bid, switching bid strategy, removing the last location, a new primary conversion action, removing a conversion
+action. Undo removes only what Camberstack itself created. The one deletion a user can propose is
+`remove_conversion_action`, and Google can't restore it, so it carries a ⚠ and no undo (a GA4 import is the exception:
+undo imports it again). (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
+restores it.) Search Console is read-only.
 
 ## How auth works
 
 Camberstack is an OAuth 2.1 authorization server for MCP clients (dynamic client registration,
-PKCE). Its `/authorize` sends the user to Google for `adwords` + `openid email`, plus `webmasters.readonly`
-(Search Console). Either is enough to connect ("à la carte"): a tool that needs a missing one, or Google Analytics, returns a personal
+PKCE). Its `/authorize` sends the user to Google for `openid email` plus `adwords` (Google Ads), `webmasters.readonly`
+(Search Console) and `analytics.readonly` + `analytics.edit` (Google Analytics). Any one is enough to connect ("à la carte"), Google Ads included: a tool that needs a missing one returns a personal
 `/connect/<google-ads|search-console|analytics>` link that adds just that service to the same Google account. The Google refresh
 token is stored AES-256-GCM encrypted and never leaves the server. The MCP client gets
 Camberstack's own tokens, which are stored only as SHA-256 hashes.

@@ -140,4 +140,18 @@ describe("analytics_setup", () => {
     }
     expect(await gaSetup(new DemoAnalytics(db, "u1"), DEMO_PROPERTY)).toMatchObject({ key_events: [{ event_name: "generate_lead" }], google_ads_links: [] });
   });
+
+  it("recounts an existing key event, and undo restores it (2026-10-28: mark_key_event left it as it was)", async () => {
+    const ga = new DemoAnalytics();
+    const set = { type: "set_key_event_counting" as const, property_id: DEMO_PROPERTY, event_name: "generate_lead", counting: "ONCE_PER_SESSION" as const };
+    const r = await resolveGaChange(ga, set);
+    expect(r.describe).toContain('Count key event "generate_lead" in GA4 property "DEMO: Northwind Plumbing (sample data)" once per session (was every time)');
+    expect(r.operations).toEqual([{ method: "PATCH", path: `properties/${DEMO_PROPERTY}/keyEvents/1?updateMask=counting_method`, body: { countingMethod: "ONCE_PER_SESSION" } }]);
+    const out = await writeGa(ga, r.operations);
+    expect((await gaSetup(ga, DEMO_PROPERTY)).key_events).toEqual([{ event_name: "generate_lead", counting: "ONCE_PER_SESSION" }]);
+    expect((await resolveGaChange(ga, set)).operations).toEqual([]);  // already counted that way
+    await writeGa(ga, (await resolveGaChange(ga, gaInverseAfterApply(r, out)!)).operations);
+    expect((await gaSetup(ga, DEMO_PROPERTY)).key_events).toEqual([{ event_name: "generate_lead", counting: "ONCE_PER_EVENT" }]);
+    await expect(resolveGaChange(ga, { ...set, event_name: "phone_call" })).rejects.toThrow(/isn't a key event.*mark_key_event/);
+  });
 });

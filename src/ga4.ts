@@ -1,6 +1,6 @@
 /**
  * Google Analytics 4: reports (what happened on the site after the click) and the property reads the setup changes
- * (ga4-changes.ts) need. Its scopes are sensitive, so they aren't in the main Google consent: the first call without
+ * (ga4-changes.ts) need. Its scopes are asked for at sign-in, as an untickable box; the first call without
  * them returns a personal /connect/analytics link (grant.ts) that adds them to the user's existing connection.
  *
  * The demo property (DEMO_PROPERTY) answers the same calls with sample data, like the demo Ads account and site.
@@ -35,7 +35,7 @@ export type Analytics = {
   summaries(): Promise<{ accounts: GaAccount[]; properties: Property[] }>;
   runReport(propertyId: string, req: ReportRequest): Promise<Report>;
   /** An Admin API call by path under v1beta, e.g. GET properties/123/keyEvents. Writes go through ga4-changes.ts only. */
-  admin(method: "GET" | "POST" | "DELETE", path: string, body?: object): Promise<any>;
+  admin(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: object): Promise<any>;
 };
 
 /** One user's view of the GA4 Admin and Data APIs. */
@@ -75,7 +75,7 @@ export class AnalyticsClient implements Analytics {
     return { accounts, properties };
   }
 
-  admin(method: "GET" | "POST" | "DELETE", path: string, body?: object): Promise<any> {
+  admin(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: object): Promise<any> {
     return this.call(`${ADMIN_API}/${path}`, body, method);
   }
 
@@ -226,7 +226,7 @@ export class DemoAnalytics implements Analytics {
   async summaries() { return { accounts: [], properties: [] }; }
 
   /** The demo property's setup: one web stream, plus this user's key events and Google Ads links. Changes stick, like the demo Ads account's. */
-  async admin(method: "GET" | "POST" | "DELETE", path: string, body?: any): Promise<any> {
+  async admin(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: any): Promise<any> {
     const p = `properties/${DEMO_PROPERTY}`, s = this.load();
     const keyName = (id: number) => `${p}/keyEvents/${id}`, linkName = (id: number) => `${p}/googleAdsLinks/${id}`;
     if (method === "POST" && path === `${p}/keyEvents`) {
@@ -234,6 +234,13 @@ export class DemoAnalytics implements Analytics {
       s.keyEvents.push({ id, eventName: body.eventName, countingMethod: body.countingMethod ?? "ONCE_PER_EVENT" });
       this.save(s);
       return { name: keyName(id) };
+    }
+    if (method === "PATCH" && path.startsWith(`${p}/keyEvents/`)) {
+      const k = s.keyEvents.find((x) => keyName(x.id) === path.split("?")[0]);
+      if (!k) throw new Error(`Google Analytics API 404: ${path.split("?")[0]} not found.`);
+      k.countingMethod = body.countingMethod;
+      this.save(s);
+      return { name: keyName(k.id), eventName: k.eventName, countingMethod: k.countingMethod };
     }
     if (method === "POST" && path === `${p}/googleAdsLinks`) {
       const id = s.nextId++;

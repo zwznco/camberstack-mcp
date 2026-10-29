@@ -7,6 +7,19 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.20.0", date: "2026-10-29",
+    summary: "Remove a conversion action, recount a GA4 key event, and track calls from ads.",
+    items: [
+      "**Remove a conversion action** (`remove_conversion_action`). Google can't restore a removed action, so the summary warns you before you approve and there's no undo, except for one imported from GA4, which undo imports again. Past conversions stay in your reports.",
+      "**Recount a GA4 key event** (`set_key_event_counting`): once per event or once per session, with undo. Google Ads won't recount a conversion imported from GA4, so when you ask, your assistant now proposes this instead.",
+      "**Count phone calls as conversions:** `create_conversion_action` takes calls from the number in your ads or from a Google forwarding number on your site, counting those that last a minimum length (60 seconds by default).",
+      "**A campaign on maximize conversion value can switch bid strategy**, with undo. Before, Camberstack refused because it couldn't put it back.",
+      "**Accounts under a manager inside another manager now show up** in `list_accounts`; only the first level was read before.",
+      "**Plans:** Pro covers 5 Google Ads accounts, and Agency covers 25. From November 16, Free covers one Google service at a time (Google Ads, Search Console or Google Analytics), and Plus covers all three on one Google Ads account. /plans lists what each includes.",
+      "**Clearer answers:** a change that's already in place says so instead of failing; an experiment's trial campaign is named as one; an account you can't reach names the login and how to get access; and more `run_gaql` errors point at the field or filter that works.",
+    ],
+  },
+  {
     version: "0.19.0", date: "2026-10-23",
     summary: "Pick your account first, and an account switch is a question, not an error.",
     items: [

@@ -4,6 +4,7 @@ import { ErrorAlerts, errorCode, findStuck, stuckNow, verdict } from "./alerts.j
 
 const T = 2_000_000_000;
 const BAD_FIELD = "Google Ads API 400: UNRECOGNIZED_FIELD Unrecognized field in the query: 'x'.";
+const GAP = "Not supported: Campaign \"Brand\" uses MANUAL_CPM, which Camberstack can't restore on undo; change it in Google Ads.";
 const EU = "Google Ads API 400: EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED Mutates are generally not allowed.";
 
 function setup() {
@@ -58,6 +59,16 @@ describe("findStuck", () => {
     const [e] = findStuck(s.db, new Set(), T);
     expect(e).toMatchObject({ tool: "propose_*", errors: { length: 3 } });
     expect(e.verdict.why).toMatch(/fix it in Google Ads/);
+  });
+
+  it("flags one unsupported refusal from a free user, even when a later proposal works", () => {
+    const s = setup();
+    s.user("f", "f@x.com");
+    s.call("f", 3000, "propose_set_bidding_strategy", GAP);
+    s.call("f", 2990, "propose_changes");
+    const [e] = findStuck(s.db, new Set(), T);
+    expect(e).toMatchObject({ tool: "propose_*", code: "Not supported", errors: { length: 1 }, verdict: { act: true } });
+    expect(e.verdict.why).toMatch(/Consider building it/);
   });
 
   it("waits out the recovery window, and leaves internal accounts out", () => {
@@ -132,6 +143,12 @@ describe("stuckNow", () => {
     expect(stuckNow(s.db, "u", "run_gaql", BAD_FIELD, T)).toBe(true);
     s.call("u", 10, "run_gaql", BAD_FIELD);       // shown once per episode
     expect(stuckNow(s.db, "u", "run_gaql", BAD_FIELD, T)).toBe(false);
+  });
+  it("is true on the first unsupported refusal", () => {
+    const s = setup();
+    s.user("u", "u@x.com");
+    s.call("u", 10, "propose_set_bidding_strategy", GAP);
+    expect(stuckNow(s.db, "u", "propose_set_bidding_strategy", GAP, T)).toBe(true);
   });
   it("resets on a success, and skips errors with their own way forward or that no one can fix", () => {
     const s = setup();
