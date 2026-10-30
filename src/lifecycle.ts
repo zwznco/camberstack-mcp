@@ -27,7 +27,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, freePlan, freePlanChange, oneServiceFree, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { DEMO_MERCHANT } from "./merchant.js";
@@ -305,21 +305,16 @@ Camberstack`,
   };
 }
 
-function limitReached(base: string, upgrade: string | null, opens?: string) {
-  // "November 13": the date the refusal named, in words. UTC so it's the same day the tool said.
-  const when = opens && new Date(`${opens}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
-  const stopped = `Camberstack stopped when you tried it on another Google Ads account. The Free plan covers one account at a time, `
-    + `with one switch every ${ACCOUNT_WINDOW_DAYS} days, and yours was already used${when ? `; the next one opens on ${when}` : ""}.`;
-  const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, `
-    + `and Agency up to ${AGENCY_ACCOUNTS}, for ${AGENCY_PRICE_LABEL}; cancel any time.`;
-  const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work";
+/** A stop at a plan limit: what happened, what would cover it, and that Free still works. Sent once per stop. */
+function upgradeEmail(o: { subject: string; stopped: string; pitch: string; link: string | null; cta: string; free: string; base: string }) {
+  const { stopped, pitch, link, free, base } = o;
   return {
-    subject: "Using Camberstack on more than one Google Ads account",
+    subject: o.subject,
     text: `Hi,
 
 ${stopped}
 
-${pro}${upgrade ? `\n${upgrade}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
+${pitch}${link ? `\n${link}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
 
 ${free} Your plan: ${base}/account
 
@@ -327,11 +322,22 @@ This is the only email about it. Questions? Just reply.
 
 Adam
 Camberstack`,
-    html: wrap(p("Hi,") + p(stopped) + p(pro)
-      + `<p style="margin:0 0 18px"><a href="${upgrade ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">Upgrade to Pro</a></p>`
+    html: wrap(p("Hi,") + p(stopped) + p(pitch)
+      + `<p style="margin:0 0 18px"><a href="${link ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">${o.cta}</a></p>`
       + p(`${free} Your plan is on <a href="${base}/account">your account page</a>.`)
       + p("This is the only email about it. Questions? Just reply.") + p("Adam<br>Camberstack")),
   };
+}
+
+function limitReached(base: string, upgrade: string | null, opens?: string) {
+  // "November 13": the date the refusal named, in words. UTC so it's the same day the tool said.
+  const when = opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
+  const stopped = `Camberstack stopped when you tried it on another Google Ads account. The Free plan covers one account at a time, `
+    + `with one switch every ${ACCOUNT_WINDOW_DAYS} days, and yours was already used${when ? `; the next one opens on ${when}` : ""}.`;
+  const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, `
+    + `and Agency up to ${AGENCY_ACCOUNTS}, for ${AGENCY_PRICE_LABEL}; cancel any time.`;
+  const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work";
+  return upgradeEmail({ subject: "Using Camberstack on more than one Google Ads account", stopped, pitch: pro, link: upgrade, cta: "Upgrade to Pro", free, base });
 }
 
 /**
@@ -342,7 +348,7 @@ function serviceLimit(base: string, plus: string | null, upgrade: string | null,
   const have = /uses it for ([^.]+)\./.exec(error)?.[1];
   const opens = /\. (.+?) opens on Free on (\d{4}-\d{2}-\d{2})/.exec(error);
   const want = opens?.[1] ?? /and (.+?) together need more than one/.exec(error)?.[1] ?? "another Google service";
-  const when = opens && new Date(`${opens[2]}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+  const when = opens && dateLabel(Date.parse(`${opens[2]}T12:00:00Z`) / 1000);
   const stopped = `Camberstack stopped when your AI tried to use ${want}. The Free plan covers one Google service at a time`
     + (have ? `, and you're using it for ${have}${when ? `; ${want} opens on Free on ${when}` : ""}.` : ".");
   // Plus when it's sold: the same one account, every service, which is what this stop is about.
@@ -354,25 +360,7 @@ function serviceLimit(base: string, plus: string | null, upgrade: string | null,
       + `such as finding searches you pay for that already rank, for ${PRO_PRICE_LABEL}; cancel any time.`;
   const link = plus ?? upgrade;
   const free = `On Free, every tool and unlimited changes keep working${have ? ` on ${have}` : ""}, and undo and history always work.`;
-  return {
-    subject: `Using ${allServices()}`,
-    text: `Hi,
-
-${stopped}
-
-${pro}${link ? `\n${link}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
-
-${free} Your plan: ${base}/account
-
-This is the only email about it. Questions? Just reply.
-
-Adam
-Camberstack`,
-    html: wrap(p("Hi,") + p(stopped) + p(pro)
-      + `<p style="margin:0 0 18px"><a href="${link ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">${plus ? "Get Plus" : "Upgrade to Pro"}</a></p>`
-      + p(`${free} Your plan is on <a href="${base}/account">your account page</a>.`)
-      + p("This is the only email about it. Questions? Just reply.") + p("Adam<br>Camberstack")),
-  };
+  return upgradeEmail({ subject: `Using ${allServices()}`, stopped, pitch: pro, link, cta: plus ? "Get Plus" : "Upgrade to Pro", free, base });
 }
 
 /** No account ids or names, only the count (see the header). `plan` is the one that covers all `accounts`. */
@@ -385,25 +373,7 @@ function switchWanted(base: string, accounts: number, plan: "pro" | "agency", up
   // How to switch, not just that you can: the account page has no switch, only the AI does (switch_account).
   const free = "Staying on Free is fine too: your active account keeps every tool and unlimited changes. To move to a different "
     + `account, ask your AI to switch to it; Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.`;
-  return {
-    subject: "Working on more than one Google Ads account?",
-    text: `Hi,
-
-${asked}
-
-${fits}${upgrade ? `\n${upgrade}\n(personal link, valid for 7 days)` : ` Upgrade from ${base}/account`}
-
-${free} Your plan: ${base}/account
-
-This is the only email about it. Questions? Just reply.
-
-Adam
-Camberstack`,
-    html: wrap(p("Hi,") + p(asked) + p(fits)
-      + `<p style="margin:0 0 18px"><a href="${upgrade ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">Upgrade to ${name}</a></p>`
-      + p(`${free} Your plan is on <a href="${base}/account">your account page</a>.`)
-      + p("This is the only email about it. Questions? Just reply.") + p("Adam<br>Camberstack")),
-  };
+  return upgradeEmail({ subject: "Working on more than one Google Ads account?", stopped: asked, pitch: fits, link: upgrade, cta: `Upgrade to ${name}`, free, base });
 }
 
 /** Plain on purpose: it should read like Adam wrote it, and replies go straight to him. Never says how many users there are. */
@@ -460,35 +430,42 @@ Camberstack`,
   };
 }
 
-/** Plus adds services, not accounts: every listed service together on the one account. */
-function plusWelcome(base: string) {
-  const ask = "Which searches do I pay for that already rank on Google?";
-  const adds = `${allServices()}, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
+/** What a new subscription adds, what stays, and how billing works. */
+function paidWelcome(o: { base: string; name: string; adds: string; addsHtml: string; billing: string; billingHtml: string }) {
+  const { base, name } = o;
   const same = "every tool, unlimited changes, nothing applied until you approve it, and almost every change can be undone.";
-  const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from your account page`;
   return {
-    subject: "You're on Camberstack Plus",
+    subject: `You're on Camberstack ${name}`,
     text: `Hi,
 
-Thanks for subscribing to Camberstack Plus. It's active now.
+Thanks for subscribing to Camberstack ${name}. It's active now.
 
-What Plus adds: ${adds}
+What ${name} adds: ${o.adds}
 
 What stays the same: ${same}
 
-Billing: ${billing}:
+Billing: ${o.billing}:
 ${base}/account
 
 If anything doesn't work the way you expected, just reply. I read every email.
 
 Adam
 Camberstack`,
-    html: wrap(p("Hi,") + p("Thanks for subscribing to Camberstack Plus. It's active now.")
-      + p(`<strong>What Plus adds:</strong> ${adds.replace(`"${ask}"`, `<em>“${ask}”</em>`)}`)
+    html: wrap(p("Hi,") + p(`Thanks for subscribing to Camberstack ${name}. It's active now.`)
+      + p(`<strong>What ${name} adds:</strong> ${o.addsHtml}`)
       + p(`<strong>What stays the same:</strong> ${same}`)
-      + p(`<strong>Billing:</strong> ${billing}: <a href="${base}/account">your account page</a>.`)
+      + p(`<strong>Billing:</strong> ${o.billingHtml}`)
       + p("If anything doesn't work the way you expected, just reply. I read every email.") + p("Adam<br>Camberstack")),
   };
+}
+
+/** Plus adds services, not accounts: every listed service together on the one account. */
+function plusWelcome(base: string) {
+  const ask = "Which searches do I pay for that already rank on Google?";
+  const adds = `${allServices()}, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
+  const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from your account page`;
+  return paidWelcome({ base, name: "Plus", adds, addsHtml: adds.replace(`"${ask}"`, `<em>“${ask}”</em>`), billing,
+    billingHtml: `${billing}: <a href="${base}/account">your account page</a>.` });
 }
 
 /**
@@ -499,27 +476,9 @@ function proWelcome(base: string, plan: string) {
   if (plan === "plus") return plusWelcome(base);
   const ask = "List my Google Ads accounts";
   const [name, accounts, price] = plan === "agency" ? ["Agency", AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL] : ["Pro", PRO_ACCOUNTS, PRO_PRICE_LABEL];
-  return {
-    subject: `You're on Camberstack ${name}`,
-    text: `Hi,
-
-Thanks for subscribing to Camberstack ${name}. It's active now.
-
-What ${name} adds: up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.
-
-What stays the same: every tool, unlimited changes, nothing applied until you approve it, and almost every change can be undone.
-
-Billing: ${price}, renewing monthly. You can see invoices, change your card or cancel any time from your account page:
-${base}/account
-
-If anything doesn't work the way you expected, just reply. I read every email.
-
-Adam
-Camberstack`,
-    html: wrap(p("Hi,") + p(`Thanks for subscribing to Camberstack ${name}. It's active now.`)
-      + p(`<strong>What ${name} adds:</strong> up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`)
-      + p("<strong>What stays the same:</strong> every tool, unlimited changes, nothing applied until you approve it, and almost every change can be undone.")
-      + p(`<strong>Billing:</strong> ${price}, renewing monthly. You can see invoices, change your card or cancel any time from <a href="${base}/account">your account page</a>.`)
-      + p("If anything doesn't work the way you expected, just reply. I read every email.") + p("Adam<br>Camberstack")),
-  };
+  const billing = `${price}, renewing monthly. You can see invoices, change your card or cancel any time from`;
+  return paidWelcome({ base, name,
+    adds: `up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.`,
+    addsHtml: `up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`,
+    billing: `${billing} your account page`, billingHtml: `${billing} <a href="${base}/account">your account page</a>.` });
 }
