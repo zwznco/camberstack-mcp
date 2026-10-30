@@ -622,7 +622,7 @@ describe("OAuth + MCP end to end", () => {
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
     // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29); +3.5K for the delete_ changes (2026-10-30).
-    expectToolBudget(tools, { total: 92_500, perTool: 6_000, except: { propose_changes: 44_200, propose_merchant_changes: 11_000 } });
+    expectToolBudget(tools, { total: 98_000, perTool: 6_000, except: { propose_changes: 49_000, propose_merchant_changes: 11_000 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1140,7 +1140,7 @@ describe("OAuth + MCP end to end", () => {
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
       // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29); +7K for the propose_delete_ tools (2026-10-30).
-      expectToolBudget(tools, { total: 119_000, perTool: 6_000 });
+      expectToolBudget(tools, { total: 129_000, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
