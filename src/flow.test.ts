@@ -13,7 +13,7 @@ import { now, openDb } from "./db.js";
 import type { Config } from "./config.js";
 import { decrypt, encrypt } from "./crypto.js";
 import { AdsApiError, NotGrantedError } from "./google.js";
-import { ChangeSchema, io, PUBLIC_CHANGES } from "./changes.js";
+import { ChangeSchema, io, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
@@ -1146,7 +1146,7 @@ describe("OAuth + MCP end to end", () => {
       expect(names).not.toContain("undo_changes");
       for (const n of ["propose_pause_campaign", "propose_create_performance_max_campaign", "propose_set_conversion_counting",
         "propose_link_google_ads", "propose_create_ga4_property", "propose_undo", "apply_changes"]) expect(names).toContain(n);
-      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_MC_CHANGES.length + 1);  // this user is internal, so Merchant Center's too
+      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + MERCHANT_LINK_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_MC_CHANGES.length + 1);  // this user is internal, so Merchant Center's too
       for (const t of tools.filter((t) => t.name.startsWith("propose_"))) {
         expect(t.description, t.name).not.toMatch(/undefined|propose_changes|undo_changes/);
         expect(t.inputSchema.properties, t.name).not.toHaveProperty("type");
@@ -2901,6 +2901,10 @@ describe("Merchant Center rollout", () => {
     let outsider = "";
     try { outsider = await connect(); } finally { googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com"; }
     expect(await listTools(outsider)).toEqual([]);
+    // Off for them means off: linking isn't offered in propose_changes either, nor taken if an AI sends it anyway.
+    const linked = await call(outsider, "propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center", merchant_center_id: "000000001" }] });
+    expect(linked.isError).toBe(true);
+    expect(linked.json).toBeNull();
   });
 });
 

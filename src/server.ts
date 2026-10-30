@@ -254,7 +254,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const chatgpt = isChatGpt(clientId);
     let session: UserSession | undefined;
     const email = (db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string } | undefined)?.email.toLowerCase();
-    const merchant = cfg.merchantPublic || (!!email && internalEmails.has(email));
+    // Admins only, not PRO_EMAILS: that holds the directory reviewers' login, who mustn't meet an unverified scope.
+    const merchant = cfg.merchantPublic || (!!email && cfg.adminEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null);
     }, [], { chatgpt, merchant, stuck: (tool, error) => (!userId || !stuckNow(db, userId, tool, error) ? null

@@ -303,10 +303,6 @@ export const PUBLIC_CHANGES = [
     event_name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/).describe("The GA4 key event, e.g. generate_lead, purchase, sign_up"),
     primary: z.boolean().default(true).describe("Primary actions count in Conversions and can steer bidding") })
     .describe("Import a GA4 key event into Google Ads as a conversion action, so campaigns can count and bid on it. The GA4 property must be linked to this account"),
-  z.object({ type: z.literal("link_merchant_center"), merchant_center_id: z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID (from merchant_accounts)") })
-    .describe("Link a Merchant Center account to this Google Ads account, so Shopping and Performance Max campaigns can use its products (the user must be an admin of both)"),
-  z.object({ type: z.literal("unlink_merchant_center"), merchant_center_id: z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID (from merchant_accounts)") })
-    .describe("Remove the link between a Merchant Center account and this Google Ads account; Shopping and Performance Max campaigns using its products stop serving"),
   z.object({ type: z.literal("remove_conversion_action"), conversion_action_id: id.describe("conversion_action.id from run_gaql") })
     .describe("Remove a conversion action. Permanent unless a GA4 import: say so before they approve"),
   z.object({ type: z.literal("delete_keyword"), ad_group_id: adGroupId, criterion_id: criterionId })
@@ -378,8 +374,17 @@ export const PUBLIC_CHANGES = [
     .describe("Apply or dismiss one of Google's recommendations. Applying has no undo and Google picks the details: say so before they approve"),
 ] as const;
 
+/** Listed only with the Merchant Center tools (tools.ts o.merchant), so a connection that can't reach them isn't offered these. */
+export const MERCHANT_LINK_CHANGES = [
+  z.object({ type: z.literal("link_merchant_center"), merchant_center_id: z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID (from merchant_accounts)") })
+    .describe("Link a Merchant Center account to this Google Ads account, so Shopping and Performance Max campaigns can use its products (the user must be an admin of both)"),
+  z.object({ type: z.literal("unlink_merchant_center"), merchant_center_id: z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID (from merchant_accounts)") })
+    .describe("Remove the link between a Merchant Center account and this Google Ads account; Shopping and Performance Max campaigns using its products stop serving"),
+] as const;
+
 /** For propose_changes' input: what the AI sees. */
 export const PublicChangeSchema = z.discriminatedUnion("type", [...PUBLIC_CHANGES]);
+export const MerchantPublicChangeSchema = z.discriminatedUnion("type", [...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES]);
 
 /** An undo of create_conversion_action stored before remove_conversion_action was public named the action by resource name. */
 const byId = (c: unknown) => {
@@ -391,6 +396,7 @@ const byId = (c: unknown) => {
 /** Everything the server accepts, including the change only undo creates. */
 export const ChangeSchema = z.preprocess(byId, z.discriminatedUnion("type", [
   ...PUBLIC_CHANGES,
+  ...MERCHANT_LINK_CHANGES,
   // Used only by undo: remove what this service created, or restore what it replaced. Not offered to the AI.
   z.object({ type: z.literal("remove_negative_keywords"), campaign_id: id, resource_names: z.array(z.string()).min(1) }),
   z.object({ type: z.literal("remove_campaign"), resource_name: z.string(), name: z.string() }),

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ListToolsResult, ToolAnnotations } from "@modelcontextprotocol/server";
-import { MAX_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
+import { MAX_CHANGES, MERCHANT_LINK_CHANGES, MerchantPublicChangeSchema, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
 import { DEMO_MERCHANT, listMerchantAccounts, merchantReport, productIssues } from "./merchant.js";
 import { PUBLIC_MC_CHANGES, PublicMcChangeSchema, mcTarget } from "./merchant-changes.js";
@@ -31,7 +31,7 @@ const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
 
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
 const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
-  ...PUBLIC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
+  ...[...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES].map((c) => `propose_${c.shape.type.value}`)]);
 
 /** Tools that read or change one Merchant Center account (account_id): their own allowance, logged as mc:<id>. */
 const MC_GATED = new Set(["merchant_product_issues", "merchant_report", "propose_merchant_changes", ...PUBLIC_MC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
@@ -534,8 +534,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   if (!o.chatgpt) tool("propose_changes", {
     title: "Propose Google Ads changes (applies nothing)",
-    description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad rather than edit it: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, set_eu_political_advertising (Google refuses every change to an account until each campaign has declared this), create_conversion_action, set_conversion_counting, import_ga4_key_event, remove_conversion_action; and deleting: delete_keyword, delete_ad, delete_ad_group, delete_campaign (ads, ad groups and campaigns can't be undone), delete_negative_keywords, delete_sitelinks; and negatives: add_ad_group_negatives, delete_ad_group_negatives, create_negative_list, edit_negative_list, apply_negative_list, delete_negative_list; and edit_responsive_search_ad, which keeps the ad instead of replacing it; and set_ad_schedule, set_device_bid, add_campaign_assets, delete_campaign_assets, set_ai_max, set_conversion_settings; and create_remarketing_list, set_campaign_audience, act_on_recommendation; and link_merchant_center / unlink_merchant_center (Shopping and Performance Max need the link). Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
-    inputSchema: { customer_id: customerId, changes: z.array(PublicChangeSchema).min(1).max(MAX_CHANGES).describe(`Changes to propose; several can go in one proposal, up to ${MAX_CHANGES} (each keyword counts as one)`) },
+    description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad rather than edit it: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, set_eu_political_advertising (Google refuses every change to an account until each campaign has declared this), create_conversion_action, set_conversion_counting, import_ga4_key_event, remove_conversion_action; and deleting: delete_keyword, delete_ad, delete_ad_group, delete_campaign (ads, ad groups and campaigns can't be undone), delete_negative_keywords, delete_sitelinks; and negatives: add_ad_group_negatives, delete_ad_group_negatives, create_negative_list, edit_negative_list, apply_negative_list, delete_negative_list; and edit_responsive_search_ad, which keeps the ad instead of replacing it; and set_ad_schedule, set_device_bid, add_campaign_assets, delete_campaign_assets, set_ai_max, set_conversion_settings; and create_remarketing_list, set_campaign_audience, act_on_recommendation${o.merchant ? "; and link_merchant_center / unlink_merchant_center (Shopping and Performance Max need the link)" : ""}. Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
+    inputSchema: { customer_id: customerId, changes: z.array(o.merchant ? MerchantPublicChangeSchema : PublicChangeSchema).min(1).max(MAX_CHANGES).describe(`Changes to propose; several can go in one proposal, up to ${MAX_CHANGES} (each keyword counts as one)`) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, ({ customer_id, changes }: { customer_id: string; changes: unknown[] }) => session().propose(customer_id, changes));
 
@@ -545,7 +545,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     + "Show the summary, and any ⚠ line in it, to the user and call apply_changes only after they approve.";
   const proposes = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
   if (o.chatgpt) {
-    for (const c of PUBLIC_CHANGES) {
+    for (const c of [...PUBLIC_CHANGES, ...(o.merchant ? MERCHANT_LINK_CHANGES : [])]) {
       const { type, ...shape } = c.shape;
       const op = type.value;
       tool(`propose_${op}`, {
