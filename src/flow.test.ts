@@ -683,6 +683,28 @@ describe("OAuth + MCP end to end", () => {
     expect(r.json.campaigns.length).toBeGreaterThan(0);
   });
 
+  it("says what needs a look in the overview, and a read that fails only drops its line", async () => {
+    const realSearch = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => {
+      if (q.includes("FROM ad_group_ad")) return [{ adGroup: { name: "Drains" }, campaign: { name: "Search" }, adGroupAd: { ad: { id: "9" },
+        policySummary: { approvalStatus: "DISAPPROVED", policyTopicEntries: [{ topic: "DESTINATION_NOT_WORKING", type: "PROHIBITED" }] } } }];
+      if (q.includes("FROM recommendation")) throw new Error("not this time");
+      if (q.includes("FROM conversion_action") && q.includes("conversion_last_conversion_date")) return [
+        { conversionAction: { name: "Never", primaryForGoal: true } },
+        { conversionAction: { name: "Old", primaryForGoal: true }, metrics: { conversionLastConversionDate: "2020-01-01" } },
+        { conversionAction: { name: "Secondary", primaryForGoal: false } },
+        { conversionAction: { name: "Recent", primaryForGoal: true }, metrics: { conversionLastConversionDate: new Date().toISOString().slice(0, 10) } }];
+      return realSearch(cid, q);
+    };
+    try {
+      const r = await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 });
+      expect(r.json.attention).toEqual({
+        ads_with_policy_problems: [{ ad_id: "9", status: "DISAPPROVED", ad_group: "Drains", campaign: "Search", reasons: ["DESTINATION_NOT_WORKING"] }],
+        primary_conversions_quiet_for_30_days: [{ name: "Never", last_conversion: "never" }, { name: "Old", last_conversion: "2020-01-01" }],
+      });
+    } finally { ads.search = realSearch; }
+  });
+
   it("remembers the time zone of the account they work on, for lifecycle email timing", async () => {
     await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 });
     expect(db.prepare("SELECT DISTINCT time_zone tz FROM users WHERE enc_refresh IS NOT NULL").all()).toEqual([{ tz: "Europe/London" }]);

@@ -237,7 +237,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("account_overview", {
     title: "Account overview",
-    description: "Spend, clicks, conversions and cost per conversion per campaign over a window.",
+    description: "Spend, clicks, conversions and cost per conversion per campaign over a window, plus `attention` when something needs a look: disapproved ads and why, Google's recommendations, primary conversions gone quiet.",
     inputSchema: { customer_id: customerId, days },
     annotations: read,
   }, ({ customer_id, days }: { customer_id: string; days: number }) => session().overview(customer_id, days));

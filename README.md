@@ -20,7 +20,7 @@ Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes o
 | tool | writes? | what it does |
 |---|---|---|
 | `list_accounts` | no | every account the login reaches, including client accounts under a manager (MCC) |
-| `account_overview` | no | spend, conversions, cost per conversion per campaign |
+| `account_overview` | no | spend, conversions, cost per conversion per campaign, plus `attention` when something needs a look: ads with policy problems and why, Google's open recommendations, primary conversions quiet for 30 days |
 | `keyword_ideas` | no | Keyword Planner ideas from seed keywords and/or a URL: monthly searches, competition, top-of-page bid range; marks ideas the account already targets or blocks |
 | `keyword_metrics` | no | Keyword Planner numbers for an exact list, with the last 12 months of searches |
 | `run_gaql` | no | any read-only GAQL `SELECT` |

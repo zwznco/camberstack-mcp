@@ -65,6 +65,8 @@ const inFlight = new Map<string, Map<string, number>>();
 const servicesInFlight = new Map<string, Map<Service, number>>();
 /** When each user was last asked to pick Free's service (checkService). In memory: a restart just asks again. */
 const serviceAsked = new Map<string, number>();
+/** How many ads account_overview's attention block names, and how long a primary conversion can stay quiet before it says so. */
+const ATTENTION_ADS = 10, ATTENTION_CONVERSION_DAYS = 30;
 /** The account each user was last told about in an "Account switch:" notice, and when. */
 const switchAsked = new Map<string, { cid: string; at: number }>();
 
@@ -727,7 +729,42 @@ export class UserSession {
       window: `last ${days} days`,
       totals: { cost: round(cost), conversions: round(conv), cost_per_conversion: conv > 0 ? round(cost / conv) : null },
       campaigns,
+      ...(isDemo(a.customerId) ? {} : await this.attention(a)),
     };
+  }
+
+  /**
+   * What needs a look, read whatever the question was: models only found these if they knew the query. Each read is
+   * optional, so a failed one drops its line and never the overview; an empty result adds nothing to the response.
+   */
+  private async attention(a: Account) {
+    const read = (query: string) => this.ads.search(a.customerId, query, a.loginCustomerId);
+    const [adRows, recRows, actionRows] = await Promise.all([
+      read(`SELECT ad_group_ad.ad.id, ad_group_ad.policy_summary.approval_status, ad_group_ad.policy_summary.policy_topic_entries, ad_group.name, campaign.name
+        FROM ad_group_ad WHERE ad_group_ad.status = 'ENABLED' AND ad_group_ad.policy_summary.approval_status IN ('DISAPPROVED', 'APPROVED_LIMITED')
+        AND campaign.status != 'REMOVED'`).catch(() => []),
+      read(`SELECT recommendation.type FROM recommendation WHERE recommendation.dismissed = FALSE`).catch(() => []),
+      read(`SELECT conversion_action.name, conversion_action.primary_for_goal, metrics.conversion_last_conversion_date
+        FROM conversion_action WHERE conversion_action.status = 'ENABLED'`).catch(() => []),
+    ]);
+    const ads = adRows.filter((r) => r.adGroupAd?.policySummary), recs = recRows.filter((r) => r.recommendation?.type);
+    const actions = actionRows.filter((r) => r.conversionAction?.name);
+    const policy = ads.slice(0, ATTENTION_ADS).map((r) => ({
+      ad_id: String(r.adGroupAd.ad?.id), status: r.adGroupAd.policySummary.approvalStatus, ad_group: r.adGroup?.name, campaign: r.campaign?.name,
+      reasons: (r.adGroupAd.policySummary.policyTopicEntries ?? []).map((t: { topic?: string }) => t.topic).filter(Boolean),
+    }));
+    const recommendations: Record<string, number> = {};
+    for (const r of recs) recommendations[r.recommendation.type] = (recommendations[r.recommendation.type] ?? 0) + 1;
+    // Google leaves the date out for an action that has never had a conversion.
+    const cutoff = new Date(now() * 1000 - ATTENTION_CONVERSION_DAYS * 86400_000).toISOString().slice(0, 10);
+    const quiet = actions.filter((r) => r.conversionAction.primaryForGoal && !(r.metrics?.conversionLastConversionDate >= cutoff))
+      .map((r) => ({ name: r.conversionAction.name, last_conversion: r.metrics?.conversionLastConversionDate ?? "never" }));
+    const attention = {
+      ...(policy.length ? { ads_with_policy_problems: policy, ...(ads.length > policy.length ? { more_ads_with_policy_problems: ads.length - policy.length } : {}) } : {}),
+      ...(recs.length ? { google_recommendations: recommendations } : {}),
+      ...(quiet.length ? { primary_conversions_quiet_for_30_days: quiet } : {}),
+    };
+    return Object.keys(attention).length ? { attention } : {};
   }
 
   async runQuery(customerId: string, query: string) {
