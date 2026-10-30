@@ -15,7 +15,7 @@ export const CHANGELOG: Release[] = [
       "**Count phone calls as conversions:** `create_conversion_action` takes calls from the number in your ads or from a Google forwarding number on your site, counting those that last a minimum length (60 seconds by default).",
       "**A campaign on maximize conversion value can switch bid strategy**, with undo. Before, Camberstack refused because it couldn't put it back.",
       "**Accounts under a manager inside another manager now show up** in `list_accounts`; only the first level was read before.",
-      "**Plans:** Pro covers 5 Google Ads accounts, and Agency covers 25. From November 16, Free covers one Google service at a time (Google Ads, Search Console or Google Analytics), and Plus covers all three on one Google Ads account. /plans lists what each includes.",
+      "**Plans:** Pro covers 5 Google Ads accounts, and Agency covers 25. From November 15, Free covers one Google service at a time (Google Ads, Search Console or Google Analytics), and Plus covers all three on one Google Ads account. /plans lists what each includes.",
       "**Clearer answers:** a change that's already in place says so instead of failing; an experiment's trial campaign is named as one; an account you can't reach names the login and how to get access; and more `run_gaql` errors point at the field or filter that works.",
     ],
   },
