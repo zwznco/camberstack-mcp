@@ -14,7 +14,8 @@
  * a shared (portfolio) strategy's targets, and creating a shared strategy (undo moves its campaigns back, then removes it). YouTube is Demand Gen with video ads: the
  * API refuses to create VIDEO campaigns (MUTATE_NOT_ALLOWED, checked against v23 on 2026-10-12). A user can also delete
  * what they built (the delete_ changes). Google can't bring back a removed ad, ad group or campaign, so those carry a ⚠ and
- * no undo; a keyword, negative or sitelink goes back as a new one, without its history.
+ * no undo; a keyword, negative or sitelink goes back as a new one, without its history. Also ad group negatives, shared
+ * negative lists, and editing a responsive search ad in place.
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -76,6 +77,7 @@ const sitelinkSpec = z.object({
   description2: z.string().min(1).max(35).optional(),
 });
 const negativeSpec = z.object({ text: z.string().min(1).max(80), match_type: matchType });
+const sharedSetId = id.describe("Shared negative list id (shared_set.id from run_gaql WHERE shared_set.type = 'NEGATIVE_KEYWORDS')");
 
 // Display and Demand Gen ads are built from uploaded images. An image is either a public https URL
 // (fetched, checked and uploaded as a new image asset) or an image asset already in the account.
@@ -308,6 +310,27 @@ export const PUBLIC_CHANGES = [
   z.object({ type: z.literal("delete_sitelinks"), campaign_id: campaignId,
     asset_ids: z.array(id).min(1).max(8).describe("asset.id of each sitelink, from run_gaql FROM campaign_asset WHERE campaign_asset.field_type = 'SITELINK'") })
     .describe("Take sitelinks off a campaign. Google can't edit a sitelink: to change one, delete it and add_sitelinks in the same proposal"),
+  z.object({ type: z.literal("add_ad_group_negatives"), ad_group_id: adGroupId, keywords: z.array(negativeSpec).min(1).max(MAX_CHANGES) })
+    .describe("Block searches in one ad group, so it stops catching another group's searches"),
+  z.object({ type: z.literal("delete_ad_group_negatives"), ad_group_id: adGroupId,
+    criterion_ids: z.array(id).min(1).max(MAX_CHANGES).describe("ad_group_criterion.criterion_id of each negative, from run_gaql WHERE ad_group_criterion.negative = TRUE") })
+    .describe("Delete negative keywords from an ad group"),
+  z.object({ type: z.literal("create_negative_list"), name: z.string().min(1).max(255).describe("List name; must not match an existing list"),
+    keywords: z.array(negativeSpec).min(1).max(MAX_CHANGES), campaign_ids: z.array(id).max(MAX_CHANGES).default([]).describe("Campaigns to use it on") })
+    .describe("Create a shared negative keyword list, optionally on campaigns"),
+  z.object({ type: z.literal("edit_negative_list"), shared_set_id: sharedSetId, add: z.array(negativeSpec).max(MAX_CHANGES).default([]),
+    remove_criterion_ids: z.array(id).max(MAX_CHANGES).default([]).describe("shared_criterion.criterion_id of each to remove") })
+    .describe("Add or remove keywords in a shared negative list. This changes every campaign using it, which the proposal lists"),
+  z.object({ type: z.literal("apply_negative_list"), shared_set_id: sharedSetId, add_campaign_ids: z.array(id).max(MAX_CHANGES).default([]),
+    remove_campaign_ids: z.array(id).max(MAX_CHANGES).default([]) })
+    .describe("Put a shared negative list on campaigns, or take it off"),
+  z.object({ type: z.literal("delete_negative_list"), shared_set_id: sharedSetId })
+    .describe("Delete a shared negative list from every campaign. It has no undo: say so before they approve"),
+  z.object({ type: z.literal("edit_responsive_search_ad"), ad_id: id.describe("Ad id, digits only (ad_group_ad.ad.id from run_gaql)"),
+    headlines: distinctTexts(z.array(z.string().min(1).max(30)).min(3).max(15)).optional().describe("The full new list, replacing the old one"),
+    descriptions: distinctTexts(z.array(z.string().min(1).max(90)).min(2).max(4)).optional().describe("The full new list, replacing the old one"),
+    final_url: url.optional(), path1: z.string().min(1).max(15).optional(), path2: z.string().min(1).max(15).optional() })
+    .describe("Edit a responsive search ad's words or link in place, instead of adding a new ad. Give only what changes"),
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
@@ -337,6 +360,7 @@ export const ChangeSchema = z.preprocess(byId, z.discriminatedUnion("type", [
   z.object({ type: z.literal("remove_campaign_criteria"), campaign_id: id, resource_names: z.array(z.string()).min(1), what: z.string() }),
   z.object({ type: z.literal("remove_imported_conversion_action"), resource_name: z.string(), name: z.string(), property_id: id, event_name: z.string(), primary: z.boolean(),
     category: z.string(), biddable_before: z.array(z.string()) }),
+  z.object({ type: z.literal("restore_responsive_search_ad"), ad_id: id, fields: z.record(z.string(), z.any()), mask: z.string() }),
   z.object({ type: z.literal("restore_conversion_goals"), campaign_id: id, goals: z.array(z.object({ resource_name: z.string(), biddable: z.boolean() })).min(1) }),
 ]));
 export type Change = z.infer<typeof ChangeSchema>;
@@ -345,7 +369,7 @@ export type Change = z.infer<typeof ChangeSchema>;
 export interface ResolvedChange {
   change: Change;
   /** "googleAds" = the cross-service atomic mutate, whose operations are MutateOperations. */
-  service: "campaignCriteria" | "adGroupCriteria" | "adGroups" | "campaignBudgets" | "campaigns" | "adGroupAds"
+  service: "campaignCriteria" | "adGroupCriteria" | "adGroups" | "ads" | "campaignBudgets" | "campaigns" | "adGroupAds"
     | "campaignConversionGoals" | "conversionActions" | "biddingStrategies" | "googleAds";
   operations: object[];
   describe: string;
@@ -1230,6 +1254,141 @@ export async function resolveChange(
         }) },
       };
     }
+    case "add_ad_group_negatives": {
+      const [g] = await q(`SELECT ad_group.name, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
+      if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      const existing = await adGroupNegatives(q, change.ad_group_id);
+      const have = new Set(existing.map((r) => `${String(r.adGroupCriterion.keyword?.text ?? "").toLowerCase()}|${r.adGroupCriterion.keyword?.matchType}`));
+      const fresh = change.keywords.filter((k) => isNew(have, `${k.text.toLowerCase()}|${k.match_type}`));
+      const skipped = change.keywords.length - fresh.length;
+      const adGroup = `customers/${customerId}/adGroups/${change.ad_group_id}`;
+      return {
+        change: { ...change, keywords: fresh }, service: "adGroupCriteria",
+        operations: fresh.map((k) => ({ create: { adGroup, negative: true, keyword: { text: k.text, matchType: k.match_type } } })),
+        describe: `Add ${fresh.length} negative keyword(s) to ad group "${g.adGroup.name}" (campaign "${g.campaign.name}"): ${fresh.map((k) => fmtKw(k.text, k.match_type)).join(", ")}` +
+          (skipped ? ` (${skipped} already present or repeated, skipped)` : ""),
+      };
+    }
+    case "delete_ad_group_negatives": {
+      const rows = await adGroupNegatives(q, change.ad_group_id);
+      const byId = new Map(rows.map((r) => [String(r.adGroupCriterion.resourceName).split("~").at(-1), r]));
+      const missing = change.criterion_ids.filter((i) => !byId.has(i));
+      if (missing.length) throw new Error(`No negative keyword ${missing.join(", ")} on ad group ${change.ad_group_id}.`);
+      const found = [...new Set(change.criterion_ids)].map((i) => byId.get(i)!);
+      return {
+        change, service: "adGroupCriteria", operations: found.map((r) => ({ remove: r.adGroupCriterion.resourceName })),
+        describe: `Delete ${found.length} negative keyword(s) from ad group "${found[0].adGroup.name}": ` +
+          found.map((r) => fmtKw(r.adGroupCriterion.keyword.text, r.adGroupCriterion.keyword.matchType)).join(", "),
+        inverse: { type: "add_ad_group_negatives", ad_group_id: change.ad_group_id,
+          keywords: found.map((r) => ({ text: r.adGroupCriterion.keyword.text, match_type: r.adGroupCriterion.keyword.matchType })) },
+      };
+    }
+    case "create_negative_list": {
+      const dup = await q(`SELECT shared_set.id FROM shared_set WHERE shared_set.name = '${gaqlStr(change.name)}' AND shared_set.status = 'ENABLED'`);
+      if (dup.length) throw new Error(`A shared list named "${change.name}" already exists (id ${dup[0].sharedSet.id}). Pick another name.`);
+      const seen = new Set<string>();
+      const keywords = change.keywords.filter((k) => isNew(seen, `${k.text.toLowerCase()}|${k.match_type}`));
+      const campaigns = await campaignNames(q, change.campaign_ids);
+      const T = tempIds(customerId), sharedSet = T.next("sharedSets");
+      return {
+        change, service: "googleAds",
+        operations: [
+          { sharedSetOperation: { create: { resourceName: sharedSet, name: change.name, type: "NEGATIVE_KEYWORDS" } } },
+          ...keywords.map((k) => ({ sharedCriterionOperation: { create: { sharedSet, keyword: { text: k.text, matchType: k.match_type } } } })),
+          ...change.campaign_ids.map((c) => ({ campaignSharedSetOperation: { create: { campaign: `customers/${customerId}/campaigns/${c}`, sharedSet } } })),
+        ],
+        describe: `Create shared negative list "${change.name}" with ${keywords.length} keyword(s): ${keywords.map((k) => fmtKw(k.text, k.match_type)).join(", ")}` +
+          (campaigns.size ? `, on campaign(s) ${[...campaigns.values()].map((n) => `"${n}"`).join(", ")}` : ", on no campaigns yet"),
+      };
+    }
+    case "edit_negative_list": {
+      if (!change.add.length && !change.remove_criterion_ids.length) throw new Error("Give add and/or remove_criterion_ids.");
+      const list = await negativeList(q, change.shared_set_id);
+      const rows = await q(`SELECT shared_set.id, shared_criterion.resource_name, shared_criterion.keyword.text, shared_criterion.keyword.match_type
+        FROM shared_criterion WHERE shared_set.id = ${change.shared_set_id}`);
+      const byId = new Map(rows.map((r) => [String(r.sharedCriterion.resourceName).split("~").at(-1), r]));
+      const missing = change.remove_criterion_ids.filter((i) => !byId.has(i));
+      if (missing.length) throw new Error(`No keyword ${missing.join(", ")} in list "${list.name}".`);
+      const removed = [...new Set(change.remove_criterion_ids)].map((i) => byId.get(i)!);
+      const have = new Set(rows.map((r) => `${String(r.sharedCriterion.keyword?.text ?? "").toLowerCase()}|${r.sharedCriterion.keyword?.matchType}`));
+      const fresh = change.add.filter((k) => isNew(have, `${k.text.toLowerCase()}|${k.match_type}`));
+      const sharedSet = `customers/${customerId}/sharedSets/${change.shared_set_id}`;
+      const gone = removed.map((r) => ({ text: r.sharedCriterion.keyword.text as string, match_type: r.sharedCriterion.keyword.matchType as "EXACT" | "PHRASE" | "BROAD" }));
+      return {
+        change: { ...change, add: fresh }, service: "googleAds",
+        // Removals first: inverseAfterApply reads the new ids off the end of the results.
+        operations: [...removed.map((r) => ({ sharedCriterionOperation: { remove: r.sharedCriterion.resourceName } })),
+          ...fresh.map((k) => ({ sharedCriterionOperation: { create: { sharedSet, keyword: { text: k.text, matchType: k.match_type } } } }))],
+        describe: `Shared negative list "${list.name}": ` + [fresh.length && `add ${fresh.map((k) => fmtKw(k.text, k.match_type)).join(", ")}`,
+          gone.length && `remove ${gone.map((k) => fmtKw(k.text, k.match_type)).join(", ")}`].filter(Boolean).join("; ") + usedBy(list.campaigns),
+        inverse: { type: "edit_negative_list", shared_set_id: change.shared_set_id, add: gone, remove_criterion_ids: [] },
+      };
+    }
+    case "apply_negative_list": {
+      if (!change.add_campaign_ids.length && !change.remove_campaign_ids.length) throw new Error("Give add_campaign_ids and/or remove_campaign_ids.");
+      const list = await negativeList(q, change.shared_set_id);
+      const on = new Map(list.campaigns.map((c) => [c.id, c]));
+      const adding = [...new Set(change.add_campaign_ids)].filter((c) => !on.has(c));
+      const removing = [...new Set(change.remove_campaign_ids)].filter((c) => on.has(c));
+      const campaigns = await campaignNames(q, adding);
+      const sharedSet = `customers/${customerId}/sharedSets/${change.shared_set_id}`;
+      return {
+        change, service: "googleAds",
+        operations: [...adding.map((c) => ({ campaignSharedSetOperation: { create: { campaign: `customers/${customerId}/campaigns/${c}`, sharedSet } } })),
+          ...removing.map((c) => ({ campaignSharedSetOperation: { remove: on.get(c)!.resourceName } }))],
+        describe: `Shared negative list "${list.name}": ` + [adding.length && `add to ${adding.map((c) => `"${campaigns.get(c)}"`).join(", ")}`,
+          removing.length && `take off ${removing.map((c) => `"${on.get(c)!.name}"`).join(", ")}`].filter(Boolean).join("; "),
+        inverse: adding.length || removing.length ? { type: "apply_negative_list", shared_set_id: change.shared_set_id, add_campaign_ids: removing, remove_campaign_ids: adding } : undefined,
+      };
+    }
+    case "delete_negative_list": {
+      const list = await negativeList(q, change.shared_set_id);
+      return {
+        change, service: "googleAds",
+        operations: [...list.campaigns.map((c) => ({ campaignSharedSetOperation: { remove: c.resourceName } })),
+          { sharedSetOperation: { remove: `customers/${customerId}/sharedSets/${change.shared_set_id}` } }],
+        describe: `Delete shared negative list "${list.name}"${usedBy(list.campaigns)} ⚠ this can't be undone, and those searches can show ads again`,
+      };
+    }
+    case "edit_responsive_search_ad": {
+      const [a] = await q(`SELECT ad_group_ad.ad.id, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines,
+          ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2,
+          ad_group.name, campaign.name FROM ad_group_ad WHERE ad_group_ad.ad.id = ${change.ad_id} AND ad_group_ad.status != 'REMOVED'`);
+      if (!a) throw new Error(`Ad ${change.ad_id} not found`);
+      const ad = a.adGroupAd.ad, rsa = ad.responsiveSearchAd;
+      if (ad.type !== "RESPONSIVE_SEARCH_AD" || !rsa) throw new Error(`Ad ${change.ad_id} is a ${ad.type}: only responsive search ads can be edited here.`);
+      // Only text and pin: Google rejects the read-only fields a read returns alongside them.
+      const plain = (xs: any[] = []) => xs.map((x) => ({ text: x.text, ...(x.pinnedField ? { pinnedField: x.pinnedField } : {}) }));
+      const texts = (xs: { text: string }[]) => JSON.stringify(xs.map((x) => x.text));
+      const next: Record<string, unknown> = {}, before: Record<string, unknown> = {}, mask: string[] = [], said: string[] = [];
+      if (change.headlines && texts(rsa.headlines) !== texts(textList(change.headlines))) {
+        next.headlines = textList(change.headlines); before.headlines = plain(rsa.headlines); mask.push("responsive_search_ad.headlines"); said.push(`${change.headlines.length} headlines`);
+      }
+      if (change.descriptions && texts(rsa.descriptions) !== texts(textList(change.descriptions))) {
+        next.descriptions = textList(change.descriptions); before.descriptions = plain(rsa.descriptions); mask.push("responsive_search_ad.descriptions"); said.push(`${change.descriptions.length} descriptions`);
+      }
+      for (const k of ["path1", "path2"] as const) {
+        if (change[k] && change[k] !== rsa[k]) { next[k] = change[k]; before[k] = rsa[k] ?? ""; mask.push(`responsive_search_ad.${k}`); said.push(`${k} "${change[k]}"`); }
+      }
+      const fields: Record<string, unknown> = Object.keys(next).length ? { responsiveSearchAd: next } : {};
+      const undo: Record<string, unknown> = Object.keys(before).length ? { responsiveSearchAd: before } : {};
+      if (change.final_url && change.final_url !== ad.finalUrls?.[0]) {
+        fields.finalUrls = [change.final_url]; undo.finalUrls = ad.finalUrls; mask.push("final_urls"); said.push(`link ${change.final_url}`);
+      }
+      const pinned = [...(before.headlines as any[] ?? []), ...(before.descriptions as any[] ?? [])].some((x) => x.pinnedField);
+      const what = `ad ${change.ad_id} in ad group "${a.adGroup.name}" (campaign "${a.campaign.name}")`;
+      if (!mask.length) return { change, service: "ads", operations: [], describe: `Edit ${what} (already in place)` };
+      return {
+        change, service: "ads", operations: [{ update: { resourceName: `customers/${customerId}/ads/${change.ad_id}`, ...fields }, updateMask: mask.join(",") }],
+        describe: `Edit ${what}: ${said.join(", ")}` + (pinned ? " ⚠ the pins on the replaced text are dropped" : "") + " ⚠ Google reviews the ad again",
+        inverse: { type: "restore_responsive_search_ad", ad_id: change.ad_id, fields: undo, mask: mask.join(",") },
+      };
+    }
+    case "restore_responsive_search_ad":
+      return {
+        change, service: "ads", operations: [{ update: { resourceName: `customers/${customerId}/ads/${change.ad_id}`, ...change.fields }, updateMask: change.mask }],
+        describe: `Put ad ${change.ad_id} back as it was`,
+      };
     case "remove_negative_keywords": {
       const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
       const name = c ? `"${c.campaign.name}"` : change.campaign_id;
@@ -1242,6 +1401,35 @@ export async function resolveChange(
     }
   }
 }
+
+/** An ad group's own negative keywords. */
+const adGroupNegatives = (q: (query: string) => Promise<any[]>, adGroupId: string) =>
+  q(`SELECT ad_group.id, ad_group.name, ad_group_criterion.resource_name, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type
+    FROM ad_group_criterion WHERE ad_group.id = ${adGroupId} AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.negative = true`);
+
+/** Campaign ids → names; throws on one that isn't in the account. */
+async function campaignNames(q: (query: string) => Promise<any[]>, ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const rows = await q(`SELECT campaign.id, campaign.name FROM campaign WHERE campaign.id IN (${ids.join(", ")})`);
+  const names = new Map(rows.map((r) => [String(r.campaign.id), r.campaign.name as string]));
+  const missing = ids.filter((i) => !names.has(i));
+  if (missing.length) throw new Error(`Campaign ${missing.join(", ")} not found`);
+  return names;
+}
+
+/** A shared negative list and the campaigns using it. */
+async function negativeList(q: (query: string) => Promise<any[]>, id: string) {
+  const [s] = await q(`SELECT shared_set.id, shared_set.name, shared_set.type, shared_set.status FROM shared_set WHERE shared_set.id = ${id}`);
+  if (!s || s.sharedSet.status === "REMOVED") throw new Error(`Shared list ${id} not found (it may belong to a manager account).`);
+  if (s.sharedSet.type !== "NEGATIVE_KEYWORDS") throw new Error(`Shared list ${id} is ${s.sharedSet.type}, not a negative keyword list.`);
+  const rows = await q(`SELECT shared_set.id, campaign.id, campaign.name, campaign_shared_set.resource_name FROM campaign_shared_set
+    WHERE shared_set.id = ${id} AND campaign_shared_set.status = 'ENABLED'`);
+  return { name: s.sharedSet.name as string,
+    campaigns: rows.map((r) => ({ id: String(r.campaign.id), name: r.campaign.name as string, resourceName: r.campaignSharedSet.resourceName as string })) };
+}
+
+const usedBy = (campaigns: { name: string }[]) =>
+  (campaigns.length ? ` (used by ${campaigns.map((c) => `"${c.name}"`).join(", ")})` : " (on no campaigns)");
 
 /** ⚠ when a bid more than doubles. */
 function bidWarn(before: number, after: number | null): string {
@@ -1558,6 +1746,13 @@ export function inverseAfterApply(r: ResolvedChange, resourceNames: string[]): C
   }
   if (c.type === "add_responsive_search_ad" && resourceNames[0]) {
     return { type: "remove_ad", resource_name: resourceNames[0], what: `the responsive search ad Camberstack added (→ ${c.ad.final_url})` };
+  }
+  if (c.type === "add_ad_group_negatives" && resourceNames.length) {
+    return { type: "remove_keywords", resource_names: resourceNames, what: `${resourceNames.length} negative keyword(s) Camberstack added: ${c.keywords.map((k) => fmtKw(k.text, k.match_type)).join(", ")}` };
+  }
+  if (c.type === "create_negative_list" && of("sharedSets")[0]) return { type: "delete_negative_list", shared_set_id: of("sharedSets")[0]!.split("/").at(-1)! };
+  if (c.type === "edit_negative_list" && r.inverse?.type === "edit_negative_list") {
+    return { ...r.inverse, remove_criterion_ids: resourceNames.slice(r.inverse.add.length).map((n) => n.split("~").at(-1)!) };
   }
   if (c.type === "add_campaign_targeting" && resourceNames.length) {
     return { type: "remove_campaign_criteria", campaign_id: c.campaign_id, resource_names: resourceNames, what: `${resourceNames.length} targeting criteria Camberstack added` };

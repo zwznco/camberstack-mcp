@@ -73,6 +73,7 @@ What a proposal can do:
   mode, final URL suffix, and a campaign's EU political advertising declaration (Google refuses every change to an
   account while any campaign lacks one).
 - **Delete:** keywords, ads, ad groups, campaigns, a campaign's negatives and sitelinks (`delete_*`).
+- **Edit and organize:** edit a responsive search ad in place (it keeps its id and stats), ad group negatives, shared negative lists.
 - **Measure:** create or remove a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 
 Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, more than doubling a budget or a

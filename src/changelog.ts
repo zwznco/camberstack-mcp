@@ -8,10 +8,12 @@ export interface Release { version: string; date: string; summary: string; items
 export const CHANGELOG: Release[] = [
   {
     version: "0.21.0", date: "2026-10-30",
-    summary: "Delete keywords, ads, ad groups, campaigns, negatives and sitelinks, and see what needs a look in the overview.",
+    summary: "Delete what you no longer want, edit an ad in place, manage ad group and shared negatives, and see what needs a look in the overview.",
     items: [
       "**Delete what you no longer want:** keywords, ads, ad groups, campaigns, a campaign's negative keywords and its sitelinks. Google can't restore a deleted ad, ad group or campaign, so the summary warns you before you approve and there's no undo. Undo adds a keyword, negative or sitelink back; a sitelink comes back as a new one, so its history restarts.",
       "**To change a sitelink,** your assistant replaces it: Google can't edit one in place.",
+      "**Edit a responsive search ad in place** (`edit_responsive_search_ad`): change its words or link and it keeps its ID and its stats, instead of starting again as a new ad. Google reviews it again, and undo puts the old text and pins back.",
+      "**Negatives at every level:** ad group negatives, so one group stops catching another's searches, and shared negative lists you can create, edit, and put on or take off campaigns.",
       "**`account_overview` now says what needs a look:** ads with policy problems and why, Google's open recommendations, and primary conversions with nothing recorded in 30 days.",
       "**A safer account switch:** `switch_account` waits until you've seen what a switch would lock, and an account your login can't reach no longer uses it up.",
     ],

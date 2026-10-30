@@ -618,7 +618,7 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT version FROM client_tools").all()).toEqual([{ version: SERVER_VERSION }]);
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
-    expectToolBudget(tools, { total: 75_500, perTool: 6_000, except: { propose_changes: 43_200 } }); // 43.2K: the delete_ changes (2026-10-30)
+    expectToolBudget(tools, { total: 80_500, perTool: 6_000, except: { propose_changes: 48_100 } }); // 48.1K: delete_, negative list and ad edit changes (2026-10-30)
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1135,7 +1135,7 @@ describe("OAuth + MCP end to end", () => {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
-      expectToolBudget(tools, { total: 98_000, perTool: 6_000 }); // 98K: the propose_delete_ tools (2026-10-30)
+      expectToolBudget(tools, { total: 106_500, perTool: 6_000 }); // 106.5K: the propose_ tools for the same (2026-10-30)
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
