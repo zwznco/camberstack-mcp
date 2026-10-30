@@ -57,6 +57,9 @@ const keywordSpec = z.object({
   match_type: matchType.describe("PHRASE matches searches containing the words in order; the usual choice"),
   max_cpc: bid.optional().describe("Max cost per click for this keyword in the account's currency (manual CPC only); omit to use the ad group's"),
 });
+/** Google's policy topics to ask a review for: only what a refusal listed as exemptible. */
+const reviewTopics = z.array(z.string().min(1).max(100)).min(1).max(10).optional()
+  .describe("Only after Google refused this and the user says it complies: the topics from the refusal, which asks Google to review it. PROHIBITED topics can't be");
 const adSpec = z.object({
   headlines: distinctTexts(z.array(z.string().min(1).max(30)).min(3).max(15).describe("3 to 15 headlines, each at most 30 characters")),
   descriptions: distinctTexts(z.array(z.string().min(1).max(90)).min(2).max(4).describe("2 to 4 descriptions, each at most 90 characters")),
@@ -223,9 +226,11 @@ export const PUBLIC_CHANGES = [
   }).describe("Build a new Performance Max campaign: one budget, Google places ads across Search, YouTube, Display, Discover, Gmail and Maps from the asset groups' text, images and videos. No shopping feed (non-retail). It is created PAUSED: nothing spends until a separate enable_campaign"),
   z.object({ type: z.literal("add_ad_group"), campaign_id: campaignId, ad_group: adGroupSpec })
     .describe("Add an ad group, with its keywords and ads, to an existing Search campaign"),
-  z.object({ type: z.literal("add_keywords"), ad_group_id: adGroupId, keywords: z.array(keywordSpec).min(1).max(MAX_CHANGES) })
+  z.object({ type: z.literal("add_keywords"), ad_group_id: adGroupId, keywords: z.array(keywordSpec).min(1).max(MAX_CHANGES),
+    request_review: z.array(z.object({ policy_name: z.string().min(1), violating_text: z.string().min(1) })).max(10).optional()
+      .describe("Only after Google refused a keyword as exemptible and the user says it complies: the policy and flagged text from the refusal") })
     .describe("Add keywords to an existing ad group"),
-  z.object({ type: z.literal("add_responsive_search_ad"), ad_group_id: adGroupId, ad: adSpec })
+  z.object({ type: z.literal("add_responsive_search_ad"), ad_group_id: adGroupId, ad: adSpec, request_review_topics: reviewTopics })
     .describe("Add a responsive search ad to an existing ad group"),
   z.object({ type: z.literal("add_sitelinks"), campaign_id: campaignId, sitelinks: z.array(sitelinkSpec).min(1).max(8) })
     .describe("Add sitelinks to a campaign"),
@@ -333,7 +338,7 @@ export const PUBLIC_CHANGES = [
   z.object({ type: z.literal("edit_responsive_search_ad"), ad_id: id.describe("Ad id, digits only (ad_group_ad.ad.id from run_gaql)"),
     headlines: distinctTexts(z.array(z.string().min(1).max(30)).min(3).max(15)).optional().describe("The full new list, replacing the old one"),
     descriptions: distinctTexts(z.array(z.string().min(1).max(90)).min(2).max(4)).optional().describe("The full new list, replacing the old one"),
-    final_url: url.optional(), path1: z.string().min(1).max(15).optional(), path2: z.string().min(1).max(15).optional() })
+    final_url: url.optional(), path1: z.string().min(1).max(15).optional(), path2: z.string().min(1).max(15).optional(), request_review_topics: reviewTopics })
     .describe("Edit a responsive search ad's words or link in place, instead of adding a new ad. Give only what changes"),
   z.object({ type: z.literal("set_ad_schedule"), campaign_id: campaignId, schedule: z.array(scheduleSpec).max(42)
     .describe("The whole new schedule, replacing the old one; empty means all day, every day") })
@@ -347,7 +352,7 @@ export const PUBLIC_CHANGES = [
     business_name: z.string().min(1).max(25).optional(),
     logos: images("Square logos, 1:1", 0, 5).default([]), images: images("Images: landscape 1.91:1 or square 1:1", 0, 20).default([]) })
     .describe("Add callouts, structured snippets, a business name, logos or images to a campaign"),
-  z.object({ type: z.literal("delete_campaign_assets"), campaign_id: campaignId, field_type: z.enum(["CALLOUT", "STRUCTURED_SNIPPET", "BUSINESS_NAME", "LOGO", "AD_IMAGE"]),
+  z.object({ type: z.literal("delete_campaign_assets"), campaign_id: campaignId, field_type: z.enum(["CALLOUT", "STRUCTURED_SNIPPET", "BUSINESS_NAME", "BUSINESS_LOGO", "LOGO", "AD_IMAGE"]),
     asset_ids: z.array(id).min(1).max(20).describe("asset.id of each, from run_gaql FROM campaign_asset") })
     .describe("Take assets off a campaign. No undo: add them again with add_campaign_assets"),
   z.object({ type: z.literal("set_ai_max"), campaign_id: campaignId, ai_max: z.boolean().optional().describe("AI Max for Search"),
@@ -358,6 +363,15 @@ export const PUBLIC_CHANGES = [
     default_value: z.number().min(0).max(1_000_000).optional(), click_window_days: z.number().int().min(1).max(90).optional().describe("Days after a click a conversion still counts"),
     attribution: z.enum(["LAST_CLICK", "DATA_DRIVEN"]).optional() })
     .describe("Change a conversion action's value, counting window or attribution. Give only what changes"),
+  z.object({ type: z.literal("create_remarketing_list"), name: z.string().min(1).max(255), url_contains: z.string().min(1).max(512).describe("Visitors to pages whose URL contains this join the list, e.g. example.com"),
+    membership_days: z.number().int().min(1).max(540).default(30).describe("How long a visitor stays on the list") })
+    .describe("Create a list of the site's visitors, from the Google tag on the site. No customer data is uploaded"),
+  z.object({ type: z.literal("set_campaign_audience"), campaign_id: campaignId, user_list_id: id.describe("user_list.id from run_gaql"), on: z.boolean(),
+    bid_percent: z.number().min(-90).max(900).optional().describe("Bid change for people on the list, e.g. 20") })
+    .describe("Add a remarketing list to a campaign in observation, or take it off: ads still show to everyone, and you can see and bid on the list"),
+  z.object({ type: z.literal("act_on_recommendation"), recommendation_id: z.string().regex(/^[\w=-]+$/).describe("The end of recommendation.resource_name from run_gaql"),
+    action: z.enum(["APPLY", "DISMISS"]) })
+    .describe("Apply or dismiss one of Google's recommendations. Applying has no undo and Google picks the details: say so before they approve"),
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
@@ -387,6 +401,7 @@ export const ChangeSchema = z.preprocess(byId, z.discriminatedUnion("type", [
   z.object({ type: z.literal("remove_campaign_criteria"), campaign_id: id, resource_names: z.array(z.string()).min(1), what: z.string() }),
   z.object({ type: z.literal("remove_imported_conversion_action"), resource_name: z.string(), name: z.string(), property_id: id, event_name: z.string(), primary: z.boolean(),
     category: z.string(), biddable_before: z.array(z.string()) }),
+  z.object({ type: z.literal("remove_user_list"), resource_name: z.string(), name: z.string() }),
   z.object({ type: z.literal("restore_campaign_fields"), campaign_id: id, fields: z.record(z.string(), z.any()), mask: z.string() }),
   z.object({ type: z.literal("restore_responsive_search_ad"), ad_id: id, fields: z.record(z.string(), z.any()), mask: z.string() }),
   z.object({ type: z.literal("restore_conversion_goals"), campaign_id: id, goals: z.array(z.object({ resource_name: z.string(), biddable: z.boolean() })).min(1) }),
@@ -397,8 +412,10 @@ export type Change = z.infer<typeof ChangeSchema>;
 export interface ResolvedChange {
   change: Change;
   /** "googleAds" = the cross-service atomic mutate, whose operations are MutateOperations. */
-  service: "campaignCriteria" | "adGroupCriteria" | "adGroups" | "ads" | "campaignBudgets" | "campaigns" | "adGroupAds"
-    | "campaignConversionGoals" | "conversionActions" | "biddingStrategies" | "googleAds";
+  service: "campaignCriteria" | "adGroupCriteria" | "adGroups" | "ads" | "campaignBudgets" | "campaigns" | "adGroupAds" | "userLists"
+    | "campaignConversionGoals" | "conversionActions" | "biddingStrategies" | "googleAds"
+    /** Not a mutate: one { apply: resourceName } or { dismiss: resourceName } (AdsClient.mutate sends it to :apply / :dismiss). */
+    | "recommendations";
   operations: object[];
   describe: string;
   /** Filled at resolve time when the inverse is knowable up front (pause/enable/budget). */
@@ -731,10 +748,11 @@ export async function resolveChange(
       const adGroup = `customers/${customerId}/adGroups/${change.ad_group_id}`;
       return {
         change: { ...change, keywords: fresh }, service: "adGroupCriteria",
-        operations: fresh.map((k) => ({ create: keywordCreate(adGroup, k) })),
+        operations: fresh.map((k) => ({ create: keywordCreate(adGroup, k),
+          ...(change.request_review ? { exemptPolicyViolationKeys: change.request_review.map((x) => ({ policyName: x.policy_name, violatingText: x.violating_text })) } : {}) })),
         describe: `Add ${fresh.length} keyword(s) to ad group "${g.adGroup.name}" (campaign "${g.campaign.name}"): ` +
           fresh.map((k) => fmtKw(k.text, k.match_type) + (k.max_cpc ? ` @ ${k.max_cpc.toFixed(2)}` : "")).join(", ") +
-          (skipped ? ` (${skipped} already present or repeated, skipped)` : ""),
+          (skipped ? ` (${skipped} already present or repeated, skipped)` : "") + reviewSaid(change.request_review?.map((x) => x.policy_name)),
       };
     }
     case "add_responsive_search_ad": {
@@ -752,9 +770,9 @@ export async function resolveChange(
       }
       return {
         change, service: "adGroupAds",
-        operations: [{ create: adCreate(`customers/${customerId}/adGroups/${change.ad_group_id}`, change.ad) }],
+        operations: [{ create: adCreate(`customers/${customerId}/adGroups/${change.ad_group_id}`, change.ad), ...reviewOf(change.request_review_topics) }],
         describe: `Add a responsive search ad to ad group "${g.adGroup.name}" (campaign "${g.campaign.name}"): ` +
-          `${change.ad.headlines.length} headlines, ${change.ad.descriptions.length} descriptions → ${change.ad.final_url}`,
+          `${change.ad.headlines.length} headlines, ${change.ad.descriptions.length} descriptions → ${change.ad.final_url}` + reviewSaid(change.request_review_topics),
       };
     }
     case "add_sitelinks": {
@@ -1407,8 +1425,8 @@ export async function resolveChange(
       const what = `ad ${change.ad_id} in ad group "${a.adGroup.name}" (campaign "${a.campaign.name}")`;
       if (!mask.length) return { change, service: "ads", operations: [], describe: `Edit ${what} (already in place)` };
       return {
-        change, service: "ads", operations: [{ update: { resourceName: `customers/${customerId}/ads/${change.ad_id}`, ...fields }, updateMask: mask.join(",") }],
-        describe: `Edit ${what}: ${said.join(", ")}` + (pinned ? " ⚠ the pins on the replaced text are dropped" : "") + " ⚠ Google reviews the ad again",
+        change, service: "ads", operations: [{ update: { resourceName: `customers/${customerId}/ads/${change.ad_id}`, ...fields }, updateMask: mask.join(","), ...reviewOf(change.request_review_topics) }],
+        describe: `Edit ${what}: ${said.join(", ")}` + (pinned ? " ⚠ the pins on the replaced text are dropped" : "") + " ⚠ Google reviews the ad again" + reviewSaid(change.request_review_topics),
         inverse: { type: "restore_responsive_search_ad", ad_id: change.ad_id, fields: undo, mask: mask.join(",") },
       };
     }
@@ -1460,9 +1478,16 @@ export async function resolveChange(
       };
     }
     case "add_campaign_assets": {
-      const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
+      const [c] = await q(`SELECT campaign.name, campaign.advertising_channel_type FROM campaign WHERE campaign.id = ${change.campaign_id}`);
       if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
       const T = tempIds(customerId), campaign = `customers/${customerId}/campaigns/${change.campaign_id}`;
+      // A Search campaign refuses LOGO (FIELD_TYPE_INCOMPATIBLE_WITH_CAMPAIGN_TYPE, v23, 2026-10-30); Performance Max takes it.
+      const logoField = c.campaign.advertisingChannelType === "SEARCH" ? "BUSINESS_LOGO" : "LOGO";
+      if (logoField === "BUSINESS_LOGO" && change.logos.length) {
+        if (change.logos.length > 1) throw new Error("A Search campaign takes one business logo: give one.");
+        const [had] = await q(`SELECT campaign.id, asset.id FROM campaign_asset WHERE campaign.id = ${change.campaign_id} AND campaign_asset.field_type = 'BUSINESS_LOGO' AND campaign_asset.status = 'ENABLED'`);
+        if (had) throw new Error(`Campaign "${c.campaign.name}" already has a business logo (asset ${had.asset.id}), and Google allows one. To replace it, apply delete_campaign_assets with field_type BUSINESS_LOGO first, then add the new one.`);
+      }
       const pics = await imageAssets(q, T, customerId, [...change.logos, ...change.images]);
       const link = (asset: string, fieldType: string) => ({ campaignAssetOperation: { create: { asset, campaign, fieldType } } });
       const text = (fields: object, fieldType: string) => {
@@ -1473,7 +1498,7 @@ export async function resolveChange(
         ...change.callouts.flatMap((calloutText) => text({ calloutAsset: { calloutText } }, "CALLOUT")),
         ...change.snippets.flatMap((x) => text({ structuredSnippetAsset: { header: x.header, values: x.values } }, "STRUCTURED_SNIPPET")),
         ...(change.business_name ? text({ textAsset: { text: change.business_name } }, "BUSINESS_NAME") : []),
-        ...change.logos.map((r) => link(pics.of(r), "LOGO")), ...change.images.map((r) => link(pics.of(r), "AD_IMAGE"))];
+        ...change.logos.map((r) => link(pics.of(r), logoField)), ...change.images.map((r) => link(pics.of(r), "AD_IMAGE"))];
       const said = [change.callouts.length && `callouts ${change.callouts.map((x) => `"${x}"`).join(", ")}`, change.snippets.length && `${change.snippets.length} structured snippet(s)`,
         change.business_name && `business name "${change.business_name}"`, change.logos.length && `${change.logos.length} logo(s)`, change.images.length && `${change.images.length} image(s)`].filter(Boolean);
       if (!said.length) throw new Error("Give at least one asset.");
@@ -1557,6 +1582,54 @@ export async function resolveChange(
         inverse: mask.length ? { type: "set_conversion_settings", conversion_action_id: change.conversion_action_id, ...undo } : undefined,
       };
     }
+    case "create_remarketing_list": {
+      const dup = await q(`SELECT user_list.id FROM user_list WHERE user_list.name = '${gaqlStr(change.name)}'`);
+      if (dup.length) throw new Error(`A list named "${change.name}" already exists (id ${dup[0].userList.id}). Pick another name.`);
+      return {
+        change, service: "userLists",
+        // lookbackWindowDays, not membershipLifeSpan: Google ignores that on rule-based lists, and reads it back as 0 (live, 2026-10-30).
+        operations: [{ create: { name: change.name, membershipStatus: "OPEN", ruleBasedUserList: { prepopulationStatus: "REQUESTED",
+          flexibleRuleUserList: { inclusiveRuleOperator: "AND", inclusiveOperands: [{ rule: { ruleItemGroups: [{ ruleItems: [
+            { name: "url__", stringRuleItem: { operator: "CONTAINS", value: change.url_contains } }] }] }, lookbackWindowDays: String(change.membership_days) }] } } } }],
+        describe: `Create remarketing list "${change.name}": visitors to pages containing "${change.url_contains}", kept ${change.membership_days} days ⚠ it needs the Google tag on the site, and ads can't use it until enough people join`,
+      };
+    }
+    case "remove_user_list":
+      return { change, service: "userLists", operations: [{ remove: change.resource_name }], describe: `Remove remarketing list "${change.name}" that Camberstack created` };
+    case "set_campaign_audience": {
+      const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
+      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const [l] = await q(`SELECT user_list.name FROM user_list WHERE user_list.id = ${change.user_list_id}`);
+      if (!l) throw new Error(`Remarketing list ${change.user_list_id} not found`);
+      const rn = `customers/${customerId}/userLists/${change.user_list_id}`;
+      const rows = await q(`SELECT campaign.id, campaign_criterion.resource_name, campaign_criterion.bid_modifier, campaign_criterion.user_list.user_list FROM campaign_criterion
+        WHERE campaign.id = ${change.campaign_id} AND campaign_criterion.type = 'USER_LIST'`);
+      const row = rows.find((r) => r.campaignCriterion.userList?.userList === rn);
+      const percent = (m: number | undefined) => (m ? Math.round((m - 1) * 100) : 0);
+      const before = row ? { on: true, ...(percent(row.campaignCriterion.bidModifier) ? { bid_percent: percent(row.campaignCriterion.bidModifier) } : {}) } : { on: false };
+      const bid = change.bid_percent ? { bidModifier: 1 + change.bid_percent / 100 } : {};
+      const operations = !change.on ? (row ? [{ remove: row.campaignCriterion.resourceName }] : [])
+        : !row ? [{ create: { campaign: `customers/${customerId}/campaigns/${change.campaign_id}`, userList: { userList: rn }, ...bid } }]
+        : change.bid_percent !== undefined && change.bid_percent !== percent(row.campaignCriterion.bidModifier)
+          ? [{ update: { resourceName: row.campaignCriterion.resourceName, bidModifier: 1 + change.bid_percent / 100 }, updateMask: "bid_modifier" }] : [];
+      return {
+        change, service: "campaignCriteria", operations,
+        describe: change.on ? `Add list "${l.userList.name}" to campaign "${c.campaign.name}" in observation (ads still show to everyone)${change.bid_percent ? `, bids ${change.bid_percent > 0 ? "+" : ""}${change.bid_percent}%` : ""}`
+          : `Take list "${l.userList.name}" off campaign "${c.campaign.name}"`,
+        inverse: operations.length ? { type: "set_campaign_audience", campaign_id: change.campaign_id, user_list_id: change.user_list_id, ...before } : undefined,
+      };
+    }
+    case "act_on_recommendation": {
+      const resourceName = `customers/${customerId}/recommendations/${change.recommendation_id}`;
+      const [r] = await q(`SELECT recommendation.type, recommendation.dismissed, recommendation.campaign FROM recommendation WHERE recommendation.resource_name = '${gaqlStr(resourceName)}'`);
+      if (!r) throw new Error(`Recommendation ${change.recommendation_id} not found. Google changes them often: read them again with run_gaql FROM recommendation.`);
+      const [c] = r.recommendation.campaign ? await q(`SELECT campaign.name FROM campaign WHERE campaign.resource_name = '${gaqlStr(r.recommendation.campaign)}'`) : [];
+      const what = `Google's ${r.recommendation.type} recommendation${c ? ` for campaign "${c.campaign.name}"` : ""}`;
+      return {
+        change, service: "recommendations", operations: [{ [change.action === "APPLY" ? "apply" : "dismiss"]: resourceName }],
+        describe: change.action === "APPLY" ? `Apply ${what} ⚠ Google picks the details and this can't be undone: it may change bids, budgets or settings` : `Dismiss ${what}`,
+      };
+    }
     case "restore_responsive_search_ad":
       return {
         change, service: "ads", operations: [{ update: { resourceName: `customers/${customerId}/ads/${change.ad_id}`, ...change.fields }, updateMask: change.mask }],
@@ -1574,6 +1647,10 @@ export async function resolveChange(
     }
   }
 }
+
+/** Asks Google to review a refused ad: an operation's policyValidationParameter, for the topics the refusal listed. */
+const reviewOf = (topics?: string[]) => (topics?.length ? { policyValidationParameter: { ignorablePolicyTopics: topics } } : {});
+const reviewSaid = (topics?: string[]) => (topics?.length ? `, asking Google to review it (${topics.join(", ")}) ⚠ it can't run until Google approves` : "");
 
 /** An ad group's own negative keywords. */
 const adGroupNegatives = (q: (query: string) => Promise<any[]>, adGroupId: string) =>
@@ -1920,6 +1997,7 @@ export function inverseAfterApply(r: ResolvedChange, resourceNames: string[]): C
   if (c.type === "add_responsive_search_ad" && resourceNames[0]) {
     return { type: "remove_ad", resource_name: resourceNames[0], what: `the responsive search ad Camberstack added (→ ${c.ad.final_url})` };
   }
+  if (c.type === "create_remarketing_list" && resourceNames[0]) return { type: "remove_user_list", resource_name: resourceNames[0], name: c.name };
   if (c.type === "add_campaign_assets" && of("campaignAssets").length) {
     return { type: "remove_campaign_assets", resource_names: of("campaignAssets"), what: `${of("campaignAssets").length} asset(s) Camberstack added` };
   }

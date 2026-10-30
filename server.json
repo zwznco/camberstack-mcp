@@ -3,7 +3,7 @@
   "name": "io.camberstack/google-ads",
   "title": "Camberstack: Google Ads",
   "description": "Hosted Google Ads MCP: build Search, PMax, Display and YouTube campaigns, approve each change, undo.",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "websiteUrl": "https://camberstack.io",
   "repository": {
     "url": "https://github.com/zwznco/camberstack-mcp",

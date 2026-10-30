@@ -272,11 +272,12 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
     case "POLICY_FINDING":
       return "Google's ad policy check rejected the ad text, images or video. Change what any [policy …] above flags. Common causes: repeated punctuation (\"!!\"), "
         + "ALL CAPS, symbols or emoji used for emphasis, phone numbers in headlines, or a video or landing page that breaks policy. "
-        + "Reword the ad and propose again; the full reasons show under Policy in Google Ads.";
+        + "Reword the ad and propose again; the full reasons show under Policy in Google Ads. Only if the user says it complies and no topic is PROHIBITED, "
+        + "propose it again with request_review_topics set to those topics, which asks Google to review it.";
     case "POLICY_ERROR":
       return /keyword\.text$/.test(field)
         ? "Google's policy check refused a keyword (the policy and the words it flagged are above). Drop or reword that keyword "
-          + "and propose again. If it is compliant, add it in Google Ads, where an exemption can be requested."
+          + "and propose again. If it's marked exemptible and the user says it complies, propose it again with request_review set to that policy and text."
         : null;
     case "IMMUTABLE_FIELD":
       return /counting_type$/.test(field)
@@ -403,6 +404,18 @@ export class AdsClient {
     return body ? JSON.parse(body) : {};
   }
 
+  /** Applying or dismissing a recommendation isn't a mutate and has no dry run, so a propose only checks it still exists (changes.ts). */
+  private async recommendation(customerId: string, op: { apply?: string; dismiss?: string },
+    opts: { validateOnly?: boolean; loginCustomerId?: string | null }): Promise<{ results: { resourceName?: string }[] }> {
+    if (opts.validateOnly) return { results: [] };
+    const res = await this.f(`${ADS_API}/customers/${customerId}/recommendations:${op.apply ? "apply" : "dismiss"}`, {
+      method: "POST", headers: await this.headers(opts.loginCustomerId),
+      body: JSON.stringify({ operations: [{ resourceName: op.apply ?? op.dismiss }], partialFailure: false }),
+    });
+    const body = await this.body(res);
+    return { results: (body ? JSON.parse(body) : {}).results ?? [] };
+  }
+
   /**
    * `service` is the REST collection, e.g. "campaignCriteria". Atomic unless partialFailure.
    * "googleAds" is the cross-service mutate: `operations` are MutateOperations (which may reference
@@ -413,6 +426,7 @@ export class AdsClient {
     customerId: string, service: string, operations: object[],
     opts: { validateOnly?: boolean; loginCustomerId?: string | null } = {},
   ): Promise<{ results: { resourceName?: string }[] }> {
+    if (service === "recommendations") return this.recommendation(customerId, operations[0] as { apply?: string; dismiss?: string }, opts);
     const cross = service === "googleAds";
     const res = await this.f(`${ADS_API}/customers/${customerId}/${service}:mutate`, {
       method: "POST",

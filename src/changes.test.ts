@@ -234,3 +234,55 @@ describe("schedules, devices, assets, AI Max, conversion settings", () => {
     expect(r.inverse).toEqual({ type: "set_conversion_settings", conversion_action_id: "7", default_value: 5 });
   });
 });
+
+describe("remarketing, recommendations, review requests", () => {
+  it("create_remarketing_list refuses a repeat name, and undo removes the list", async () => {
+    const none = { async search(): Promise<any[]> { return []; } };
+    const r = await resolveChange(none, "1", null, { type: "create_remarketing_list", name: "Visitors", url_contains: "example.com", membership_days: 30 });
+    expect(JSON.stringify(r.operations)).toContain('"name":"url__"');
+    expect(JSON.stringify(r.operations)).toContain('"lookbackWindowDays":"30"');
+    expect(inverseAfterApply(r, ["customers/1/userLists/5"])).toEqual({ type: "remove_user_list", resource_name: "customers/1/userLists/5", name: "Visitors" });
+    const taken = { async search(): Promise<any[]> { return [{ userList: { id: "5" } }]; } };
+    await expect(resolveChange(taken, "1", null, { type: "create_remarketing_list", name: "Visitors", url_contains: "example.com", membership_days: 30 })).rejects.toThrow("already exists");
+  });
+
+  it("set_campaign_audience adds in observation, and undo takes it off", async () => {
+    const ads = { async search(_c: string, q: string): Promise<any[]> {
+      if (q.includes("FROM campaign_criterion")) return [];
+      return q.includes("FROM user_list") ? [{ userList: { name: "Visitors" } }] : [{ campaign: { name: "Search" } }];
+    } };
+    const r = await resolveChange(ads, "1", null, { type: "set_campaign_audience", campaign_id: "10", user_list_id: "5", on: true, bid_percent: 20 });
+    expect(r.operations).toEqual([{ create: { campaign: "customers/1/campaigns/10", userList: { userList: "customers/1/userLists/5" }, bidModifier: 1.2 } }]);
+    expect(r.inverse).toEqual({ type: "set_campaign_audience", campaign_id: "10", user_list_id: "5", on: false });
+  });
+
+  it("add_campaign_assets uses a Search campaign's logo field, and says when it already has one", async () => {
+    const search = (logo: boolean) => ({ async search(_c: string, q: string): Promise<any[]> {
+      if (q.includes("FROM campaign_asset")) return logo ? [{ asset: { id: "9" } }] : [];
+      if (q.includes("FROM asset")) return [{ asset: { id: "3", type: "IMAGE" } }];
+      return [{ campaign: { name: "Search", advertisingChannelType: "SEARCH" } }];
+    } });
+    const change = { type: "add_campaign_assets", campaign_id: "10", callouts: [], snippets: [], logos: ["3"], images: [] } as const;
+    const r = await resolveChange(search(false), "1", null, { ...change, callouts: [...change.callouts], snippets: [...change.snippets], logos: [...change.logos], images: [...change.images] });
+    expect(JSON.stringify(r.operations)).toContain("BUSINESS_LOGO");
+    await expect(resolveChange(search(true), "1", null, { ...change, callouts: [], snippets: [], logos: ["3"], images: [] })).rejects.toThrow("already has a business logo");
+  });
+
+  it("act_on_recommendation warns on apply, and has no undo", async () => {
+    const ads = { async search(_c: string, q: string): Promise<any[]> {
+      return q.includes("FROM recommendation") ? [{ recommendation: { type: "CALLOUT_ASSET" } }] : [];
+    } };
+    const r = await resolveChange(ads, "1", null, { type: "act_on_recommendation", recommendation_id: "abc", action: "APPLY" });
+    expect(r.operations).toEqual([{ apply: "customers/1/recommendations/abc" }]);
+    expect(r.describe).toContain("can't be undone");
+    expect(r.inverse).toBeUndefined();
+  });
+
+  it("a review request goes on the ad operation, and the summary says it can't run until approved", async () => {
+    const ads = { async search(_c: string, q: string): Promise<any[]> { return q.includes("FROM ad_group_ad") ? [] : [{ adGroup: { name: "Drains" }, campaign: { name: "Search" } }]; } };
+    const r = await resolveChange(ads, "1", null, { type: "add_responsive_search_ad", ad_group_id: "5", request_review_topics: ["HEALTH_IN_PERSONALIZED_ADS"],
+      ad: { headlines: ["A", "B", "C"], descriptions: ["D", "E"], final_url: "https://a.example" } });
+    expect(r.operations[0]).toMatchObject({ policyValidationParameter: { ignorablePolicyTopics: ["HEALTH_IN_PERSONALIZED_ADS"] } });
+    expect(r.describe).toContain("can't run until Google approves");
+  });
+});

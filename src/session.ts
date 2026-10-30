@@ -739,13 +739,14 @@ export class UserSession {
    */
   private async attention(a: Account) {
     const read = (query: string) => this.ads.search(a.customerId, query, a.loginCustomerId);
-    const [adRows, recRows, actionRows] = await Promise.all([
+    const [adRows, recRows, actionRows, pageRows] = await Promise.all([
       read(`SELECT ad_group_ad.ad.id, ad_group_ad.policy_summary.approval_status, ad_group_ad.policy_summary.policy_topic_entries, ad_group.name, campaign.name
         FROM ad_group_ad WHERE ad_group_ad.status = 'ENABLED' AND ad_group_ad.policy_summary.approval_status IN ('DISAPPROVED', 'APPROVED_LIMITED')
         AND campaign.status != 'REMOVED'`).catch(() => []),
       read(`SELECT recommendation.type FROM recommendation WHERE recommendation.dismissed = FALSE`).catch(() => []),
       read(`SELECT conversion_action.name, conversion_action.primary_for_goal, metrics.conversion_last_conversion_date
         FROM conversion_action WHERE conversion_action.status = 'ENABLED'`).catch(() => []),
+      read(`SELECT metrics.optimization_score_url FROM customer`).catch(() => []),
     ]);
     const ads = adRows.filter((r) => r.adGroupAd?.policySummary), recs = recRows.filter((r) => r.recommendation?.type);
     const actions = actionRows.filter((r) => r.conversionAction?.name);
@@ -762,6 +763,8 @@ export class UserSession {
     const attention = {
       ...(policy.length ? { ads_with_policy_problems: policy, ...(ads.length > policy.length ? { more_ads_with_policy_problems: ads.length - policy.length } : {}) } : {}),
       ...(recs.length ? { google_recommendations: recommendations } : {}),
+      // Google's link carries placeholders for its own tracking; the page opens without them.
+      ...(recs.length && pageRows[0]?.metrics?.optimizationScoreUrl ? { recommendations_page: String(pageRows[0].metrics.optimizationScoreUrl).replace(/&?[a-z]*=?%[A-Z_]+%/g, "") } : {}),
       ...(quiet.length ? { primary_conversions_quiet_for_30_days: quiet } : {}),
     };
     return Object.keys(attention).length ? { attention } : {};
