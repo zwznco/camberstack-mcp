@@ -17,6 +17,18 @@ describe("retention", () => {
     expect((db.prepare("SELECT account_id FROM merchant_overrides").all() as { account_id: string }[]).map((r) => r.account_id)).toEqual(["2"]);
   });
 
+  it("deletes a removed user's paywall history and browser sessions (2026-10-30)", async () => {
+    const db = openDb(":memory:"), key = Buffer.alloc(32, 7), t = now();
+    for (const [id, seen] of [["gone", ACCOUNT_DAYS + 1], ["active", 1]] as const) {
+      db.prepare("INSERT INTO users (id, google_sub, email, enc_refresh, created_at, last_seen_at) VALUES (?, ?, ?, NULL, 1, ?)").run(id, `sub-${id}`, `${id}@example.com`, t - seen * 86400);
+      db.prepare("INSERT INTO plan_events (user_id, kind, src, at) VALUES (?, 'plans_view', 'tool', 1)").run(id);
+      db.prepare("INSERT INTO web_sessions (token_hash, kind, subject, expires_at) VALUES (?, 'account', ?, ?)").run(`h-${id}`, id, t + 3600);
+    }
+    await retain({ db, encryptionKey: key, internalEmails: new Set() });
+    expect((db.prepare("SELECT user_id FROM plan_events").all() as { user_id: string }[]).map((r) => r.user_id)).toEqual(["active"]);
+    expect((db.prepare("SELECT subject FROM web_sessions").all() as { subject: string }[]).map((r) => r.subject)).toEqual(["active"]);
+  });
+
   it("drops idle grants at six months and idle accounts at two years, never paying or internal ones", async () => {
     const db = openDb(":memory:"), key = Buffer.alloc(32, 7), t = now(), day = 86400;
     const add = (id: string, seenDaysAgo: number, extra: { plan?: string; stripe_sub?: string; email?: string } = {}) => {

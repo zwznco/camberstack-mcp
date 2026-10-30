@@ -36,6 +36,7 @@ describe("lifecycle emails", () => {
     user("fresh", "fresh@example.com", 1);          // too soon
     user("active", "active@example.com", 3); call("active", "account_overview");
     user("listed", "listed@example.com", 3); call("listed", "list_accounts");  // listing accounts isn't using it
+    user("ga4", "ga4@example.com", 3); call("ga4", "analytics_report");        // Analytics alone is using it (2026-10-30)
     user("me", "me@example.com", 3);                 // internal
     expect(await lc.run()).toBe(2);
     expect(sent.map((m) => m.to[0]).sort()).toEqual(["listed@example.com", "quiet@example.com"]);

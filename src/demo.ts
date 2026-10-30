@@ -176,6 +176,8 @@ export class DemoAds {
     });
     const termsOfKw = (kid: string) => TERMS.filter((t) => t[0] === kid);
     const sum = (ts: typeof TERMS) => ts.reduce((a, t) => [a[0] + t[2], a[1] + t[3], a[2] + t[4]], [0, 0, 0]);
+    const goal = (path: string, a: typeof CONVERSION_ACTIONS[number]) =>
+      ({ resourceName: `customers/${DEMO_CID}/${path}`, category: a.category, origin: "GOOGLE_HOSTED", biddable: a.primaryForGoal });
     const groupOfKw = (kid: string) => KEYWORDS.find((k) => k.id === kid)!.adGroup;
     const campOfGroup = (gid: string) => AD_GROUPS.find((g) => g.id === gid)!.campaign;
 
@@ -231,7 +233,15 @@ export class DemoAds {
           ad: { id: String(6001 + i), type: "RESPONSIVE_SEARCH_AD", finalUrls: ["https://northwindplumbing.example/"], responsiveSearchAd: {
             headlines: [{ text: g.name.slice(0, 30) }, { text: "Northwind Plumbing" }, { text: "Licensed Local Plumbers" }],
             descriptions: [{ text: "Fast, upfront pricing from licensed plumbers." }, { text: "Call now or book online today." }] } } } }));
+      // A goal per conversion category, on the account and each campaign. Changing them is simulated, like bid strategies.
+      case "customer_conversion_goal":
+        return CONVERSION_ACTIONS.map((a) => ({ customerConversionGoal: goal(`customerConversionGoals/${a.category}~GOOGLE_HOSTED`, a) }));
+      case "campaign_conversion_goal":
+        return CAMPAIGNS.flatMap((c) => CONVERSION_ACTIONS.map((a) => ({ campaign: camp(c.id),
+          campaignConversionGoal: goal(`campaignConversionGoals/${c.id}~${a.category}~GOOGLE_HOSTED`, a) })));
       // Sitelinks a build adds are simulated, so the sample has none to delete.
+      case "asset":
+      case "bidding_strategy":
       case "campaign_asset":
       case "shared_set":
       case "shared_criterion":
@@ -247,7 +257,8 @@ export class DemoAds {
         return Object.entries(LANGUAGES).map(([id, name]) => ({ languageConstant: { resourceName: `languageConstants/${id}`, id, name } }));
       default:
         throw new Error(`The demo account supports these GAQL resources: customer, campaign, ad_group, keyword_view, ad_group_criterion, `
-          + `search_term_view, campaign_criterion, ad_group_ad, campaign_asset, shared_set, shared_criterion, campaign_shared_set, user_list, recommendation, conversion_action, geo_target_constant, language_constant. "${resource}" isn't one of them.`);
+          + `search_term_view, campaign_criterion, ad_group_ad, asset, campaign_asset, shared_set, shared_criterion, campaign_shared_set, user_list, recommendation, `
+          + `bidding_strategy, conversion_action, customer_conversion_goal, campaign_conversion_goal, geo_target_constant, language_constant. "${resource}" isn't one of them.`);
     }
   }
 

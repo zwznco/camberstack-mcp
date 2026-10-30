@@ -79,7 +79,8 @@ const WELCOME_WITHIN = DAY;
 /** Tools that mean someone has asked Camberstack something real (not just listed accounts or sites). */
 const USED_TOOLS = "('account_overview','run_gaql','keyword_ideas','keyword_metrics','propose_changes','paid_organic_overlap',"
   + "'search_console_summary','search_console_performance','search_console_trend','search_console_opportunities',"
-  + "'search_console_inspect_urls','search_console_sitemaps','merchant_product_issues','merchant_report','merchant_ad_spend','propose_merchant_changes')";
+  + "'search_console_inspect_urls','search_console_sitemaps','analytics_report','analytics_landing_pages','propose_analytics_changes',"
+  + "'merchant_product_issues','merchant_report','merchant_ad_spend','propose_merchant_changes')";
 
 export class Lifecycle {
   constructor(private d: LifecycleDeps) {}

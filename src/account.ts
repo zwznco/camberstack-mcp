@@ -26,6 +26,13 @@ export interface AccountDeps {
   adminUrl?: string;
 }
 
+/** The sign-ins that continue to checkout: ?next= on /account/login → where it lands, and the plan it buys. */
+const UPGRADE_NEXT = new Map([
+  ["upgrade", { url: "/account?upgrade=1", plan: "Pro" }],
+  ["agency", { url: "/account?upgrade=agency", plan: "Agency" }],
+  ["plus", { url: "/account?upgrade=plus", plan: "Plus" }],
+]);
+
 /** A "Log in as user" handoff link works once, within this many seconds. */
 const LOGIN_AS_TTL = 60;
 /** How long the admin's session as that user lasts. */
@@ -83,13 +90,13 @@ export function mountAccount(app: Express, d: AccountDeps): SignIn {
   app.get("/account/login", (req, res) => {
     if (!d.google.clientId) { res.status(503).type("html").send(page("Sign-in unavailable", "<p>Google sign-in is not configured.</p>")); return; }
     // Only a sign-in started from the upgrade screen continues to checkout.
-    auth.start(res, req.query.next === "upgrade" ? "/account?upgrade=1" : req.query.next === "agency" ? "/account?upgrade=agency"
-      : req.query.next === "plus" ? "/account?upgrade=plus" : undefined);
+    auth.start(res, UPGRADE_NEXT.get(String(req.query.next))?.url);
   });
 
   app.get("/account/callback", async (req, res) => {
     const who = await auth.finish(req);
     if (!who) { res.status(400).type("html").send(page("Sign-in didn't finish", `<p>The sign-in expired or was cancelled. <a href="/account/login">Try again</a>.</p>`)); return; }
+    const upgrade = [...UPGRADE_NEXT].find(([, v]) => v.url === who.next);
     const u = d.db.prepare("SELECT * FROM users WHERE google_sub = ?").get(who.sub) as UserRow | undefined;
     if (!u) {
       // Signed in before connecting: the account is made by connecting from an AI app, so this is the
@@ -106,12 +113,12 @@ Your account is created when you connect it to your AI app. It takes about a min
 <strong>Claude Code:</strong></p>
 ${cmd(`claude mcp add --transport http camberstack ${mcpUrl}`)}
 <p>2. Sign in with Google when your AI app asks, using ${esc(who.email)}.</p>
-<p>3. Come back and <a href="/account/login${who.next === "/account?upgrade=1" ? "?next=upgrade" : who.next === "/account?upgrade=agency" ? "?next=agency" : ""}">sign in here again</a>${who.next === "/account?upgrade=1" ? " to finish upgrading to Pro" : who.next === "/account?upgrade=agency" ? " to finish upgrading to Agency" : ""}.</p>
+<p>3. Come back and <a href="/account/login${upgrade ? `?next=${upgrade[0]}` : ""}">sign in here again</a>${upgrade ? ` to finish upgrading to ${upgrade[1].plan}` : ""}.</p>
 ${COPY_JS}`));
       return;
     }
     auth.open(res, u.id);
-    res.redirect(302, who.next === "/account?upgrade=1" || who.next === "/account?upgrade=agency" ? who.next : "/account");
+    res.redirect(302, upgrade ? who.next! : "/account");
   });
 
   app.post("/account/logout", (req, res) => {

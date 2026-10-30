@@ -48,9 +48,10 @@ export async function retain(d: RetentionDeps, t = now()): Promise<{ grants: num
     const mine = d.db.prepare(`SELECT DISTINCT substr(customer_id, 4) account FROM tool_calls WHERE user_id = ? AND customer_id LIKE 'mc:%'
       AND customer_id NOT IN (SELECT customer_id FROM tool_calls WHERE user_id != ? AND customer_id IS NOT NULL)`).all(id, id) as { account: string }[];
     for (const account of [...mine.map((m) => m.account), `demo:${id}`]) d.db.prepare("DELETE FROM merchant_overrides WHERE account_id = ?").run(account);
-    for (const table of ["tokens", "auth_codes", "proposals", "tool_calls", "client_tools", "email_log", "ad_conversions", "demo_state", "demo_ga_state"]) {
+    for (const table of ["tokens", "auth_codes", "proposals", "tool_calls", "client_tools", "email_log", "ad_conversions", "plan_events", "demo_state", "demo_ga_state"]) {
       d.db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(id);
     }
+    d.db.prepare("DELETE FROM web_sessions WHERE subject = ?").run(id);
     d.db.prepare("UPDATE feedback SET user_id = NULL WHERE user_id = ?").run(id);
     d.db.prepare("DELETE FROM users WHERE id = ?").run(id);
   });

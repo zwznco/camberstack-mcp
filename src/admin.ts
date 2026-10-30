@@ -220,7 +220,7 @@ function shell(path: string, who: string, v: View, body: string, heading?: strin
   ];
   const title = nav.find(([p]) => p === path)?.[1] ?? "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>${heading ? "User" : title} · Camberstack admin</title><style>
+<meta name="robots" content="noindex"><title>${title} · Camberstack admin</title><style>
 :root{--bg:#fafafa;--panel:#fff;--fg:#0a0a0a;--muted:#6b6b6b;--dim:#a3a3a3;--line:#e8e8e8;--hover:#f4f4f5;--accent:#2563eb;--ok:#16a34a;--bad:#dc2626;--chip:#f4f4f5;--pro:#7c3aed;--bar:#2563eb}
 @media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--panel:#111;--fg:#ededed;--muted:#8f8f8f;--dim:#5c5c5c;--line:#222;--hover:#181818;--accent:#60a5fa;--ok:#4ade80;--bad:#f87171;--chip:#1c1c1c;--pro:#a78bfa;--bar:#3b82f6}}
 *{box-sizing:border-box}html,body{margin:0}body{background:var(--bg);color:var(--fg);font:13px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}

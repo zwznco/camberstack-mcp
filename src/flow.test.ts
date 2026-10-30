@@ -1730,6 +1730,12 @@ describe("OAuth + MCP end to end", () => {
     expect(negUndo.summary).toContain('"diy"');
     await call(token, "apply_changes", { proposal_id: negUndo.proposal_id });
 
+    // Conversion goals and shared bid strategies work there too: they failed on resources the demo didn't have (2026-10-30).
+    const g = await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "set_conversion_goal", campaign_id: "2002", category: "SUBMIT_LEAD_FORM" },
+      { type: "create_shared_bid_strategy", name: "Demo tCPA", strategy: "TARGET_CPA", target_cpa: 30, campaign_ids: ["2002"] }] });
+    if (g.isError) throw new Error(g.text);
+    expect(g.json.summary).toContain("counts and bids on SUBMIT_LEAD_FORM conversions only");
+    expect((await call(token, "apply_changes", { proposal_id: g.json.proposal_id })).json.status).toBe("applied");
     // Building is simulated on the demo: it proposes, applies and undoes without touching Google.
     const ad = { headlines: ["Sewer Line Repair", "Same-Day Service", "Licensed Plumbers"], descriptions: ["Call now.", "Upfront prices."], final_url: "https://example.com/sewer" };
     const b = await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "create_campaign", name: "Sewer – Search", daily_budget: 15,
@@ -1867,6 +1873,12 @@ describe("OAuth + MCP end to end", () => {
     const back = await fetch(`${base}/oauth/google/callback?code=gcode&state=${viaUpgrade.searchParams.get("state")}`, { redirect: "manual" });
     const hop = await fetch(new URL(back.headers.get("location")!, base), { redirect: "manual", headers: { cookie: stateCookie(upLogin) } });
     expect(hop.headers.get("location")).toBe("/account?upgrade=1");
+    // Plus too: its checkout was lost on the way back (2026-10-30).
+    const plusLogin = await fetch(`${base}/account/login?next=plus`, { redirect: "manual" });
+    const viaPlus = new URL(plusLogin.headers.get("location")!);
+    const plusBack = await fetch(`${base}/oauth/google/callback?code=gcode&state=${viaPlus.searchParams.get("state")}`, { redirect: "manual" });
+    const plusHop = await fetch(new URL(plusBack.headers.get("location")!, base), { redirect: "manual", headers: { cookie: stateCookie(plusLogin) } });
+    expect(plusHop.headers.get("location")).toBe("/account?upgrade=plus");
     expect((await fetch(`${base}/account`, { headers: { cookie }, redirect: "manual" })).status).toBe(200);
     const html = await (await fetch(`${base}/account`, { headers: { cookie } })).text();
     expect(html).toContain("owner@example.com");

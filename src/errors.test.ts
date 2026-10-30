@@ -57,6 +57,14 @@ describe("AdsApiError fix hints", () => {
     expect(rank.message).not.toContain("→ ");
   });
 
+  it("doesn't blame a developer token for restricted metrics: Google sunset them (2026-10-30)", () => {
+    const code = { authorizationError: "METRIC_ACCESS_DENIED" };
+    expect(new AdsApiError(403, body(code, "The developer doesn't have access to metrics: ''auction_insight_search_impression_share''")).message).toContain("Auction insights report");
+    const other = new AdsApiError(403, body(code, "The developer doesn't have access to metrics: ''other_metric''")).message.split(" → ")[1];
+    expect(other).toContain("drop them from the query");
+    expect(other).not.toContain("developer token");
+  });
+
   it("says a repeated error once", () => {
     const err = { errorCode: { assetError: "DUPLICATE_ASSET" }, message: "Assets are duplicated across operations.",
       location: { fieldPathElements: [{ fieldName: "headlines" }] } };
