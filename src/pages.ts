@@ -357,7 +357,7 @@ export function homePage(baseUrl: string): string {
 
 <section class="band"><div class="wrap">
 <div class="pillars">
-<div><h3>Undo on every plan</h3><p>Ask your AI to undo a change, and it reverses exactly that change. Every applied change is listed with its undo on your <a href="/account">account page</a>.</p></div>
+<div><h3>Undo on every plan</h3><p>Ask your AI to undo a change, and it reverses exactly that change. Every applied change is listed on your <a href="/account">account page</a>, with its undo if it has one. The few Google can't reverse warn you before you approve.</p></div>
 <div><h3>Warnings before you approve</h3><p>Turning a campaign on, more than doubling a budget or bid, or switching bid strategy is flagged in the proposal.</p></div>
 <div><h3>A demo account to try first</h3><p>Every tool works on a <a href="#demo">sample account</a> before you use your own. Changes there never reach Google.</p></div>
 </div>
@@ -1360,7 +1360,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 
 - MCP endpoint (Streamable HTTP, OAuth 2.1 with dynamic client registration): ${baseUrl}/mcp
 - Tools: ${tools.map((t) => t.name).join(", ")}
-- Writes (each one proposed, approved, then applied; every applied change can be undone): negative keywords; pause/enable campaign, ad group, keyword or ad; daily budget; end date; build a Search, Display, Demand Gen (YouTube video) or Performance Max campaign (created paused); add ad groups, keywords, ads, sitelinks; bids; bid strategy; location/language targeting; URL suffix; conversion actions and goals.
+- Writes (each one proposed, approved, then applied; almost all can be undone, and the few Google can't reverse warn first): negative keywords on campaigns and ad groups, and shared negative lists; pause/enable campaign, ad group, keyword or ad; daily budget; end date; build a Search, Display, Demand Gen (YouTube video) or Performance Max campaign (created paused); add ad groups, keywords, ads; edit a responsive search ad in place; delete keywords, ads, ad groups, campaigns, negatives and sitelinks; sitelinks, callouts, structured snippets, business name, logos and images; bids; bid strategy; ad schedules and device bids; location/language targeting; URL suffix; AI Max and Google-written text; conversion actions, goals, value, window and attribution; remarketing lists; apply or dismiss Google's recommendations.
 - Search Console (optional, read-only scope): site totals, query/page performance, period-over-period trends, ranking opportunities, URL Inspection (index status), sitemap status, and paid vs organic overlap with the Ads account.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
 - Pricing: ${fp.kind === "one_service" ? `Free plan covers ${oneServiceFree()} (every tool, unlimited applied changes); Plus ${PLUS_PRICE_LABEL} covers ${allN()} together on 1 Google Ads account; Pro and Agency cover ${allN()} on more accounts.`

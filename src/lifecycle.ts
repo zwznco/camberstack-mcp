@@ -439,7 +439,7 @@ function welcome(base: string, fp: FreePlan = { kind: "accounts" }) {
 
 You're connected. You can now use Camberstack in Claude or ChatGPT.
 
-A good first question: "${ask}" From there, ask about search terms, keywords and budgets. Nothing changes until you approve it, and every change can be undone from ${base}/account
+A good first question: "${ask}" From there, ask about search terms, keywords and budgets. Nothing changes until you approve it, and almost every change can be undone from ${base}/account
 
 Want to try it on sample data first? Ask: "Show me Camberstack's demo account."
 
@@ -450,7 +450,7 @@ If anything doesn't work, just reply. I read every email.
 Adam
 Camberstack`,
     html: wrap(p("Hi,") + p("You're connected. You can now use Camberstack in Claude or ChatGPT.")
-      + p(`A good first question: <em>“${ask}”</em> From there, ask about search terms, keywords and budgets. Nothing changes until you approve it, and every change can be undone from <a href="${base}/account">your account page</a>.`)
+      + p(`A good first question: <em>“${ask}”</em> From there, ask about search terms, keywords and budgets. Nothing changes until you approve it, and almost every change can be undone from <a href="${base}/account">your account page</a>.`)
       + p(`Want to try it on sample data first? Ask: <em>“Show me Camberstack's demo account.”</em>`)
       + p(plans)
       + p("If anything doesn't work, just reply. I read every email.") + p("Adam<br>Camberstack")),
@@ -462,7 +462,7 @@ Camberstack`,
 function plusWelcome(base: string) {
   const ask = "Which searches do I pay for that already rank on Google?";
   const adds = `${allServices()}, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
-  const same = "every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.";
+  const same = "every tool, unlimited changes, nothing applied until you approve it, and almost every change can be undone.";
   const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from your account page`;
   return {
     subject: "You're on Camberstack Plus",
@@ -502,7 +502,7 @@ Thanks for subscribing to Camberstack ${name}. It's active now.
 
 What ${name} adds: up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.
 
-What stays the same: every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.
+What stays the same: every tool, unlimited changes, nothing applied until you approve it, and almost every change can be undone.
 
 Billing: ${price}, renewing monthly. You can see invoices, change your card or cancel any time from your account page:
 ${base}/account
@@ -513,7 +513,7 @@ Adam
 Camberstack`,
     html: wrap(p("Hi,") + p(`Thanks for subscribing to Camberstack ${name}. It's active now.`)
       + p(`<strong>What ${name} adds:</strong> up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`)
-      + p("<strong>What stays the same:</strong> every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.")
+      + p("<strong>What stays the same:</strong> every tool, unlimited changes, nothing applied until you approve it, and almost every change can be undone.")
       + p(`<strong>Billing:</strong> ${price}, renewing monthly. You can see invoices, change your card or cancel any time from <a href="${base}/account">your account page</a>.`)
       + p("If anything doesn't work the way you expected, just reply. I read every email.") + p("Adam<br>Camberstack")),
   };
