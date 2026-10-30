@@ -226,6 +226,16 @@ describe("gaql_fields lookup (unlisted; apps that hold it still call it)", () =>
     // experiment.id got only customer.id, the one .id usable FROM experiment (2026-10-23).
     expect(closest("experiment.id", ["customer.id", "experiment.experiment_id", "experiment.name"])[0]).toBe("experiment.experiment_id");
   });
+  it("treats a numbered last part as the same field, and ranks the nearest path first", () => {
+    // Google's real names. description1 got only text_ad and in_feed, so the model dropped the fields (prod, 2026-10-30).
+    const ad = "ad_group_ad.ad";
+    const names = ["expanded_dynamic_search_ad.description", "expanded_dynamic_search_ad.description2", "expanded_text_ad.description",
+      "expanded_text_ad.description2", "text_ad.description1", "text_ad.description2", "video_ad.in_feed.description1",
+      "video_ad.in_feed.description2", "responsive_search_ad.descriptions"].map((n) => `${ad}.${n}`);
+    expect(closest(`${ad}.dynamic_search_ad.description1`, names).slice(0, 2))
+      .toEqual([`${ad}.expanded_dynamic_search_ad.description`, `${ad}.expanded_dynamic_search_ad.description2`]);
+    expect(closest(`${ad}.dynamic_search_ad.description1`, names)).not.toContain(`${ad}.responsive_search_ad.descriptions`);
+  });
   it("ranks the shared last part first", () => {
     expect(closest("campaign.max_clicks.cpc_bid_ceiling_micros", ["campaign.target_spend.cpc_bid_ceiling_micros", "campaign.max_clicks"])[0])
       .toBe("campaign.target_spend.cpc_bid_ceiling_micros");
