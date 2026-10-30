@@ -1235,7 +1235,7 @@ export async function resolveChange(
       };
     }
     case "delete_sitelinks": {
-      const rows = await q(`SELECT campaign.name, campaign_asset.resource_name, asset.id, asset.final_urls, asset.sitelink_asset.link_text,
+      const rows = await q(`SELECT campaign.id, campaign.name, campaign_asset.resource_name, asset.id, asset.final_urls, asset.sitelink_asset.link_text,
           asset.sitelink_asset.description1, asset.sitelink_asset.description2 FROM campaign_asset
         WHERE campaign.id = ${change.campaign_id} AND campaign_asset.field_type = 'SITELINK' AND campaign_asset.status != 'REMOVED'`);
       const byId = new Map(rows.map((r) => [String(r.asset.id), r]));
