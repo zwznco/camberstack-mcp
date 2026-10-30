@@ -184,7 +184,7 @@ function perms(scopes: string | null, connected: number | boolean, o: { short?: 
   return [...on, ...off].join(" ") || `<span class="dim">none</span>`;
 }
 const planBadge = (plan: string, paying: number | boolean) =>
-  plan === "free" ? `<span class="chip">free</span>` : `<span class="chip pro">${esc(plan)}${paying ? "" : " · comp"}</span>`;
+  plan === "free" ? `<span class="chip">free</span>` : `<span class="chip pro">${esc(plan)}${paying ? "" : "*"}</span>`;
 
 function table(cols: (string | [string, "r"])[], rows: unknown[][], empty = "Nothing yet.", cls = ""): string {
   if (!rows.length) return `<p class="empty">${empty}</p>`;
