@@ -341,7 +341,7 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
     + `with one switch every ${ACCOUNT_WINDOW_DAYS} days, and yours was already used${when ? `; the next one opens on ${when}` : ""}.`;
   const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, `
     + `and Agency up to ${AGENCY_ACCOUNTS}, for ${AGENCY_PRICE_LABEL}; cancel any time.`;
-  const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work";
+  const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work.";
   return upgradeEmail({ subject: "Using Camberstack on more than one Google Ads account", stopped, pitch: pro, link: upgrade, cta: "Upgrade to Pro", free, base });
 }
 
@@ -468,9 +468,9 @@ Camberstack`,
 function plusWelcome(base: string) {
   const ask = "Which searches do I pay for that already rank on Google?";
   const adds = `${allServices()}, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
-  const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from your account page`;
-  return paidWelcome({ base, name: "Plus", adds, addsHtml: adds.replace(`"${ask}"`, `<em>“${ask}”</em>`), billing,
-    billingHtml: `${billing}: <a href="${base}/account">your account page</a>.` });
+  const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from`;
+  return paidWelcome({ base, name: "Plus", adds, addsHtml: adds.replace(`"${ask}"`, `<em>“${ask}”</em>`),
+    billing: `${billing} your account page`, billingHtml: `${billing} <a href="${base}/account">your account page</a>.` });
 }
 
 /**
