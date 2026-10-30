@@ -618,7 +618,7 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT version FROM client_tools").all()).toEqual([{ version: SERVER_VERSION }]);
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
-    expectToolBudget(tools, { total: 75_500, perTool: 6_000, except: { propose_changes: 43_100 } }); // 43.1K: the delete_ changes (2026-10-30)
+    expectToolBudget(tools, { total: 75_500, perTool: 6_000, except: { propose_changes: 43_200 } }); // 43.2K: the delete_ changes (2026-10-30)
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
