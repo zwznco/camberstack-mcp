@@ -77,6 +77,10 @@ const sitelinkSpec = z.object({
   description2: z.string().min(1).max(35).optional(),
 });
 const negativeSpec = z.object({ text: z.string().min(1).max(80), match_type: matchType });
+const SNIPPET_HEADERS = ["Amenities", "Brands", "Courses", "Degree programs", "Destinations", "Featured hotels", "Insurance coverage", "Models", "Neighborhoods", "Service catalog", "Shows", "Styles", "Types"] as const;
+const scheduleSpec = z.object({ day: z.enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]),
+  start_hour: z.number().int().min(0).max(23), end_hour: z.number().int().min(1).max(24),
+  bid_percent: z.number().min(-90).max(900).optional().describe("Bid change in these hours, e.g. -20") });
 const sharedSetId = id.describe("Shared negative list id (shared_set.id from run_gaql WHERE shared_set.type = 'NEGATIVE_KEYWORDS')");
 
 // Display and Demand Gen ads are built from uploaded images. An image is either a public https URL
@@ -335,6 +339,29 @@ export const PUBLIC_CHANGES = [
     descriptions: distinctTexts(z.array(z.string().min(1).max(90)).min(2).max(4)).optional().describe("The full new list, replacing the old one"),
     final_url: url.optional(), path1: z.string().min(1).max(15).optional(), path2: z.string().min(1).max(15).optional() })
     .describe("Edit a responsive search ad's words or link in place, instead of adding a new ad. Give only what changes"),
+  z.object({ type: z.literal("set_ad_schedule"), campaign_id: campaignId, schedule: z.array(scheduleSpec).max(42)
+    .describe("The whole new schedule, replacing the old one; empty means all day, every day") })
+    .describe("Choose which days and hours a campaign runs, in the account's time zone, with optional bid changes. Hours left out don't run"),
+  z.object({ type: z.literal("set_device_bid"), campaign_id: campaignId, device: z.enum(["DESKTOP", "MOBILE", "TABLET"]),
+    percent: z.number().min(-100).max(900).describe("Bid change in percent, e.g. -20; -100 stops showing on that device, 0 clears it") })
+    .describe("Raise or lower a campaign's bids on one device. Smart bidding ignores everything here except -100"),
+  z.object({ type: z.literal("add_campaign_assets"), campaign_id: campaignId,
+    callouts: z.array(z.string().min(1).max(25)).max(20).default([]).describe("Short selling points, at most 25 characters each"),
+    snippets: z.array(z.object({ header: z.enum(SNIPPET_HEADERS), values: z.array(z.string().min(1).max(25)).min(3).max(10) })).max(4).default([]),
+    business_name: z.string().min(1).max(25).optional(),
+    logos: images("Square logos, 1:1", 0, 5).default([]), images: images("Images: landscape 1.91:1 or square 1:1", 0, 20).default([]) })
+    .describe("Add callouts, structured snippets, a business name, logos or images to a campaign"),
+  z.object({ type: z.literal("delete_campaign_assets"), campaign_id: campaignId, field_type: z.enum(["CALLOUT", "STRUCTURED_SNIPPET", "BUSINESS_NAME", "LOGO", "AD_IMAGE"]),
+    asset_ids: z.array(id).min(1).max(20).describe("asset.id of each, from run_gaql FROM campaign_asset") })
+    .describe("Take assets off a campaign. No undo: add them again with add_campaign_assets"),
+  z.object({ type: z.literal("set_ai_max"), campaign_id: campaignId, ai_max: z.boolean().optional().describe("AI Max for Search"),
+    text_automation: z.boolean().optional().describe("Let Google write its own headlines and descriptions"),
+    url_expansion: z.boolean().optional().describe("Let Google send people to other pages on the site") })
+    .describe("Turn AI Max and automatically created text on or off for a campaign. Give only what changes"),
+  z.object({ type: z.literal("set_conversion_settings"), conversion_action_id: id.describe("conversion_action.id from run_gaql"),
+    default_value: z.number().min(0).max(1_000_000).optional(), click_window_days: z.number().int().min(1).max(90).optional().describe("Days after a click a conversion still counts"),
+    attribution: z.enum(["LAST_CLICK", "DATA_DRIVEN"]).optional() })
+    .describe("Change a conversion action's value, counting window or attribution. Give only what changes"),
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
@@ -364,6 +391,7 @@ export const ChangeSchema = z.preprocess(byId, z.discriminatedUnion("type", [
   z.object({ type: z.literal("remove_campaign_criteria"), campaign_id: id, resource_names: z.array(z.string()).min(1), what: z.string() }),
   z.object({ type: z.literal("remove_imported_conversion_action"), resource_name: z.string(), name: z.string(), property_id: id, event_name: z.string(), primary: z.boolean(),
     category: z.string(), biddable_before: z.array(z.string()) }),
+  z.object({ type: z.literal("restore_campaign_fields"), campaign_id: id, fields: z.record(z.string(), z.any()), mask: z.string() }),
   z.object({ type: z.literal("restore_responsive_search_ad"), ad_id: id, fields: z.record(z.string(), z.any()), mask: z.string() }),
   z.object({ type: z.literal("restore_conversion_goals"), campaign_id: id, goals: z.array(z.object({ resource_name: z.string(), biddable: z.boolean() })).min(1) }),
 ]));
@@ -1405,6 +1433,147 @@ export async function resolveChange(
         inverse: { type: "restore_responsive_search_ad", ad_id: change.ad_id, fields: undo, mask: mask.join(",") },
       };
     }
+    case "set_ad_schedule": {
+      const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
+      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const rows = await q(`SELECT campaign.id, campaign_criterion.resource_name, campaign_criterion.bid_modifier, campaign_criterion.ad_schedule.day_of_week,
+          campaign_criterion.ad_schedule.start_hour, campaign_criterion.ad_schedule.start_minute, campaign_criterion.ad_schedule.end_hour, campaign_criterion.ad_schedule.end_minute
+        FROM campaign_criterion WHERE campaign.id = ${change.campaign_id} AND campaign_criterion.type = 'AD_SCHEDULE'`);
+      for (const r of rows) {
+        const m = r.campaignCriterion.adSchedule;
+        if (m.startMinute !== "ZERO" || m.endMinute !== "ZERO") throw new Error(`This campaign's schedule has quarter-hour times, which Camberstack can't put back on undo; change it in Google Ads.`);
+      }
+      const before = rows.map((r) => {
+        const m = r.campaignCriterion.adSchedule, mod = r.campaignCriterion.bidModifier;
+        return { day: m.dayOfWeek, start_hour: m.startHour ?? 0, end_hour: m.endHour, ...(mod && mod !== 1 ? { bid_percent: Math.round((mod - 1) * 100) } : {}) };
+      });
+      const key = (xs: typeof change.schedule) => JSON.stringify(xs.map((x) => [x.day, x.start_hour, x.end_hour, x.bid_percent ?? 0]).sort());
+      const campaign = `customers/${customerId}/campaigns/${change.campaign_id}`;
+      const list = change.schedule.map((x) => `${x.day.slice(0, 3)} ${x.start_hour}:00-${x.end_hour}:00${x.bid_percent ? ` ${x.bid_percent > 0 ? "+" : ""}${x.bid_percent}%` : ""}`).join(", ");
+      if (key(before) === key(change.schedule)) return { change, service: "campaignCriteria", operations: [], describe: `Set the schedule of campaign "${c.campaign.name}" (already in place)` };
+      return {
+        change, service: "campaignCriteria",
+        operations: [...rows.map((r) => ({ remove: r.campaignCriterion.resourceName })), ...change.schedule.map((x) => ({ create: { campaign,
+          adSchedule: { dayOfWeek: x.day, startHour: x.start_hour, startMinute: "ZERO", endHour: x.end_hour, endMinute: "ZERO" },
+          ...(x.bid_percent ? { bidModifier: 1 + x.bid_percent / 100 } : {}) } }))],
+        describe: change.schedule.length
+          ? `Run campaign "${c.campaign.name}" only ${list} (account time zone) ⚠ every hour left out stops showing ads`
+          : `Clear the schedule of campaign "${c.campaign.name}", so it runs all day, every day`,
+        inverse: { type: "set_ad_schedule", campaign_id: change.campaign_id, schedule: before },
+      };
+    }
+    case "set_device_bid": {
+      const [c] = await q(`SELECT campaign.name, campaign.bidding_strategy_type FROM campaign WHERE campaign.id = ${change.campaign_id}`);
+      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const rows = await q(`SELECT campaign.id, campaign_criterion.resource_name, campaign_criterion.bid_modifier, campaign_criterion.device.type FROM campaign_criterion
+        WHERE campaign.id = ${change.campaign_id} AND campaign_criterion.type = 'DEVICE'`);
+      const row = rows.find((r) => r.campaignCriterion.device?.type === change.device);
+      if (!row) throw new Error(`Campaign "${c.campaign.name}" has no ${change.device} setting Google lets Camberstack change.`);
+      const mod = row.campaignCriterion.bidModifier;
+      const before = mod == null ? 0 : Math.round((mod - 1) * 100), label = (n: number) => `${n > 0 ? "+" : ""}${n}%`;
+      const manual = c.campaign.biddingStrategyType === "MANUAL_CPC";
+      return {
+        change, service: "campaignCriteria",
+        operations: before === change.percent ? [] : [{ update: { resourceName: row.campaignCriterion.resourceName, bidModifier: 1 + change.percent / 100 }, updateMask: "bid_modifier" }],
+        describe: `Set ${change.device} bids of campaign "${c.campaign.name}" from ${label(before)} to ${label(change.percent)}` +
+          (change.percent === -100 ? " ⚠ stops showing on this device" : manual ? "" : " ⚠ smart bidding ignores this; only -100% takes effect"),
+        inverse: before === change.percent ? undefined : { type: "set_device_bid", campaign_id: change.campaign_id, device: change.device, percent: before },
+      };
+    }
+    case "add_campaign_assets": {
+      const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
+      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const T = tempIds(customerId), campaign = `customers/${customerId}/campaigns/${change.campaign_id}`;
+      const pics = await imageAssets(q, T, customerId, [...change.logos, ...change.images]);
+      const link = (asset: string, fieldType: string) => ({ campaignAssetOperation: { create: { asset, campaign, fieldType } } });
+      const text = (fields: object, fieldType: string) => {
+        const resourceName = T.next("assets");
+        return [{ assetOperation: { create: { resourceName, ...fields } } }, link(resourceName, fieldType)];
+      };
+      const operations = [...pics.ops,
+        ...change.callouts.flatMap((calloutText) => text({ calloutAsset: { calloutText } }, "CALLOUT")),
+        ...change.snippets.flatMap((x) => text({ structuredSnippetAsset: { header: x.header, values: x.values } }, "STRUCTURED_SNIPPET")),
+        ...(change.business_name ? text({ textAsset: { text: change.business_name } }, "BUSINESS_NAME") : []),
+        ...change.logos.map((r) => link(pics.of(r), "LOGO")), ...change.images.map((r) => link(pics.of(r), "AD_IMAGE"))];
+      const said = [change.callouts.length && `callouts ${change.callouts.map((x) => `"${x}"`).join(", ")}`, change.snippets.length && `${change.snippets.length} structured snippet(s)`,
+        change.business_name && `business name "${change.business_name}"`, change.logos.length && `${change.logos.length} logo(s)`, change.images.length && `${change.images.length} image(s)`].filter(Boolean);
+      if (!said.length) throw new Error("Give at least one asset.");
+      return { change, service: "googleAds", operations, describe: `Add to campaign "${c.campaign.name}": ${said.join(", ")}` };
+    }
+    case "delete_campaign_assets": {
+      const rows = await q(`SELECT campaign.id, campaign.name, campaign_asset.resource_name, asset.id FROM campaign_asset
+        WHERE campaign.id = ${change.campaign_id} AND campaign_asset.field_type = '${change.field_type}' AND campaign_asset.status != 'REMOVED'`);
+      const byId = new Map(rows.map((r) => [String(r.asset.id), r]));
+      const missing = change.asset_ids.filter((i) => !byId.has(i));
+      if (missing.length) throw new Error(`No ${change.field_type} asset ${missing.join(", ")} on campaign ${change.campaign_id}.`);
+      const found = [...new Set(change.asset_ids)].map((i) => byId.get(i)!);
+      return { change, service: "googleAds", operations: found.map((r) => ({ campaignAssetOperation: { remove: r.campaignAsset.resourceName } })),
+        describe: `Take ${found.length} ${change.field_type} asset(s) off campaign "${found[0].campaign.name}" ⚠ no undo: add them again if needed` };
+    }
+    case "set_ai_max": {
+      if (change.ai_max === undefined && change.text_automation === undefined && change.url_expansion === undefined) throw new Error("Give ai_max, text_automation and/or url_expansion.");
+      const [c] = await q(`SELECT campaign.name, campaign.ai_max_setting.enable_ai_max, campaign.asset_automation_settings FROM campaign WHERE campaign.id = ${change.campaign_id}`);
+      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const had: { assetAutomationType: string; assetAutomationStatus: string }[] = c.campaign.assetAutomationSettings ?? [];
+      // Google refuses opting in without AI Max (AI_MAX_MUST_BE_ENABLED, dry-run against v23, 2026-10-30); opting out needs nothing.
+      if ((change.text_automation || change.url_expansion) && !(change.ai_max ?? c.campaign.aiMaxSetting?.enableAiMax)) {
+        throw new Error(`Google only lets a Search campaign use automatically created text or URL expansion with AI Max on. Propose ai_max: true with it, and tell the user AI Max also widens which searches match.`);
+      }
+      const want = new Map(had.map((x) => [x.assetAutomationType, x.assetAutomationStatus]));
+      const status = (b: boolean) => (b ? "OPTED_IN" : "OPTED_OUT");
+      if (change.text_automation !== undefined) want.set("TEXT_ASSET_AUTOMATION", status(change.text_automation));
+      if (change.url_expansion !== undefined) want.set("FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION", status(change.url_expansion));
+      const fields: Record<string, unknown> = {}, undo: Record<string, unknown> = {}, mask: string[] = [];
+      const wasOn = !!c.campaign.aiMaxSetting?.enableAiMax;
+      if (change.ai_max !== undefined && change.ai_max !== wasOn) {
+        fields.aiMaxSetting = { enableAiMax: change.ai_max }; undo.aiMaxSetting = { enableAiMax: wasOn }; mask.push("ai_max_setting.enable_ai_max");
+      }
+      const settings = [...want].map(([assetAutomationType, assetAutomationStatus]) => ({ assetAutomationType, assetAutomationStatus }));
+      if (settings.some((x) => had.find((h) => h.assetAutomationType === x.assetAutomationType)?.assetAutomationStatus !== x.assetAutomationStatus)) {
+        fields.assetAutomationSettings = settings; undo.assetAutomationSettings = had; mask.push("asset_automation_settings");
+      }
+      const said = [change.ai_max !== undefined && `AI Max ${change.ai_max ? "on" : "off"}`, change.text_automation !== undefined && `Google-written text ${change.text_automation ? "on" : "off"}`,
+        change.url_expansion !== undefined && `URL expansion ${change.url_expansion ? "on" : "off"}`].filter(Boolean).join(", ");
+      const on = change.ai_max || change.text_automation || change.url_expansion;
+      return {
+        change, service: "campaigns", operations: mask.length ? [{ update: { resourceName: `customers/${customerId}/campaigns/${change.campaign_id}`, ...fields }, updateMask: mask.join(",") }] : [],
+        describe: `Campaign "${c.campaign.name}": ${said}` + (on ? " ⚠ Google will match more searches or write text you didn't approve" : ""),
+        inverse: mask.length ? { type: "restore_campaign_fields", campaign_id: change.campaign_id, fields: undo, mask: mask.join(",") } : undefined,
+      };
+    }
+    case "restore_campaign_fields":
+      return { change, service: "campaigns", operations: [{ update: { resourceName: `customers/${customerId}/campaigns/${change.campaign_id}`, ...change.fields }, updateMask: change.mask }],
+        describe: `Put campaign ${change.campaign_id}'s AI Max and automation settings back` };
+    case "set_conversion_settings": {
+      const [a] = await q(`SELECT conversion_action.name, conversion_action.type, conversion_action.value_settings.default_value, conversion_action.click_through_lookback_window_days,
+          conversion_action.attribution_model_settings.attribution_model FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
+      if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
+      const c = a.conversionAction;
+      if (ANALYTICS_IMPORT.test(String(c.type))) throw new Error(`Conversion action "${c.name}" is imported (${c.type}), so its settings come from there, and Google won't change them through the API.`);
+      const MODEL = { LAST_CLICK: "GOOGLE_ADS_LAST_CLICK", DATA_DRIVEN: "GOOGLE_SEARCH_ATTRIBUTION_DATA_DRIVEN" } as const;
+      const model = c.attributionModelSettings?.attributionModel;
+      const fields: Record<string, unknown> = {}, mask: string[] = [], said: string[] = [];
+      const undo: { default_value?: number; click_window_days?: number; attribution?: "LAST_CLICK" | "DATA_DRIVEN" } = {};
+      if (change.default_value !== undefined && change.default_value !== c.valueSettings?.defaultValue) {
+        fields.valueSettings = { defaultValue: change.default_value }; mask.push("value_settings.default_value"); undo.default_value = c.valueSettings?.defaultValue ?? 0;
+        said.push(`value ${c.valueSettings?.defaultValue ?? 0} to ${change.default_value}`);
+      }
+      if (change.click_window_days !== undefined && change.click_window_days !== Number(c.clickThroughLookbackWindowDays)) {
+        fields.clickThroughLookbackWindowDays = change.click_window_days; mask.push("click_through_lookback_window_days"); undo.click_window_days = Number(c.clickThroughLookbackWindowDays);
+        said.push(`click window ${c.clickThroughLookbackWindowDays} to ${change.click_window_days} days`);
+      }
+      if (change.attribution && MODEL[change.attribution] !== model) {
+        const old = (Object.keys(MODEL) as (keyof typeof MODEL)[]).find((k) => MODEL[k] === model);
+        if (!old) throw new Error(`Conversion action "${c.name}" uses ${model}, which Camberstack can't put back on undo; change it in Google Ads.`);
+        fields.attributionModelSettings = { attributionModel: MODEL[change.attribution] }; mask.push("attribution_model_settings.attribution_model"); undo.attribution = old;
+        said.push(`attribution ${old} to ${change.attribution}`);
+      }
+      return {
+        change, service: "conversionActions", operations: mask.length ? [{ update: { resourceName: `customers/${customerId}/conversionActions/${change.conversion_action_id}`, ...fields }, updateMask: mask.join(",") }] : [],
+        describe: `Conversion action "${c.name}": ${said.join(", ") || "already in place"}`,
+        inverse: mask.length ? { type: "set_conversion_settings", conversion_action_id: change.conversion_action_id, ...undo } : undefined,
+      };
+    }
     case "restore_responsive_search_ad":
       return {
         change, service: "ads", operations: [{ update: { resourceName: `customers/${customerId}/ads/${change.ad_id}`, ...change.fields }, updateMask: change.mask }],
@@ -1768,6 +1937,9 @@ export function inverseAfterApply(r: ResolvedChange, resourceNames: string[]): C
   }
   if (c.type === "add_responsive_search_ad" && resourceNames[0]) {
     return { type: "remove_ad", resource_name: resourceNames[0], what: `the responsive search ad Camberstack added (→ ${c.ad.final_url})` };
+  }
+  if (c.type === "add_campaign_assets" && of("campaignAssets").length) {
+    return { type: "remove_campaign_assets", resource_names: of("campaignAssets"), what: `${of("campaignAssets").length} asset(s) Camberstack added` };
   }
   if (c.type === "add_ad_group_negatives" && resourceNames.length) {
     return { type: "remove_keywords", resource_names: resourceNames, what: `${resourceNames.length} negative keyword(s) Camberstack added: ${c.keywords.map((k) => fmtKw(k.text, k.match_type)).join(", ")}` };

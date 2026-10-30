@@ -173,3 +173,55 @@ describe("edit_responsive_search_ad", () => {
     expect(r.operations).toEqual([]);
   });
 });
+
+describe("schedules, devices, assets, AI Max, conversion settings", () => {
+  it("set_ad_schedule replaces the old schedule, warns, and undo puts it back", async () => {
+    const ads = { async search(_c: string, q: string): Promise<any[]> {
+      return q.includes("FROM campaign_criterion") ? [{ campaignCriterion: { resourceName: "customers/1/campaignCriteria/10~5", bidModifier: 1.2,
+        adSchedule: { dayOfWeek: "MONDAY", startHour: 9, startMinute: "ZERO", endHour: 17, endMinute: "ZERO" } } }] : [{ campaign: { name: "Search" } }];
+    } };
+    const r = await resolveChange(ads, "1", null, { type: "set_ad_schedule", campaign_id: "10", schedule: [{ day: "TUESDAY", start_hour: 8, end_hour: 18 }] });
+    expect(r.operations[0]).toEqual({ remove: "customers/1/campaignCriteria/10~5" });
+    expect(r.describe).toContain("⚠");
+    expect(r.inverse).toEqual({ type: "set_ad_schedule", campaign_id: "10", schedule: [{ day: "MONDAY", start_hour: 9, end_hour: 17, bid_percent: 20 }] });
+  });
+
+  it("set_device_bid warns when smart bidding would ignore it", async () => {
+    const ads = { async search(_c: string, q: string): Promise<any[]> {
+      return q.includes("FROM campaign_criterion") ? [{ campaignCriterion: { resourceName: "customers/1/campaignCriteria/10~30001", device: { type: "MOBILE" } } }]
+        : [{ campaign: { name: "Search", biddingStrategyType: "MAXIMIZE_CONVERSIONS" } }];
+    } };
+    const r = await resolveChange(ads, "1", null, { type: "set_device_bid", campaign_id: "10", device: "MOBILE", percent: -20 });
+    expect(r.operations).toEqual([{ update: { resourceName: "customers/1/campaignCriteria/10~30001", bidModifier: 0.8 }, updateMask: "bid_modifier" }]);
+    expect(r.describe).toContain("smart bidding ignores");
+    expect(r.inverse).toEqual({ type: "set_device_bid", campaign_id: "10", device: "MOBILE", percent: 0 });
+  });
+
+  it("add_campaign_assets links each asset, and undo unlinks what it added", async () => {
+    const ads = { async search(): Promise<any[]> { return [{ campaign: { name: "Search" } }]; } };
+    const r = await resolveChange(ads, "1", null, { type: "add_campaign_assets", campaign_id: "10", callouts: ["Free trial"], snippets: [], logos: [], images: [] });
+    expect(r.operations).toHaveLength(2);
+    expect(inverseAfterApply(r, ["customers/1/assets/5", "customers/1/campaignAssets/10~5~CALLOUT"])).toMatchObject({ type: "remove_campaign_assets", resource_names: ["customers/1/campaignAssets/10~5~CALLOUT"] });
+  });
+
+  it("set_ai_max changes only what differs, keeps other settings, and undo restores them", async () => {
+    const ads = { async search(): Promise<any[]> { return [{ campaign: { name: "Search", assetAutomationSettings: [{ assetAutomationType: "TEXT_ASSET_AUTOMATION", assetAutomationStatus: "OPTED_OUT" }] } }]; } };
+    const r = await resolveChange(ads, "1", null, { type: "set_ai_max", campaign_id: "10", ai_max: true, text_automation: false });
+    expect(r.operations).toEqual([{ update: { resourceName: "customers/1/campaigns/10", aiMaxSetting: { enableAiMax: true } }, updateMask: "ai_max_setting.enable_ai_max" }]);
+    expect(r.inverse).toEqual({ type: "restore_campaign_fields", campaign_id: "10", fields: { aiMaxSetting: { enableAiMax: false } }, mask: "ai_max_setting.enable_ai_max" });
+  });
+
+  it("set_ai_max explains that Google-written text needs AI Max", async () => {
+    const ads = { async search(): Promise<any[]> { return [{ campaign: { name: "Search" } }]; } };
+    await expect(resolveChange(ads, "1", null, { type: "set_ai_max", campaign_id: "10", text_automation: true })).rejects.toThrow("with AI Max on");
+  });
+
+  it("set_conversion_settings refuses an import, and undoes only what it changed", async () => {
+    const row = (type: string) => ({ async search(): Promise<any[]> { return [{ conversionAction: { name: "Lead", type, valueSettings: { defaultValue: 5 }, clickThroughLookbackWindowDays: "30",
+      attributionModelSettings: { attributionModel: "GOOGLE_ADS_LAST_CLICK" } } }]; } });
+    await expect(resolveChange(row("GOOGLE_ANALYTICS_4_CUSTOM"), "1", null, { type: "set_conversion_settings", conversion_action_id: "7", default_value: 9 })).rejects.toThrow("imported");
+    const r = await resolveChange(row("WEBPAGE"), "1", null, { type: "set_conversion_settings", conversion_action_id: "7", default_value: 9, click_window_days: 30 });
+    expect(r.operations).toEqual([{ update: { resourceName: "customers/1/conversionActions/7", valueSettings: { defaultValue: 9 } }, updateMask: "value_settings.default_value" }]);
+    expect(r.inverse).toEqual({ type: "set_conversion_settings", conversion_action_id: "7", default_value: 5 });
+  });
+});
