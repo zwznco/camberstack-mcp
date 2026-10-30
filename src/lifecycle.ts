@@ -105,9 +105,10 @@ export class Lifecycle {
     // Refused a second account by the plan gate (session.ts checkAccount), the last refusal 6 hours to 30 days ago.
     // Since 0.12.0 a refusal only follows a switch the user confirmed, so they're working on more than one account
     // now: the next morning, not days later. The 6 hours keep it from landing minutes after a refusal inside the
-    // send window. `error` is the latest refusal's (SQLite takes bare columns from the max() row).
+    // send window. `error` is the latest refusal's (SQLite takes bare columns from the max() row). A reset by hand cancels
+    // the refusals before it: this email would say the account is still locked (sent minutes after one, 2026-10-16).
     const limit = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
-      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.ok = 0 AND c.error LIKE ?
+      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.ok = 0 AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
       WHERE ${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("service_limit")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];

@@ -135,6 +135,8 @@ describe("lifecycle emails", () => {
     user("recent", "recent@example.com", 10); call("recent", "propose_changes"); refused("recent", 0.2);  // under 6 hours ago
     user("other", "other@example.com", 10); call("other", "propose_changes"); refused("other", 0.3, "Google said no");  // not the gate
     user("pro", "pro@example.com", 10, "pro"); call("pro", "propose_changes"); refused("pro", 0.3);
+    user("reset", "reset@example.com", 10); call("reset", "propose_changes"); refused("reset", 0.3);  // a reset by hand cancels it
+    db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = 'reset'").run(now() - 0.1 * DAY);
     expect(await lc.run()).toBe(1);
     expect(sent[0].to).toEqual(["capped@example.com"]);
     expect(sent[0].subject).toBe("Using Camberstack on more than one Google Ads account");
