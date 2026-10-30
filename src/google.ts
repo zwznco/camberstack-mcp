@@ -356,18 +356,20 @@ export class AdsClient {
     return body;
   }
 
+  /** POST to the Ads API; the parsed body, {} when empty. */
+  private async post(path: string, payload: object, loginCustomerId?: string | null): Promise<any> {
+    const res = await this.f(`${ADS_API}/${path}`, { method: "POST", headers: await this.headers(loginCustomerId), body: JSON.stringify(payload) });
+    const body = await this.body(res);
+    return body ? JSON.parse(body) : {};
+  }
+
   async listAccessibleCustomers(): Promise<string[]> {
     const res = await this.f(`${ADS_API}/customers:listAccessibleCustomers`, { headers: await this.headers() });
     return ((JSON.parse(await this.body(res)).resourceNames ?? []) as string[]).map((r) => r.split("/")[1]!);
   }
 
   async search(customerId: string, query: string, loginCustomerId?: string | null): Promise<any[]> {
-    const res = await this.f(`${ADS_API}/customers/${customerId}/googleAds:searchStream`, {
-      method: "POST",
-      headers: await this.headers(loginCustomerId),
-      body: JSON.stringify({ query }),
-    });
-    const batches = JSON.parse(await this.body(res)) as { results?: any[]; error?: { code?: number } }[];
+    const batches = await this.post(`customers/${customerId}/googleAds:searchStream`, { query }, loginCustomerId) as { results?: any[]; error?: { code?: number } }[];
     // A stream that fails partway still answers 200, with the error as its last element: never return a short list as if whole.
     const broken = batches.find((b) => b.error);
     if (broken) throw new AdsApiError(broken.error!.code ?? 500, JSON.stringify(broken));
@@ -379,10 +381,7 @@ export class AdsClient {
     const out: any[] = [];
     let pageToken: string | undefined;
     do {
-      const res = await this.f(`${ADS_API}/googleAdsFields:search`, {
-        method: "POST", headers: await this.headers(), body: JSON.stringify({ query, pageSize: 10000, ...(pageToken ? { pageToken } : {}) }),
-      });
-      const j = JSON.parse(await this.body(res));
+      const j = await this.post("googleAdsFields:search", { query, pageSize: 10000, ...(pageToken ? { pageToken } : {}) });
       out.push(...(j.results ?? []));
       pageToken = j.nextPageToken;
     } while (pageToken && out.length < 50_000);
@@ -393,25 +392,16 @@ export class AdsClient {
   async keywordPlan(
     customerId: string, method: "generateKeywordIdeas" | "generateKeywordHistoricalMetrics", request: object, loginCustomerId?: string | null,
   ): Promise<{ results?: any[] }> {
-    const res = await this.f(`${ADS_API}/customers/${customerId}:${method}`, {
-      method: "POST",
-      headers: await this.headers(loginCustomerId),
-      body: JSON.stringify(request),
-    });
-    const body = await this.body(res);
-    return body ? JSON.parse(body) : {};
+    return this.post(`customers/${customerId}:${method}`, request, loginCustomerId);
   }
 
   /** Applying or dismissing a recommendation isn't a mutate and has no dry run, so a propose only checks it still exists (changes.ts). */
   private async recommendation(customerId: string, op: { apply?: string; dismiss?: string },
     opts: { validateOnly?: boolean; loginCustomerId?: string | null }): Promise<{ results: { resourceName?: string }[] }> {
     if (opts.validateOnly) return { results: [] };
-    const res = await this.f(`${ADS_API}/customers/${customerId}/recommendations:${op.apply ? "apply" : "dismiss"}`, {
-      method: "POST", headers: await this.headers(opts.loginCustomerId),
-      body: JSON.stringify({ operations: [{ resourceName: op.apply ?? op.dismiss }], partialFailure: false }),
-    });
-    const body = await this.body(res);
-    return { results: (body ? JSON.parse(body) : {}).results ?? [] };
+    const r = await this.post(`customers/${customerId}/recommendations:${op.apply ? "apply" : "dismiss"}`,
+      { operations: [{ resourceName: op.apply ?? op.dismiss }], partialFailure: false }, opts.loginCustomerId);
+    return { results: r.results ?? [] };
   }
 
   /**
@@ -423,12 +413,8 @@ export class AdsClient {
   private async productLink(customerId: string, op: { create?: object; remove?: string },
     opts: { validateOnly?: boolean; loginCustomerId?: string | null }): Promise<{ results: { resourceName?: string }[] }> {
     if (opts.validateOnly) return { results: [] };
-    const res = await this.f(`${ADS_API}/customers/${customerId}/productLinks:${op.create ? "create" : "remove"}`, {
-      method: "POST", headers: await this.headers(opts.loginCustomerId),
-      body: JSON.stringify(op.create ? { productLink: op.create } : { resourceName: op.remove }),
-    });
-    const body = await this.body(res);
-    const r = body ? JSON.parse(body) : {};
+    const r = await this.post(`customers/${customerId}/productLinks:${op.create ? "create" : "remove"}`,
+      op.create ? { productLink: op.create } : { resourceName: op.remove }, opts.loginCustomerId);
     return { results: r.resourceName ? [{ resourceName: r.resourceName }] : [] };
   }
 
@@ -445,15 +431,9 @@ export class AdsClient {
     if (service === "productLinks") return this.productLink(customerId, operations[0] as { create?: object; remove?: string }, opts);
     if (service === "recommendations") return this.recommendation(customerId, operations[0] as { apply?: string; dismiss?: string }, opts);
     const cross = service === "googleAds";
-    const res = await this.f(`${ADS_API}/customers/${customerId}/${service}:mutate`, {
-      method: "POST",
-      headers: await this.headers(opts.loginCustomerId),
-      // campaignConversionGoals:mutate has no partialFailure field and 400s on it (it's atomic anyway).
-      body: JSON.stringify({ [cross ? "mutateOperations" : "operations"]: operations, validateOnly: !!opts.validateOnly,
-        ...(service === "campaignConversionGoals" ? {} : { partialFailure: false }) }),
-    });
-    const body = await this.body(res);
-    const json = body ? JSON.parse(body) : {};
+    // campaignConversionGoals:mutate has no partialFailure field and 400s on it (it's atomic anyway).
+    const json = await this.post(`customers/${customerId}/${service}:mutate`, { [cross ? "mutateOperations" : "operations"]: operations, validateOnly: !!opts.validateOnly,
+      ...(service === "campaignConversionGoals" ? {} : { partialFailure: false }) }, opts.loginCustomerId);
     if (!cross) return json.results ? json : { results: [] };
     return { results: (json.mutateOperationResponses ?? []).map((r: Record<string, { resourceName?: string }>) =>
       ({ resourceName: Object.values(r)[0]?.resourceName })) };
