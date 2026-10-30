@@ -622,13 +622,14 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       + "locks until the date the \"Account switch:\" notice gave, switching back included. Call it only after a tool answered \"Account switch:\" "
       + "for this account and the user agreed, or answered \"Account choice:\" and the user picked this account (a first pick spends no switch). "
       + "Called with neither, it answers with the \"Account switch:\" notice and spends nothing. "
-      + "Changes nothing in Google Ads; a no-op for an account that is already active. "
-      + "Merchant Center accounts are a separate allowance with their own switch: pass mc:<account_id>, as the notice gives it.",
+      + "Changes nothing in Google Ads; a no-op for an account that is already active."
+      + (o.merchant ? " Merchant Center accounts are a separate allowance with their own switch: pass mc:<account_id>, as the notice gives it." : ""),
     inputSchema: { customer_id: customerId },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async ({ customer_id }: { customer_id: string }) => {
     const s = session(), id = customer_id.startsWith("mc:") ? customer_id : customer_id.replace(/-/g, "");
-    if (id.startsWith("mc:")) {
+    // Without o.merchant, mc: falls through to the refusal below: it's no account this connection can reach.
+    if (o.merchant && id.startsWith("mc:")) {
       if (!(await s.merchant.accounts()).some((a) => a.account_id === id.slice(3)))
         throw new Error(`${id.slice(3)} isn't a Merchant Center account this login can reach (merchant_accounts shows the ones it can). Nothing was spent.`);
       return { switched_to: id, active_merchant_center_accounts: s.planState(new Set(), "mc").active.map((c) => c.slice(3)) };

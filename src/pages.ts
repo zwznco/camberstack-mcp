@@ -5,7 +5,7 @@
 
 import type { Release } from "./changelog.js";
 import { z } from "zod";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, allN, allServices, dateLabel, freePlanChange, freeServices, oneServiceFree, servicesOr, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, listedServices, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, allN, allServices, dateLabel, freePlanChange, freeServices, oneServiceFree, servicesOr, type FreePlan } from "./plans.js";
 import type { ToolDoc } from "./tools.js";
 
 /**
@@ -1165,8 +1165,10 @@ export function termsPage(baseUrl: string): string {
 <p class="muted">Last updated ${TERMS_UPDATED}</p>
 <h2>The service</h2>
 <p>Camberstack lets an AI assistant read your Google Ads account and, when you approve a specific proposal, change it.
-If you add them to your connection, it can also read your Search Console data (read-only), your Merchant Center data
-and your Google Analytics data, and change your Google Analytics setup and your Merchant Center products when you approve a specific proposal.
+${listedServices().includes("merchant")
+    ? `If you add them to your connection, it can also read your Search Console data (read-only), your Merchant Center data
+and your Google Analytics data, and change your Google Analytics setup and your Merchant Center products when you approve a specific proposal.`
+    : `If you add them to your connection, it can also read your Search Console data (read-only) and your Google Analytics data, and change your Google Analytics setup when you approve a specific proposal.`}
 There is a free plan and paid plans, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
 <h2>Paid subscriptions</h2>
 <p>Paid plans are billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; your plan continues until the end of the period you paid for, and we don't refund partial months. Switching between Pro and Agency takes effect right away, and Stripe prorates the difference. If we change the price we will email you at least 30 days before it applies to you.</p>
@@ -1174,7 +1176,7 @@ There is a free plan and paid plans, described at <a href="/#pricing">camberstac
 <p>Recommendations are generated from your account data and may be wrong. You decide what to approve, and you are responsible
 for changes you approve, for your Google Ads spend, and for the tracking and consent on any website you measure with Google Analytics. Review proposals before approving them.</p>
 <h2>Acceptable use</h2>
-<p>Use Camberstack only on Google Ads accounts, Search Console sites, Google Analytics properties and Merchant Center accounts you are authorized to manage, and in line with Google's policies. Don't attempt to access other users' data or overload the service.</p>
+<p>Use Camberstack only on Google Ads accounts, Search Console sites${listedServices().includes("merchant") ? ", Google Analytics properties and Merchant Center accounts" : " and Google Analytics properties"} you are authorized to manage, and in line with Google's policies. Don't attempt to access other users' data or overload the service.</p>
 <h2>No warranty</h2>
 <p>The service is provided "as is", without warranties of any kind, including fitness for a particular purpose or uninterrupted availability.</p>
 <h2>Limitation of liability</h2>

@@ -2905,6 +2905,10 @@ describe("Merchant Center rollout", () => {
     const linked = await call(outsider, "propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center", merchant_center_id: "000000001" }] });
     expect(linked.isError).toBe(true);
     expect(linked.json).toBeNull();
+    const sw = await call(outsider, "switch_account", { customer_id: "mc:123" });
+    expect(sw.isError).toBe(true);
+    expect(sw.text).not.toContain("connect/merchant-center");
+    expect(await fetch(`${base}/terms`).then((r) => r.text())).not.toContain("Merchant Center");
   });
 });
 

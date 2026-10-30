@@ -60,12 +60,12 @@ asks for them alongside Ads and Search Console; a connection made before they we
 `/connect/analytics` link on its first Analytics call, which adds both to the same Google account. The Cloud project
 needs the Google Analytics Data API and Admin API enabled.
 
-Merchant Center accounts are their own plan allowance, the same size as Google Ads' (Free 1, Pro 10), counted as
+Merchant Center accounts are their own plan allowance, the same size as Google Ads' (Free 1, Pro 5), counted as
 `mc:<id>` in `tool_calls` with their own switch (`switch_account` takes `mc:<id>`).
 
 The Merchant Center tools need `content`, which isn't part of connecting: the first call without it
 returns a personal `/connect/merchant-center` link that adds it. Until Google verifies that scope they're listed only for
-`ADMIN_EMAILS`/`PRO_EMAILS`; `MERCHANT_PUBLIC=1` lists them for everyone. Before any call works, the Cloud project needs
+`ADMIN_EMAILS`; `MERCHANT_PUBLIC=1` lists them for everyone. Before any call works, the Cloud project needs
 the Merchant API enabled and **registered once** with a production Merchant Center account the operator administers
 (`POST https://merchantapi.googleapis.com/accounts/v1/accounts/{ID}/developerRegistration:registerGcp`); merchants
 don't register. Unregistered, calls answer 401 "not registered", which the tools report as Camberstack's to fix.

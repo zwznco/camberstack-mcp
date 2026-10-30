@@ -38,7 +38,7 @@ export interface Config {
   adminUrl?: string;
   /** Google accounts allowed into the admin site. */
   adminEmails: Set<string>;
-  /** Merchant Center tools for everyone (MERCHANT_PUBLIC=1). Off: only ADMIN_EMAILS/PRO_EMAILS see them, until Google verifies the scope. */
+  /** Merchant Center tools for everyone (MERCHANT_PUBLIC=1). Off: only ADMIN_EMAILS see them, until Google verifies the scope. */
   merchantPublic: boolean;
   /** Hand our own campaign's conversions to operations (adconversions.ts); unset = clicks are kept but not sent. */
   conversions?: import("./adconversions.js").ConversionConfig;
