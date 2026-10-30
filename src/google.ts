@@ -191,8 +191,8 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
     case "INVALID_VALUE_WITH_DURING_OPERATOR":
       return `DURING accepts only ${DURING_LITERALS}. For any other window use segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'.`;
     case "PROHIBITED_METRIC_IN_SELECT_OR_WHERE_CLAUSE":
-      return /impression_share/.test(message)
-        ? "budget- and rank-lost impression share exist only on campaign: run a separate query FROM campaign for them."
+      return /budget_lost_impression_share/.test(message)
+        ? "budget-lost impression share isn't reported below the campaign: drop it here and get it in a separate query FROM campaign."
         : null;
     case "PROHIBITED_RESOURCE_TYPE_IN_SELECT_CLAUSE":
       if (/'CAMPAIGN_BUDGET'/.test(message)) {

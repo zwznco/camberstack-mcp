@@ -48,6 +48,15 @@ describe("AdsApiError fix hints", () => {
     expect(e.message).toContain(hint);
   });
 
+  it("sends only the budget-lost share to campaign: rank-lost runs FROM ad_group and keyword_view (prod, 2026-10-30)", () => {
+    const code = { queryError: "PROHIBITED_METRIC_IN_SELECT_OR_WHERE_CLAUSE" };
+    const budget = new AdsApiError(400, body(code, "Cannot select or filter on the following metrics: 'search_budget_lost_impression_share'"));
+    expect(budget.message).toContain("budget-lost impression share");
+    expect(budget.message).not.toContain("rank-lost");
+    const rank = new AdsApiError(400, body(code, "Cannot select or filter on the following metrics: 'search_rank_lost_impression_share'"));
+    expect(rank.message).not.toContain("→ ");
+  });
+
   it("says a repeated error once", () => {
     const err = { errorCode: { assetError: "DUPLICATE_ASSET" }, message: "Assets are duplicated across operations.",
       location: { fieldPathElements: [{ fieldName: "headlines" }] } };
