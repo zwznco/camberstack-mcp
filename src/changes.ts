@@ -1507,11 +1507,15 @@ export async function resolveChange(
       if (change.ai_max !== undefined && change.ai_max !== wasOn) {
         fields.aiMaxSetting = { enableAiMax: change.ai_max }; undo.aiMaxSetting = { enableAiMax: wasOn }; mask.push("ai_max_setting.enable_ai_max");
       }
+      // Google refuses AI Max off while either stays opted in, so turning it off opts both out in the same request.
+      if (change.ai_max === false) for (const t of ["TEXT_ASSET_AUTOMATION", "FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION"]) {
+        if (want.get(t) === "OPTED_IN") want.set(t, "OPTED_OUT");
+      }
       const settings = [...want].map(([assetAutomationType, assetAutomationStatus]) => ({ assetAutomationType, assetAutomationStatus }));
       if (settings.some((x) => had.find((h) => h.assetAutomationType === x.assetAutomationType)?.assetAutomationStatus !== x.assetAutomationStatus)) {
         fields.assetAutomationSettings = settings; undo.assetAutomationSettings = had; mask.push("asset_automation_settings");
       }
-      const said = [change.ai_max !== undefined && `AI Max ${change.ai_max ? "on" : "off"}`, change.text_automation !== undefined && `Google-written text ${change.text_automation ? "on" : "off"}`,
+      const said = [change.ai_max !== undefined && `AI Max ${change.ai_max ? "on" : "off"}${change.ai_max === false && mask.includes("asset_automation_settings") ? " with Google-written text and URL expansion" : ""}`, change.text_automation !== undefined && `Google-written text ${change.text_automation ? "on" : "off"}`,
         change.url_expansion !== undefined && `URL expansion ${change.url_expansion ? "on" : "off"}`].filter(Boolean).join(", ");
       const on = change.ai_max || change.text_automation || change.url_expansion;
       return {
