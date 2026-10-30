@@ -9,6 +9,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import type { GoogleCreds } from "./google.js";
+import { sendMail } from "./lifecycle.js";
 import { SignIn } from "./signin.js";
 import { appPage, esc, infoPage } from "./pages.js";
 
@@ -116,18 +117,12 @@ export function mountFeedback(app: Express, d: FeedbackDeps): SignIn {
 async function notify(d: FeedbackDeps, email: string, kind: Kind, message: string, connected: boolean): Promise<void> {
   if (!d.mail) return;
   const who = `${email} (${connected ? "connected user" : "not connected"})`;
-  const res = await (d.mailFetch ?? fetch)("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${d.mail.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: d.mail.from, to: [d.operator], reply_to: email,
-      subject: `Feedback: ${FEEDBACK_KINDS[kind]} from ${email}`,
-      text: `${who}\n\n${message}`,
-      html: `<p style="color:#777">${esc(who)}</p><p style="white-space:pre-wrap">${esc(message)}</p>`,
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  await sendMail(d.mail.apiKey, {
+    from: d.mail.from, to: [d.operator], reply_to: email,
+    subject: `Feedback: ${FEEDBACK_KINDS[kind]} from ${email}`,
+    text: `${who}\n\n${message}`,
+    html: `<p style="color:#777">${esc(who)}</p><p style="white-space:pre-wrap">${esc(message)}</p>`,
+  }, d.mailFetch);
 }
 
 /** For the admin site. */

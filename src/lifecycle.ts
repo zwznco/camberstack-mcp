@@ -27,10 +27,21 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, payingSql, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { DEMO_MERCHANT } from "./merchant.js";
+
+/** Send one email through Resend; throws if it refuses. */
+export async function sendMail(apiKey: string, email: object, f: typeof fetch = fetch, idempotencyKey?: string): Promise<void> {
+  const res = await f("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}) },
+    body: JSON.stringify(email),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
+}
 
 export interface MailConfig {
   apiKey: string; from: string; replyTo: string;
@@ -188,7 +199,7 @@ export class Lifecycle {
    */
   async transactional(): Promise<number> {
     if (!this.d.mail) return 0;
-    const pros = (this.d.db.prepare(`SELECT u.id, u.email, u.plan FROM users u WHERE u.plan IN ('plus', 'pro', 'agency') AND u.stripe_sub IS NOT NULL AND u.stripe_sub != ''
+    const pros = (this.d.db.prepare(`SELECT u.id, u.email, u.plan FROM users u WHERE ${payingSql("u.")}
       AND u.email_opt_out = 0 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = 'pro_welcome')`)
       .all() as { id: string; email: string; plan: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
@@ -228,19 +239,13 @@ export class Lifecycle {
   private async send(to: string, m: { subject: string; text: string; html: string }, userId: string, once?: string, address?: string): Promise<void> {
     const unsub = this.unsubscribeUrl(userId);
     const footer = `You're getting this because you connected Camberstack (camberstack.io) to Google Ads.${address ? ` Camberstack, ${address}.` : ""}`;
-    const res = await (this.d.fetch ?? fetch)("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.d.mail!.apiKey}`, "Content-Type": "application/json", ...(once ? { "Idempotency-Key": once } : {}) },
-      body: JSON.stringify({
-        from: this.d.mail!.from, to: [to], reply_to: this.d.mail!.replyTo, subject: m.subject,
-        text: `${m.text}\n\n--\n${footer}\nUnsubscribe: ${unsub}`,
-        html: `${m.html}<hr style="border:0;border-top:1px solid #ddd;margin:28px 0 12px">
+    await sendMail(this.d.mail!.apiKey, {
+      from: this.d.mail!.from, to: [to], reply_to: this.d.mail!.replyTo, subject: m.subject,
+      text: `${m.text}\n\n--\n${footer}\nUnsubscribe: ${unsub}`,
+      html: `${m.html}<hr style="border:0;border-top:1px solid #ddd;margin:28px 0 12px">
 <p style="color:#777;font-size:13px">${footer} <a href="${unsub}" style="color:#777">Unsubscribe</a></p>`,
-        headers: { "List-Unsubscribe": `<${unsub}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      headers: { "List-Unsubscribe": `<${unsub}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+    }, this.d.fetch, once);
   }
 
   /** Operator check: send one sample of each email to `to`, with placeholder links. */

@@ -8,14 +8,14 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SWITCH_NOTICE_PREFIX } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
 /**
  * A paying customer: a paid plan with a live Stripe subscription. Complimentary plans (PRO_EMAILS, grandfathered Plus with no
  * subscription) aren't revenue. billing.ts drops a lapsed subscription to plan 'free' but keeps its stripe_sub, so a stripe_sub
  * alone isn't paying either. `u` is the users alias.
  */
-const PAYING = "u.plan IN ('plus', 'pro', 'agency') AND coalesce(u.stripe_sub, '') != ''";
+const PAYING = payingSql("u.");
 /** Monthly dollars per paid plan, from the labels the site shows, so the two can't drift. */
 export const MONTHLY: Record<string, number> = Object.fromEntries(
   ([["plus", PLUS_PRICE_LABEL], ["pro", PRO_PRICE_LABEL], ["agency", AGENCY_PRICE_LABEL]] as const).map(([p, l]) => [p, Number(l.match(/\d+/)?.[0] ?? 0)]));
@@ -238,14 +238,14 @@ function retention(q: <T>(sql: string, ...p: unknown[]) => T[]) {
  */
 function paywall(q: <T>(sql: string, ...p: unknown[]) => T[]) {
   const on = q<{ at: number | null }>(
-    `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE 'Service limit:%' OR c.error LIKE 'Service choice:%'`)[0]?.at;
+    `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${SERVICE_LIMIT_PREFIX}%' OR c.error LIKE '${SERVICE_CHOICE_PREFIX}%'`)[0]?.at;
   if (!on) return { since: null, rows: [] };
   const chatgpt = `EXISTS (SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = u.id
     AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%'))`;
   const ev = (kind: string) => `EXISTS (SELECT 1 FROM plan_events e WHERE e.user_id = u.id AND e.kind = '${kind}' AND e.at >= ${on})`;
   const rows = q<{ existing: number; chatgpt: number; users: number; stopped: number; emailed: number; viewed: number; clicked: number; paid: number }>(
     `SELECT u.created_at < ${on} existing, ${chatgpt} chatgpt, count(*) users,
-       sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE 'Service limit:%')) stopped,
+       sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%')) stopped,
        sum(EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'service_limit')) emailed,
        sum(${ev("plans_view")}) viewed, sum(${ev("upgrade_click")}) clicked, sum(${ev("paid")}) paid
      FROM {U} u WHERE coalesce(u.last_seen_at, u.created_at) >= ${on} GROUP BY 1, 2 ORDER BY 1 DESC, 2 DESC`);

@@ -10,6 +10,7 @@
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
+import { payingSql } from "./plans.js";
 import { decrypt } from "./crypto.js";
 import { revokeGoogleToken } from "./google.js";
 import { clearGoogleCache } from "./session.js";
@@ -41,7 +42,7 @@ export async function retain(d: RetentionDeps, t = now()): Promise<{ grants: num
 
   const internal = [...d.internalEmails].map((e) => e.toLowerCase());
   const gone = (d.db.prepare(`SELECT id, email FROM users WHERE ${idle}
-      AND NOT (plan IN ('plus', 'pro', 'agency') AND coalesce(stripe_sub, '') != '')`).all(t - ACCOUNT_DAYS * 86400) as { id: string; email: string }[])
+      AND NOT (${payingSql()})`).all(t - ACCOUNT_DAYS * 86400) as { id: string; email: string }[])
     .filter((u) => !internal.includes(u.email.toLowerCase()));
   const del = d.db.transaction((id: string) => {
     // Kept per Merchant Center account, not per user: read these before tool_calls goes, and leave what someone else still uses.

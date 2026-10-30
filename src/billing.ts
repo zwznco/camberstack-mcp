@@ -14,7 +14,7 @@ import type { DB, UserRow } from "./db.js";
 import { now } from "./db.js";
 import { safeEqual, sign } from "./crypto.js";
 import { esc } from "./pages.js";
-import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, isPaid, planLabel, type Plan } from "./plans.js";
+import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, isPaid, payingSql, planLabel, type Plan } from "./plans.js";
 
 const LINK_TTL = 7 * 86400;
 /** Subscription statuses that keep a paid plan (past_due: Stripe is still retrying the card). */
@@ -149,7 +149,7 @@ export class Billing {
     if (!this.enabled) return;
     // One bad answer from Stripe must not stop the rest: each step and each user fails on its own.
     try { await this.settleCompleted(); } catch (e) { console.error(`billing sweep: settle: ${(e as Error).message}`); }
-    const paying = this.d.db.prepare("SELECT id, plan, stripe_sub FROM users WHERE plan IN ('plus', 'pro', 'agency') AND stripe_sub IS NOT NULL AND stripe_sub != ''").all() as
+    const paying = this.d.db.prepare(`SELECT id, plan, stripe_sub FROM users WHERE ${payingSql()}`).all() as
       { id: string; plan: Plan; stripe_sub: string }[];
     for (const p of paying) {
       let sub: any;

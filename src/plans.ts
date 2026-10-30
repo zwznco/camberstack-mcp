@@ -14,6 +14,8 @@ export const AGENCY_PRICE_LABEL = "$49/month";
 export const AGENCY_ACCOUNTS = 25;
 /** users.plan: free, or a paid plan its Stripe subscription's price decides (billing.ts). */
 export type Plan = "free" | "plus" | "pro" | "agency";
+/** SQL for a paying user: `alias` is "u." or "". A plan with no Stripe subscription (PRO_EMAILS) doesn't count. */
+export const payingSql = (alias = "") => `${alias}plan IN ('plus', 'pro', 'agency') AND coalesce(${alias}stripe_sub, '') != ''`;
 export const isPaid = (plan: string | null | undefined) => plan === "plus" || plan === "pro" || plan === "agency";
 /** "Plus" / "Pro" / "Agency" / "Free". */
 export const planLabel = (plan: string) => plan === "agency" ? "Agency" : plan === "pro" ? "Pro" : plan === "plus" ? "Plus" : "Free";

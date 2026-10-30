@@ -12,6 +12,7 @@
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
+import { sendMail } from "./lifecycle.js";
 import { esc } from "./pages.js";
 import { isPaid, PLAN_LIMIT_PREFIX } from "./plans.js";
 
@@ -187,20 +188,16 @@ export class ErrorAlerts {
     if (!fresh.length) return fresh;
     const m = render(fresh, this.d.adminUrl);
     if (!this.d.mail) { console.log(`error alert (mail off): ${m.subject}`); return fresh; }
-    const res = await (this.d.fetch ?? fetch)("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.d.mail.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: this.d.mail.from, to: [this.d.to], subject: m.subject, text: m.text, html: m.html }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
+    try {
+      await sendMail(this.d.mail.apiKey, { from: this.d.mail.from, to: [this.d.to], subject: m.subject, text: m.text, html: m.html }, this.d.fetch);
+    } catch (e) {
       // Unclaim, so the next run tries again.
       for (const e of fresh) {
         const p = prev.get(e.key);
         if (p === undefined) db.prepare("DELETE FROM error_alerts WHERE k = ?").run(e.key);
         else db.prepare("UPDATE error_alerts SET last_id = ? WHERE k = ?").run(p, e.key);
       }
-      throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      throw e;
     }
     return fresh;
   }
