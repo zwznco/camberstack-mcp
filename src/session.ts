@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, ALL_THREE, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, freePlan, freePlanChange, isPaid, planLabel, type FreePlan, type Plan, type Service } from "./plans.js";
+import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, ALL_THREE, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, freePlan, freePlanChange, isPaid, planLabel, type FreePlan, type Plan, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -65,6 +65,8 @@ const inFlight = new Map<string, Map<string, number>>();
 const servicesInFlight = new Map<string, Map<Service, number>>();
 /** When each user was last asked to pick Free's service (checkService). In memory: a restart just asks again. */
 const serviceAsked = new Map<string, number>();
+/** The account each user was last told about in an "Account switch:" notice, and when. */
+const switchAsked = new Map<string, { cid: string; at: number }>();
 
 /**
  * `fn` over `items`, at most `limit` at a time, results in input order. If any fail, throws the error of the
@@ -412,7 +414,11 @@ export class UserSession {
     }
     // A new account on a full plan is the switch: it passes only once the user has said yes to spending it.
     const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
-    if (isSwitch() && !confirmSwitch) {
+    // switch_account spends it only after the notice: an AI that called it straight away spent a new user's switch 41
+    // seconds after their first pick, locking that account for 30 days with no warning (prod, 2026-10-30).
+    const asked = switchAsked.get(this.user.id);
+    const agreed = confirmSwitch && asked?.cid === cid && now() - asked.at <= SWITCH_ANSWER_SECONDS;
+    if (isSwitch() && !agreed) {
       const managers = new Set((await this.accounts().catch(() => [] as Account[])).filter((a) => a.manager).map((a) => a.customerId));
       if (!managers.has(cid)) {
         st = this.planState(managers);
@@ -420,7 +426,8 @@ export class UserSession {
           this.reloadPlan();
           st = this.planState(managers);
         }
-        if (isSwitch()) this.noticeSwitch(cid, st);
+        // An account this login can't reach has nothing to switch to: the call fails on its own and spends nothing.
+        if (isSwitch() && await this.mayReach(cid)) this.noticeSwitch(cid, st);
       }
     }
     if (!st.allows(cid)) {
@@ -458,8 +465,19 @@ export class UserSession {
         to_go_ahead: "once the user picks, call switch_account with that customer_id, then this tool again" });
   }
 
+  /** False only when a complete account list says no: unsure must still stop for the notice, or a read could spend the switch unasked. */
+  private async mayReach(cid: string): Promise<boolean> {
+    try {
+      const reaches = (list: Account[]) => list.some((a) => a.customerId === cid);
+      return reaches(await this.accounts()) || reaches(await this.accounts({ fresh: true })) || this.lastUnreadable.length > 0;
+    } catch {
+      return true;
+    }
+  }
+
   /** Stop before the switch is spent: what it locks, until when, and how to go ahead. */
   private noticeSwitch(cid: string, st: ReturnType<UserSession["planState"]>): never {
+    switchAsked.set(this.user.id, { cid, at: now() });
     const locks = st.active.at(-1)!;
     // Once spent, the switch comes back when the account it locks ages out of the window.
     const last = this.usage().find((u) => u.c === locks)?.last ?? now();

@@ -521,8 +521,9 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   tool("switch_account", {
     title: "Switch the plan's active account",
     description: "Spends the plan's one account switch per 30 days on customer_id: it becomes an active account, and the least recently used active account "
-      + "locks until the date the \"Account switch:\" notice gave, switching back included. Call it only after another tool answered \"Account switch:\" "
+      + "locks until the date the \"Account switch:\" notice gave, switching back included. Call it only after a tool answered \"Account switch:\" "
       + "for this account and the user agreed, or answered \"Account choice:\" and the user picked this account (a first pick spends no switch). "
+      + "Called with neither, it answers with the \"Account switch:\" notice and spends nothing. "
       + "Changes nothing in Google Ads; a no-op for an account that is already active.",
     inputSchema: { customer_id: customerId },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },

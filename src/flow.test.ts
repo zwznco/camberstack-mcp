@@ -1221,6 +1221,20 @@ describe("OAuth + MCP end to end", () => {
 
   it("lets Free switch accounts once a month, and keeps the most recent after a downgrade", async () => {
     const uid = (db.prepare("SELECT id FROM users WHERE email = 'owner@example.com'").get() as { id: string }).id;
+    // An account this login can't reach is no switch: no notice, and nothing spent (a one-account user got one, 2026-10-30).
+    const unreachable = await call(token, "switch_account", { customer_id: "222-333-4444" });
+    expect(unreachable.isError).toBe(true);
+    expect(unreachable.text).toContain("Nothing was spent");
+    expect(unreachable.text).not.toContain("Account switch:");
+    expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).not.toContain("Account switch:");
+    const realSearch = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
+      ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
+      : realSearch(cid, q);
+    // switch_account straight away stops with the same notice: an AI can't spend the switch before the user hears what it locks.
+    const direct = await call(token, "switch_account", { customer_id: "222-333-4444" });
+    expect(direct.json).toMatchObject({ status: "switch_confirmation_needed", switch_to: "2223334444", locks_account: "1112223333" });
+    expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
     // One account in use: a new one is the switch. The first call only says what spending it would lock, and uses nothing.
     const ask = await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 });
     // Not an error: nothing failed, and errors count against the directory's reliability metrics.
@@ -1242,19 +1256,10 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT tool, customer_id, ok, query_shape FROM tool_calls WHERE user_id = ? ORDER BY id DESC LIMIT 1").get(uid))
       .toEqual({ tool: "run_gaql", customer_id: null, ok: 1, query_shape: "SELECT name, category WHERE name LIKE ?" });
     expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
-    // The account in use, the demo and the switch once confirmed all go through (this login just can't read 2223334444).
+    // The account in use, the demo and the switch once confirmed all go through.
     expect((await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).not.toContain("Account switch:");
     expect((await call(token, "account_overview", { customer_id: "0000000001", days: 30 })).isError).toBe(false);
-    // Spending the switch is its own write tool: no read tool takes a flag that changes the plan. It never spends the
-    // switch on an account the login can't reach.
-    const unreachable = await call(token, "switch_account", { customer_id: "222-333-4444" });
-    expect(unreachable.isError).toBe(true);
-    expect(unreachable.text).toContain("Nothing was spent");
-    expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
-    const realSearch = ads.search.bind(ads);
-    ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
-      ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
-      : realSearch(cid, q);
+    // Spending the switch is its own write tool: no read tool takes a flag that changes the plan.
     try {
       const sw = await call(token, "switch_account", { customer_id: "222-333-4444" });
       expect(sw.json).toMatchObject({ switched_to: "2223334444", active_accounts: ["2223334444"] });
@@ -1295,8 +1300,12 @@ describe("OAuth + MCP end to end", () => {
       const back = await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 });
       expect(back.text).not.toContain("Plan limit:");
       expect(back.text).not.toContain("Account switch:");
+      ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
+        ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
+        : realSearch(cid, q);
       expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).toContain("Account switch:");
     } finally {
+      ads.search = realSearch;
       db.prepare("UPDATE users SET plan_reset_at = NULL WHERE id = ?").run(uid);
       db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
       // OR REPLACE: rows logged in the try reuse freed ids (no AUTOINCREMENT).
