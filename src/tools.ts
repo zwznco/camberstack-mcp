@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ListToolsResult, ToolAnnotations } from "@modelcontextprotocol/server";
 import { MAX_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
-import { listMerchantAccounts, merchantReport, productIssues } from "./merchant.js";
+import { DEMO_MERCHANT, listMerchantAccounts, merchantReport, productIssues } from "./merchant.js";
 import { PUBLIC_MC_CHANGES, PublicMcChangeSchema, mcTarget } from "./merchant-changes.js";
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
@@ -39,12 +39,17 @@ const MC_GATED = new Set(["merchant_product_issues", "merchant_report", "propose
 const GA_PROPOSES = new Set(PUBLIC_GA_CHANGES.map((c) => `propose_${c.shape.type.value}`));
 /**
  * The Google services a call uses on real data, for the one-service Free plan (session.ts checkService). Listing what a
- * login can reach (list_accounts, search_console_sites, analytics_properties) and the demo account, site and property
+ * login can reach (list_accounts, search_console_sites, analytics_properties, merchant_accounts) and the demo account, site, property and store
  * use none; nor do apply/undo/history, which act on a proposal the gate already let through.
  */
 export function servicesOf(name: string, a: unknown): Service[] {
-  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; changes?: { property_id?: unknown }[] };
+  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; changes?: { property_id?: unknown }[] };
   const realGa = (p: unknown) => p !== DEMO_PROPERTY;
+  const realMc = typeof x.account_id === "string" && x.account_id !== DEMO_MERCHANT;
+  // Reads Ads and Merchant Center together, so like paid_organic_overlap it needs a paid plan on one-service Free.
+  if (name === "merchant_ad_spend")
+    return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(realMc ? ["merchant" as const] : [])];
+  if (MC_GATED.has(name)) return realMc ? ["merchant"] : [];
   if (name === "paid_organic_overlap")
     return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(x.site_url !== DEMO_SITE ? ["search_console" as const] : [])];
   if (GATED.has(name) && name !== "switch_account") return typeof x.customer_id === "string" && !isDemo(x.customer_id) && !isLookup(name, a) ? ["ads"] : [];

@@ -18,7 +18,7 @@ import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
 import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
-import { freePlan, parseFreeOneService, type FreePlan } from "./plans.js";
+import { allN, allServices, freePlan, listMerchant, oneServiceFree, parseFreeOneService, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 
@@ -2795,6 +2795,29 @@ describe("OAuth + MCP end to end", () => {
     expect(servicesOf("paid_organic_overlap", { customer_id: "111-222-3333", site_url: "sc-domain:acme.test" })).toEqual(["ads", "search_console"]);
     for (const n of ["apply_changes", "undo_changes", "change_history", "list_accounts", "switch_account", "billing"])
       expect(servicesOf(n, { customer_id: "111-222-3333" })).toEqual([]);
+  });
+
+  it("counts Merchant Center as a 4th service: its own for its tools, with Ads for merchant_ad_spend, none on the demo store", () => {
+    expect(servicesOf("merchant_report", { account_id: "5878651753", query: "SELECT id FROM product_view" })).toEqual(["merchant"]);
+    expect(servicesOf("merchant_product_issues", { account_id: "5878651753" })).toEqual(["merchant"]);
+    expect(servicesOf("propose_set_product_attributes", { account_id: "5878651753", offer_id: "x" })).toEqual(["merchant"]);
+    expect(servicesOf("merchant_report", { account_id: "000000001", query: "SELECT id FROM product_view" })).toEqual([]);
+    expect(servicesOf("merchant_accounts", {})).toEqual([]);
+    expect(servicesOf("merchant_ad_spend", { customer_id: "111-222-3333", account_id: "5878651753" })).toEqual(["ads", "merchant"]);
+    expect(servicesOf("merchant_ad_spend", { customer_id: "000-000-0001", account_id: "000000001" })).toEqual([]);
+  });
+
+  it("names Merchant Center in the plan copy only once it's public", () => {
+    try {
+      listMerchant(false);
+      expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console or Google Analytics");
+      expect(allServices()).toBe("Google Ads, Search Console and Google Analytics together");
+      expect(allN()).toBe("all three");
+      listMerchant(true);
+      expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console, Google Analytics or Merchant Center (1 account)");
+      expect(allServices()).toBe("Google Ads, Search Console, Google Analytics and Merchant Center together");
+      expect(allN()).toBe("all four");
+    } finally { listMerchant(false); }
   });
 
 });

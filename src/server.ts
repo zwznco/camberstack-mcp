@@ -26,7 +26,7 @@ import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
 import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage, withFreePlan } from "./pages.js";
-import { freePlan } from "./plans.js";
+import { freePlan, listMerchant } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
@@ -64,6 +64,8 @@ export interface Service {
 }
 
 export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Service {
+  // Before anything renders: pages, emails and tool results name Merchant Center as a service only once it's public.
+  listMerchant(cfg.merchantPublic);
   const app = express();
   app.set("trust proxy", 1); // behind Traefik: one hop
   app.disable("x-powered-by");

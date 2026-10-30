@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, ALL_THREE, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, freePlan, freePlanChange, isPaid, poolOf, planLabel, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -228,7 +228,7 @@ export class UserSession {
     }
   }
 
-  /** On a paid plan (Plus, Pro or Agency), or complimentary Pro (PRO_EMAILS): all three Google services, no one-service gate. */
+  /** On a paid plan (Plus, Pro or Agency), or complimentary Pro (PRO_EMAILS): every Google service, no one-service gate. */
   get isPro(): boolean {
     return isPaid(this.user.plan) || this.deps.proEmails.has(this.user.email.toLowerCase());
   }
@@ -305,11 +305,11 @@ export class UserSession {
       if (!asked || now() - asked > SERVICE_CHOICE_SECONDS) {
         serviceAsked.set(this.user.id, now());
         const plan = this.chatgpt ? "The current plan" : "The Free plan";
-        throw new SwitchNotice(`${SERVICE_CHOICE_PREFIX} ${plan} covers one Google service at a time: Google Ads, Search Console or Google Analytics. `
+        throw new SwitchNotice(`${SERVICE_CHOICE_PREFIX} ${plan} covers one Google service at a time: ${servicesOr()}. `
           + `Nothing has run yet. Ask the user which one they want to use for the next ${ACCOUNT_WINDOW_DAYS} days, then make the call for that service: `
           + `the first one made in the next ${SERVICE_CHOICE_SECONDS / 60} minutes becomes the plan's service, and the others wait until ${ACCOUNT_WINDOW_DAYS} days after it was last used.`
-          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers all three together.` : ` Pro (${PRO_PRICE_LABEL}) covers all three together.`),
-          { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: Object.values(SERVICE_LABELS), window_days: ACCOUNT_WINDOW_DAYS,
+          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers ${allN()} together.` : ` Pro (${PRO_PRICE_LABEL}) covers ${allN()} together.`),
+          { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: listedServices().map((s) => SERVICE_LABELS[s]), window_days: ACCOUNT_WINDOW_DAYS,
             ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
       }
       serviceAsked.delete(this.user.id);
@@ -323,22 +323,22 @@ export class UserSession {
       const last = used.find((u) => u.s === covered)?.last ?? (covered ? now() : undefined);
       const opens = last ? new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10) : null;
       const why = have ? `this login uses it for ${have}` : `${want} together need more than one`;
-      const head = `${SERVICE_LIMIT_PREFIX} ${this.chatgpt ? "the current plan" : "the Free plan"} covers one Google service at a time (Google Ads, Search Console or Google Analytics), and ${why}.`
+      const head = `${SERVICE_LIMIT_PREFIX} ${this.chatgpt ? "the current plan" : "the Free plan"} covers one Google service at a time (${servicesOr()}), and ${why}.`
         + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
       const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
       if (this.chatgpt) throw new SwitchNotice(`${head} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
       const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
       if (plusUrl) {
         const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-        throw new SwitchNotice(`${head} Plus (${PLUS_PRICE_LABEL}) covers all three together on 1 Google Ads account, so ${want} works right away; `
+        throw new SwitchNotice(`${head} Plus (${PLUS_PRICE_LABEL}) covers ${allN()} together on 1 Google Ads account, so ${want} works right away; `
           + `Pro (${PRO_PRICE_LABEL}) does on up to ${this.deps.proAccounts}.`,
-          { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${ALL_THREE}, on 1 Google Ads account`, cancel: "any time",
+          { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${allServices()}, on 1 Google Ads account`, cancel: "any time",
             upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" },
-            or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `${ALL_THREE}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
+            or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
       }
       const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-      throw new SwitchNotice(`${head} Pro (${PRO_PRICE_LABEL}) covers all three together, so ${want} works right away.`,
-        { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: "Google Ads, Search Console and Google Analytics together", cancel: "any time",
+      throw new SwitchNotice(`${head} Pro (${PRO_PRICE_LABEL}) covers ${allN()} together, so ${want} works right away.`,
+        { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: allServices(), cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
     }
     const mine = servicesInFlight.get(this.user.id) ?? new Map<Service, number>();
@@ -534,7 +534,7 @@ export class UserSession {
 
   private freeIncluded(): string {
     return this.oneService
-      ? "every tool on 1 Google service at a time (Google Ads, Search Console or Google Analytics) and 1 Google Ads account, with unlimited applied changes; undo and history always work"
+      ? `every tool on 1 Google service at a time (${servicesOr()}) and 1 Google Ads account, with unlimited applied changes; undo and history always work`
       : "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work";
   }
 
@@ -576,11 +576,11 @@ export class UserSession {
             : { complimentary: true, manage_billing: null }),
           // Plus → Pro and Pro → Agency switch on the billing page (Stripe's portal), with the difference prorated.
           ...(this.planName === "pro" ? agency : {}),
-          ...(this.planName === "plus" && upgrade ? { pro: `${ALL_THREE}, on up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
+          ...(this.planName === "plus" && upgrade ? { pro: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
       : { plan: "free", account_page, ...usage, ...this.serviceUsage(),
           included: this.freeIncluded(),
-          ...(plusUrl ? { plus: `${ALL_THREE}, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
-          pro: `${this.freePlan.kind !== "accounts" ? `${ALL_THREE}, on ` : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
+          ...(plusUrl ? { plus: `${allServices()}, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
+          pro: `${this.freePlan.kind !== "accounts" ? `${allServices()}, on ` : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
           upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
   }

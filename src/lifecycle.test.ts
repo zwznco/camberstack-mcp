@@ -77,7 +77,7 @@ describe("lifecycle emails", () => {
     db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - DAY);
     expect(await lc.run()).toBe(2);
     const sc = sent.find((m) => m.to[0] === "sc@example.com"), both = sent.find((m) => m.to[0] === "both@example.com");
-    expect(sc.subject).toBe("Using Google Ads, Search Console and Analytics together");
+    expect(sc.subject).toBe("Using Google Ads, Search Console and Google Analytics together");
     expect(sc.text).toContain("stopped when your AI tried to use Google Ads. The Free plan covers one Google service at a time, "
       + "and you're using it for Search Console; Google Ads opens on Free on November 27.");
     expect(sc.text).toContain("https://camberstack.io/upgrade?t=sc.sig");

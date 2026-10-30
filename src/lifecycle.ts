@@ -27,7 +27,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, ALL_THREE, ONE_SERVICE_FREE, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, freePlan, freePlanChange, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, freePlan, freePlanChange, oneServiceFree, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 
@@ -341,17 +341,17 @@ function serviceLimit(base: string, plus: string | null, upgrade: string | null,
   const when = opens && new Date(`${opens[2]}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
   const stopped = `Camberstack stopped when your AI tried to use ${want}. The Free plan covers one Google service at a time`
     + (have ? `, and you're using it for ${have}${when ? `; ${want} opens on Free on ${when}` : ""}.` : ".");
-  // Plus when it's sold: the same one account, all three services, which is what this stop is about.
+  // Plus when it's sold: the same one account, every service, which is what this stop is about.
   const pro = plus
-    ? `Camberstack Plus covers Google Ads, Search Console and Google Analytics together on one Google Ads account, including the tools `
+    ? `Camberstack Plus covers ${allServices()} on one Google Ads account, including the tools `
       + `that use them side by side, such as finding searches you pay for that already rank, for ${PLUS_PRICE_LABEL}; cancel any time. `
       + `Pro (${PRO_PRICE_LABEL}) does the same on up to ${PRO_ACCOUNTS} accounts.`
-    : `Camberstack Pro covers Google Ads, Search Console and Google Analytics together, including the tools that use them side by side, `
+    : `Camberstack Pro covers ${allServices()}, including the tools that use them side by side, `
       + `such as finding searches you pay for that already rank, for ${PRO_PRICE_LABEL}; cancel any time.`;
   const link = plus ?? upgrade;
   const free = `On Free, every tool and unlimited changes keep working${have ? ` on ${have}` : ""}, and undo and history always work.`;
   return {
-    subject: "Using Google Ads, Search Console and Analytics together",
+    subject: `Using ${allServices()}`,
     text: `Hi,
 
 ${stopped}
@@ -430,7 +430,7 @@ camberstack.io`,
 function welcome(base: string, fp: FreePlan = { kind: "accounts" }) {
   const ask = "How did each of my Google Ads campaigns do last month?";
   const plans = fp.kind === "one_service"
-    ? `Free covers ${ONE_SERVICE_FREE}; Plus (${PLUS_PRICE_LABEL}) covers ${ALL_THREE} on 1 Google Ads account, Pro (${PRO_PRICE_LABEL}) on up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`
+    ? `Free covers ${oneServiceFree()}; Plus (${PLUS_PRICE_LABEL}) covers ${allServices()} on 1 Google Ads account, Pro (${PRO_PRICE_LABEL}) on up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`
     : `Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.${fp.kind === "upcoming" ? ` ${freePlanChange(fp)}` : ""}`;
   return {
     subject: "Welcome to Camberstack",
@@ -457,10 +457,10 @@ Camberstack`,
 }
 
 /** Transactional: confirms the upgrade. Billing changes and cancelling live on /account (Stripe's portal), receipts come from Stripe. */
-/** Plus adds services, not accounts: Google Ads, Search Console and Google Analytics together on the one account. */
+/** Plus adds services, not accounts: every listed service together on the one account. */
 function plusWelcome(base: string) {
   const ask = "Which searches do I pay for that already rank on Google?";
-  const adds = `Google Ads, Search Console and Google Analytics together, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
+  const adds = `${allServices()}, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
   const same = "every tool, unlimited changes, nothing applied until you approve it, and every change can be undone.";
   const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from your account page`;
   return {

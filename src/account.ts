@@ -13,7 +13,7 @@ import { SignIn } from "./signin.js";
 import { appPage, cmd, COPY_JS, esc, infoPage } from "./pages.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, planLabel } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LABELS, allN, listedServices, planLabel } from "./plans.js";
 
 export interface AccountDeps {
   db: DB;
@@ -201,10 +201,10 @@ ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="bt
         const used = plan.accounts_in_use;
         return `<div class="card"><p class="label">Plan</p><p class="big">Free</p>
 <p class="muted">${"services_included" in plan
-  ? `Every tool, with unlimited applied changes, on one Google service at a time (Google Ads on ${plan.accounts_included} account, Search Console or Google Analytics). In use: <strong style="color:var(--fg)">${esc(plan.service_in_use ?? "none yet; your AI asks which before the first")}</strong>.`
+  ? `Every tool, with unlimited applied changes, on one Google service at a time (${listedServices().map((s) => s === "ads" || s === "merchant" ? `${SERVICE_LABELS[s]} on ${plan.accounts_included} account` : SERVICE_LABELS[s]).join(", ").replace(/, ([^,]+)$/, " or $1")}). In use: <strong style="color:var(--fg)">${esc(plan.service_in_use ?? "none yet; your AI asks which before the first")}</strong>.`
   : `Every tool, with unlimited applied changes, on ${plan.accounts_included} Google Ads account.`}
 ${used.length ? `Google Ads accounts in use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on a Google Ads account yet."}
-${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? `Plus covers all three together on 1 account; ` : ""}Pro covers ${"services_included" in plan || "plus_upgrade_url" in plan ? `all three together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
+${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? `Plus covers ${allN()} together on 1 account; ` : ""}Pro covers ${"services_included" in plan || "plus_upgrade_url" in plan ? `${allN()} together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
 ${"free_plan_change" in plan && plan.free_plan_change ? `<p class="muted"><strong style="color:var(--fg)">${esc(plan.free_plan_change)}</strong></p>` : ""}
 <p class="muted">To move to a different account, ask your AI to switch to it: Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.</p>
 ${!by && "plus_upgrade_url" in plan && plan.plus_upgrade_url ? `<a class="btn" href="${esc(plan.plus_upgrade_url)}">Plus · ${PLUS_PRICE_LABEL}</a>` : ""}
