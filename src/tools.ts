@@ -16,7 +16,7 @@ export const SERVER_VERSION = "0.20.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
-Never call apply_changes unless the user has explicitly approved that specific proposal in this conversation. Every applied proposal can be reversed with undo_changes.
+Never call apply_changes unless the user has explicitly approved that specific proposal in this conversation. Applied proposals can be reversed with undo_changes, except deletions Google can't reverse: their summary says so with a ⚠, so tell the user before they approve.
 Each Google service is added separately: when a result says one isn't part of the connection, give the user its grant_url (one click adds it); never tell them to reconnect.
 For keyword_ideas and keyword_metrics, pass the account's own market: location_ids default to the United States.
 Search Console is read-only: lead with search_console_summary (per-query rows leave out rare queries). Camberstack can't request indexing or submit sitemaps: the user does that in Search Console.
@@ -490,7 +490,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("apply_changes", {
     title: "Apply an approved proposal",
-    description: `Applies a proposal from ${o.chatgpt ? "a propose_ tool" : "propose_changes"} to the account. Only call this after the user has explicitly approved that proposal. All or nothing: every change is checked with Google first, and if one still fails the ones before it are rolled back. Each change is logged and can be reversed with ${o.chatgpt ? "propose_undo" : "undo_changes"}. `
+    description: `Applies a proposal from ${o.chatgpt ? "a propose_ tool" : "propose_changes"} to the account. Only call this after the user has explicitly approved that proposal. All or nothing: every change is checked with Google first, and if one still fails the ones before it are rolled back. Each change is logged and, unless its summary says otherwise, can be reversed with ${o.chatgpt ? "propose_undo" : "undo_changes"}. `
       + "If the account changed since the proposal, nothing is applied and the result (status \"needs approval\") is a new proposal with the updated summary: show it to the user and apply it only after they approve.",
     inputSchema: { proposal_id: z.string().describe("The proposal_id a propose tool returned") },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },

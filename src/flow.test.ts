@@ -618,7 +618,7 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT version FROM client_tools").all()).toEqual([{ version: SERVER_VERSION }]);
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
-    expectToolBudget(tools, { total: 72_000, perTool: 6_000, except: { propose_changes: 40_100 } }); // 40.1K: remove_conversion_action (2026-10-29)
+    expectToolBudget(tools, { total: 75_500, perTool: 6_000, except: { propose_changes: 43_100 } }); // 43.1K: the delete_ changes (2026-10-30)
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1113,7 +1113,7 @@ describe("OAuth + MCP end to end", () => {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
-      expectToolBudget(tools, { total: 91_000, perTool: 6_000 }); // 91K: propose_remove_conversion_action (2026-10-29)
+      expectToolBudget(tools, { total: 98_000, perTool: 6_000 }); // 98K: the propose_delete_ tools (2026-10-30)
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
@@ -1672,6 +1672,16 @@ describe("OAuth + MCP end to end", () => {
     const endQ = `SELECT campaign.end_date_time FROM campaign WHERE campaign.id = 2001`;
     const end = (await call(token, "run_gaql", { customer_id: "0000000001", query: endQ })).json;
     expect(end.rows[0].campaign.endDateTime).toBe("2037-12-30 23:59:59");  // undo removed it
+
+    // Deleting on the demo: permanent ones say so and have no undo; a negative comes back.
+    const del = (await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "delete_campaign", campaign_id: "2003" }] })).json;
+    expect(del.summary).toContain("can't be undone");
+    expect((await call(token, "apply_changes", { proposal_id: del.proposal_id })).json.undo).toBeUndefined();
+    const neg = (await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "delete_negative_keywords", campaign_id: "2001", criterion_ids: ["9001"] }] })).json;
+    await call(token, "apply_changes", { proposal_id: neg.proposal_id });
+    const negUndo = (await call(token, "undo_changes", { proposal_id: neg.proposal_id })).json;
+    expect(negUndo.summary).toContain('"diy"');
+    await call(token, "apply_changes", { proposal_id: negUndo.proposal_id });
 
     // Building is simulated on the demo: it proposes, applies and undoes without touching Google.
     const ad = { headlines: ["Sewer Line Repair", "Same-Day Service", "Licensed Plumbers"], descriptions: ["Call now.", "Upfront prices."], final_url: "https://example.com/sewer" };

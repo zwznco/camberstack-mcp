@@ -5,7 +5,7 @@
 Connect Google Ads (and, optionally, Search Console) to Claude, ChatGPT, Cursor or any MCP client. Your AI
 reads the account with read-only tools and can propose changes, from negative keywords to whole Search,
 Performance Max, Display and YouTube campaigns. **Nothing changes in the account until you approve a specific
-proposal, and every applied change can be undone in one call, on every plan.** Risky changes (turning a campaign on,
+proposal, and applied changes can be undone in one call, on every plan, apart from deletions Google can't reverse, which are flagged first.** Risky changes (turning a campaign on,
 more than doubling a budget or bid, switching bid strategy) are flagged in the proposal before you approve. A demo
 account lets anyone try every tool first.
 
@@ -72,13 +72,14 @@ What a proposal can do:
 - **Tune:** keyword and ad group bids, bid strategy, location and language targeting, presence-only location
   mode, final URL suffix, and a campaign's EU political advertising declaration (Google refuses every change to an
   account while any campaign lacks one).
+- **Delete:** keywords, ads, ad groups, campaigns, a campaign's negatives and sitelinks (`delete_*`).
 - **Measure:** create or remove a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 
 Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, more than doubling a budget or a
 bid, switching bid strategy, removing the last location, a new primary conversion action, removing a conversion
-action. Undo removes only what Camberstack itself created. The one deletion a user can propose is
-`remove_conversion_action`, and Google can't restore it, so it carries a ⚠ and no undo (a GA4 import is the exception:
-undo imports it again). (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
+action, deleting an ad, ad group or campaign. Undo removes only what Camberstack itself created. Google can't restore a removed
+ad, ad group, campaign or conversion action, so those carry a ⚠ and no undo (a GA4 import is the exception: undo imports it
+again). A deleted keyword, negative or sitelink goes back as a new one, without its history; a paused keyword has no undo. (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
 restores it.) Search Console is read-only.
 
 ## How auth works

@@ -317,7 +317,7 @@ export function homePage(baseUrl: string): string {
   return layout({
     baseUrl, path: "/", wide: true,
     title: "Camberstack: hosted Google Ads MCP for Claude and ChatGPT",
-    description: `A hosted Google Ads MCP server for Claude, ChatGPT and Cursor. Your AI proposes changes, you approve each one, and any applied change can be undone in one step. Free for 1 account with unlimited changes; ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}.`,
+    description: `A hosted Google Ads MCP server for Claude, ChatGPT and Cursor. Your AI proposes changes, you approve each one, and undo takes one step; the few changes Google can't reverse are flagged first. Free for 1 account with unlimited changes; ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}.`,
     jsonLd: {
       "@context": "https://schema.org", "@type": "SoftwareApplication", name: "Camberstack",
       applicationCategory: "BusinessApplication", operatingSystem: "Web", url: baseUrl,
@@ -338,7 +338,7 @@ export function homePage(baseUrl: string): string {
 <div class="hero-copy">
 <p class="eyebrow"><span class="dot ok"></span>Free for 1 Google Ads account. No card.</p>
 <h1>A hosted Google Ads MCP server</h1>
-<p class="lede">Your AI reads your Google Ads account and proposes changes. Nothing changes until you approve, and every change can be undone.</p>
+<p class="lede">Your AI reads your Google Ads account and proposes changes. Nothing changes until you approve, and undo takes one message; the few changes Google can't reverse are flagged first.</p>
 <div class="ctas"><a class="btn btn-lg" href="#setup">Connect for free</a><a class="btn btn-lg btn-ghost" href="#demo">Try the demo account</a></div>
 <p class="works">Works with <span>Claude</span><span>ChatGPT</span><span>Cursor</span><span>Claude Code</span><span>any MCP app</span></p>
 </div>
@@ -489,7 +489,7 @@ const ASK_FIRST = `<h2>What to ask first</h2>
 
 const CAN_CHANGE = `<h2>What it can change</h2>
 <p>Negative keywords, budgets and end dates, pausing and re-enabling, bids, targeting and bid strategy, conversion goals, and whole new
-Search, Performance Max, Display and YouTube campaigns (always created paused). You approve each change, and each one can be undone. <a href="/#changes">The full list</a>, and <a href="/tools">every tool</a>.</p>`;
+Search, Performance Max, Display and YouTube campaigns (always created paused). You approve each change, and each one can be undone, apart from the few Google can't reverse, which are flagged first. <a href="/#changes">The full list</a>, and <a href="/tools">every tool</a>.</p>`;
 
 /** The two troubleshooting entries that differ per app. `notUsed` and `reAdd` are the app-specific steps. */
 const appTroubleshooting = (app: string, notUsed: string, reAdd: string) => `<h3>${app} answers without using Camberstack</h3>
@@ -664,7 +664,7 @@ ${shot("chatgpt-plugin.webp", 540, 842, "Camberstack: Google Ads in ChatGPT's pl
 <ul>
 <li>Changes are stored as a proposal and checked with Google first; applying is a separate tool call. ChatGPT asks you to
 confirm tool calls that change things unless you've turned that off.</li>
-<li>Every applied change can be undone with one more message.</li>
+<li>Applied changes can be undone with one more message. The few Google can't reverse, such as deleting a campaign, are flagged before you approve.</li>
 <li>New campaigns are created paused, and risky changes (turning a campaign on, a big budget or bid jump) carry a warning before you approve. Nothing you built can be deleted.</li>
 </ul>
 
@@ -874,7 +874,7 @@ ${CAN_CHANGE}
 <h2>Questions</h2>
 <h3>Why does Gemini say the app "hasn't been reviewed by Google"?</h3>
 <p>Gemini shows that for every custom app. It isn't specific to Camberstack. Nothing in your account changes until you approve
-a specific proposal, every applied change can be undone, and nothing can be deleted.</p>
+a specific proposal, every applied change can be undone apart from deletions Google can't reverse, which are flagged before you approve.</p>
 <h3>Isn't Gemini already connected to my Google account?</h3>
 <p>Gemini's built-in Google apps don't include Google Ads. Camberstack adds it, with its own Google sign-in limited to Google Ads and your email address.</p>
 ${commonQuestions("Gemini")}
@@ -898,7 +898,7 @@ export function docsPage(baseUrl: string): string {
     body: `
 <h1>Camberstack documentation</h1>
 <p class="lede">Camberstack is a hosted MCP server that gives your AI assistant access to your Google Ads account and, optionally,
-read-only Search Console. The AI reads the account and proposes changes. Nothing changes until you approve a specific proposal, and every applied change can be undone.</p>
+read-only Search Console. The AI reads the account and proposes changes. Nothing changes until you approve a specific proposal, and applied changes can be undone, apart from deletions Google can't reverse, which are flagged first.</p>
 <ul>
 <li><a href="#connect">Connect</a></li>
 <li><a href="#how-it-works">How it works: read, propose, approve, apply, undo</a></li>
