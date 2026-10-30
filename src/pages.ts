@@ -1100,7 +1100,7 @@ None of your Google Ads, Search Console, Google Analytics or Merchant Center dat
 <h2>Your choices</h2>
 <ul>
 <li><strong>Disconnect:</strong> ask your AI to run the <code>disconnect</code> tool, or remove Camberstack at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Either stops all access; the tool also deletes the stored token.</li>
-<li><strong>Delete everything:</strong> email <a href="mailto:${CONTACT}">${CONTACT}</a> from your Google account's address and we delete your account and change history within 30 days (see <a href="#retention">Data retention and deletion</a>).</li>
+<li><strong>Delete everything:</strong> email <a href="mailto:${CONTACT}">${CONTACT}</a> from your Google account's address and within 30 days we delete your Google token, account, proposals, Merchant Center product changes, usage log and feedback (see <a href="#retention">Data retention and deletion</a>).</li>
 </ul>
 
 <h2>Data protection</h2>
