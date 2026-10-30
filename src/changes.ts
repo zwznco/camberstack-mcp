@@ -32,8 +32,8 @@ const NO_UNDO = " ⚠ permanent: Google can't restore it, so this can't be undon
 const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTICS|UNIVERSAL_ANALYTICS)/;
 
 const id = z.string().regex(/^\d+$/, "numeric id");
-const campaignId = id.describe("Campaign id, digits only (campaign_id from account_overview or run_gaql)");
-const adGroupId = id.describe("Ad group id, digits only (ad_group.id from run_gaql)");
+const campaignId = id.describe("Digits only (campaign_id from account_overview or run_gaql)");
+const adGroupId = id.describe("Digits only (ad_group.id from run_gaql)");
 const criterionId = id.describe("Keyword criterion id, digits only (ad_group_criterion.criterion_id from run_gaql)");
 const matchType = z.enum(["EXACT", "PHRASE", "BROAD"]);
 const bid = z.number().positive().max(1000);
@@ -86,7 +86,7 @@ const sharedSetId = id.describe("Shared negative list id (shared_set.id from run
 // Display and Demand Gen ads are built from uploaded images. An image is either a public https URL
 // (fetched, checked and uploaded as a new image asset) or an image asset already in the account.
 const image = z.string().min(1).max(2048)
-  .describe("An https URL of a PNG, JPEG or GIF (at most 5120 KB), or the id of an image asset already in the account (asset.id from run_gaql WHERE asset.type = 'IMAGE')");
+  .describe("https URL of a PNG, JPEG or GIF (up to 5120 KB), or an image asset.id");
 const images = (what: string, min: number, max: number) => z.array(image).min(min).max(max).describe(what);
 const displayAdSpec = z.object({
   headlines: distinctTexts(z.array(z.string().min(1).max(30)).min(1).max(5).describe("1 to 5 short headlines, each at most 30 characters")),

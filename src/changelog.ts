@@ -7,6 +7,17 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.22.0", date: "2026-10-30",
+    summary: "Ad schedules, device bids, callouts and other assets, AI Max, and conversion settings.",
+    items: [
+      "**Ad schedules** (`set_ad_schedule`): choose which days and hours a campaign runs, with optional bid changes. The summary warns that hours left out stop showing ads.",
+      "**Device bids** (`set_device_bid`): raise or lower bids on desktop, mobile or tablet. Smart bidding ignores everything except -100%, and the summary says so.",
+      "**More campaign assets:** add callouts, structured snippets, a business name, logos and images (`add_campaign_assets`), and take them off again (`delete_campaign_assets`).",
+      "**AI Max and Google-written text** (`set_ai_max`): turn them on or off in one change. Google only allows Google-written text on Search with AI Max on, and turning AI Max off turns that text off too.",
+      "**Conversion settings** (`set_conversion_settings`): change a conversion action's value, counting window or attribution, with undo. Actions imported from GA4 stay managed there.",
+    ],
+  },
+  {
     version: "0.21.0", date: "2026-10-30",
     summary: "Delete what you no longer want, edit an ad in place, manage ad group and shared negatives, and see what needs a look in the overview.",
     items: [
