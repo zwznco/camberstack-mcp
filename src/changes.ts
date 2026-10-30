@@ -480,6 +480,12 @@ export async function resolveChange(
   pending: Pending = pendingOf([]),
 ): Promise<ResolvedChange> {
   const q = (query: string) => ads.search(customerId, query, login);
+  /** The first row, or throw `missing`. */
+  const one = async (query: string, missing: string) => {
+    const [row] = await q(query);
+    if (!row) throw new Error(missing);
+    return row;
+  };
   switch (change.type) {
     case "link_merchant_center":
     case "unlink_merchant_center": {
@@ -497,15 +503,13 @@ export async function resolveChange(
         inverse: have ? { type: "link_merchant_center", merchant_center_id: change.merchant_center_id } : undefined };
     }
     case "add_negative_keywords": {
-      const [c] = await q(`SELECT campaign.id, campaign.name, campaign.advertising_channel_type, campaign.status
-        FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found in account ${customerId}`);
+      const c = await one(`SELECT campaign.id, campaign.name, campaign.advertising_channel_type, campaign.status
+        FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found in account ${customerId}`);
       const existing = await q(`SELECT campaign_criterion.keyword.text, campaign_criterion.keyword.match_type
         FROM campaign_criterion WHERE campaign.id = ${change.campaign_id}
         AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = true`);
-      const have = new Set(existing.map((r) =>
-        `${String(r.campaignCriterion?.keyword?.text ?? "").toLowerCase()}|${r.campaignCriterion?.keyword?.matchType}`));
-      const fresh = change.keywords.filter((k) => isNew(have, `${k.text.toLowerCase()}|${k.match_type}`));
+      const have = new Set(existing.map((r) => kwKey(r.campaignCriterion?.keyword?.text, r.campaignCriterion?.keyword?.matchType)));
+      const fresh = freshKeywords(change.keywords, have);
       const skipped = change.keywords.length - fresh.length;
       const campaign = `customers/${customerId}/campaigns/${change.campaign_id}`;
       return {
@@ -516,16 +520,15 @@ export async function resolveChange(
         })),
         describe: `Add ${fresh.length} negative keyword(s) to campaign "${c.campaign.name}": ` +
           fresh.map((k) => fmtKw(k.text, k.match_type)).join(", ") +
-          (skipped ? ` (${skipped} already present or repeated, skipped)` : ""),
+          skippedNote(skipped),
       };
     }
     case "pause_keyword":
     case "enable_keyword": {
-      const [k] = await q(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
+      const k = await one(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
           ad_group_criterion.status, ad_group.name, campaign.name
         FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
-        AND ad_group_criterion.criterion_id = ${change.criterion_id}`);
-      if (!k) throw new Error(`Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
+        AND ad_group_criterion.criterion_id = ${change.criterion_id}`, `Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
       const { ad_group_id, criterion_id } = change;
       return toggle(change, "pause_keyword", "enable_keyword", (type) => ({ type, ad_group_id, criterion_id }), {
         service: "adGroupCriteria", before: k.adGroupCriterion.status,
@@ -536,9 +539,8 @@ export async function resolveChange(
     }
     case "pause_campaign":
     case "enable_campaign": {
-      const [c] = await q(`SELECT campaign.name, campaign.status, campaign.end_date_time, campaign_budget.amount_micros,
-          campaign_budget.explicitly_shared FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.status, campaign.end_date_time, campaign_budget.amount_micros,
+          campaign_budget.explicitly_shared FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       const before = c.campaign.status as string;
       if (before === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
       // Turning a campaign on is the one change that takes spend from zero to real money: say so in the
@@ -557,8 +559,7 @@ export async function resolveChange(
     }
     case "pause_ad_group":
     case "enable_ad_group": {
-      const [g] = await q(`SELECT ad_group.name, ad_group.status, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
-      if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      const g = await one(`SELECT ad_group.name, ad_group.status, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`, `Ad group ${change.ad_group_id} not found`);
       const { ad_group_id } = change;
       return toggle(change, "pause_ad_group", "enable_ad_group", (type) => ({ type, ad_group_id }), {
         service: "adGroups", before: g.adGroup.status, resourceName: `customers/${customerId}/adGroups/${ad_group_id}`,
@@ -566,9 +567,8 @@ export async function resolveChange(
       });
     }
     case "set_daily_budget": {
-      const [c] = await q(`SELECT campaign.name, campaign_budget.resource_name, campaign_budget.amount_micros,
-          campaign_budget.explicitly_shared FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign_budget.resource_name, campaign_budget.amount_micros,
+          campaign_budget.explicitly_shared FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       if (c.campaignBudget.explicitlyShared) {
         throw unsupported(`Campaign "${c.campaign.name}" uses a shared budget; changing it would change every campaign on it. Edit it in Google Ads instead.`);
       }
@@ -584,8 +584,7 @@ export async function resolveChange(
       };
     }
     case "set_end_date": {
-      const [c] = await q(`SELECT campaign.name, campaign.status, campaign.end_date_time FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.status, campaign.end_date_time FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       if (c.campaign.status === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
       const before = endDateOf(c.campaign.endDateTime);
       const label = (d: string) => (d === "none" ? "no end date" : d);
@@ -611,7 +610,7 @@ export async function resolveChange(
       const T = tempIds(customerId);
       const { campaign, ops: base } = campaignOps(T, c, "SEARCH", {
         networkSettings: { targetGoogleSearch: true, targetSearchNetwork: c.search_partners, targetContentNetwork: false, targetPartnerSearchNetwork: false },
-        ...geoMode(c.presence_only), ...biddingFields(c.bidding, { ceiling: c.max_cpc_ceiling }),
+        ...geoMode(c.presence_only), ...chosenBidding(c.bidding, { ceiling: c.max_cpc_ceiling }).bidding,
       });
       const ops: object[] = [
         ...base,
@@ -623,7 +622,7 @@ export async function resolveChange(
       const groups = c.ad_groups.map((g) => `"${g.name}" (${g.keywords.length} keyword(s)${g.default_max_cpc ? `, bid ${g.default_max_cpc.toFixed(2)}` : ""}, ${g.ads.length} ad(s) → ${g.ads[0]!.final_url})`);
       return {
         change, service: "googleAds", operations: ops,
-        describe: `${buildHead("Search", c)}, ${biddingLabel(c.bidding, { ceiling: c.max_cpc_ceiling })}, ` +
+        describe: `${buildHead("Search", c)}, ${chosenBidding(c.bidding, { ceiling: c.max_cpc_ceiling }).label}, ` +
           `${await targetingLabel(q, c.location_ids, c.language_ids, c.presence_only)}` +
           `${c.end_date ? `, ends ${c.end_date}` : ""}${c.search_partners ? ", plus search partners" : ""}; ` +
           `${c.ad_groups.length} ad group(s): ${groups.join("; ")}` +
@@ -636,7 +635,7 @@ export async function resolveChange(
       await buildChecks(q, c);
       requireBids(c.bidding, c.ad_groups.filter((g) => g.default_max_cpc == null));
       const T = tempIds(customerId);
-      const { campaign, ops: base } = campaignOps(T, c, "DISPLAY", { ...geoMode(c.presence_only), ...biddingFields(c.bidding, { ceiling: c.max_cpc_ceiling }) });
+      const { campaign, ops: base } = campaignOps(T, c, "DISPLAY", { ...geoMode(c.presence_only), ...chosenBidding(c.bidding, { ceiling: c.max_cpc_ceiling }).bidding });
       const imgs = await imageAssets(q, T, customerId, c.ad_groups.flatMap((g) => g.ads.flatMap((a) =>
         [...a.marketing_images, ...a.square_marketing_images, ...a.square_logo_images, ...a.logo_images])));
       const ref = (xs: string[]) => xs.map((x) => ({ asset: imgs.of(x) }));
@@ -661,7 +660,7 @@ export async function resolveChange(
       const groups = c.ad_groups.map((g) => `"${g.name}" (${g.default_max_cpc ? `bid ${g.default_max_cpc.toFixed(2)}, ` : ""}${g.ads.length} ad(s) → ${g.ads[0]!.final_url})`);
       return {
         change, service: "googleAds", operations: ops,
-        describe: `${buildHead("Display", c)}, ${biddingLabel(c.bidding, { ceiling: c.max_cpc_ceiling })}, ` +
+        describe: `${buildHead("Display", c)}, ${chosenBidding(c.bidding, { ceiling: c.max_cpc_ceiling }).label}, ` +
           `${await targetingLabel(q, c.location_ids, c.language_ids, c.presence_only)}${c.end_date ? `, ends ${c.end_date}` : ""}; ` +
           `${c.ad_groups.length} ad group(s): ${groups.join("; ")}; ${imgs.summary}` + budgetWarn(c.daily_budget),
       };
@@ -670,7 +669,7 @@ export async function resolveChange(
       const c = change;
       await buildChecks(q, c);
       const T = tempIds(customerId);
-      const { campaign, ops: base } = campaignOps(T, c, "DEMAND_GEN", biddingFields(c.bidding));
+      const { campaign, ops: base } = campaignOps(T, c, "DEMAND_GEN", chosenBidding(c.bidding).bidding);
       const imgs = await imageAssets(q, T, customerId, c.ad_groups.flatMap((g) => g.ads.map((a) => a.logo_image)));
       const vids = videoAssets(T, c.ad_groups.flatMap((g) => g.ads.flatMap((a) => a.videos)));
       const ops: object[] = [
@@ -694,7 +693,7 @@ export async function resolveChange(
         `"${g.name}" (${await targetingLabel(q, g.location_ids, g.language_ids)}; ${g.ads.length} video ad(s) → ${g.ads[0]!.final_url})`));
       return {
         change, service: "googleAds", operations: ops,
-        describe: `${buildHead("Demand Gen (YouTube video ads)", c)}, ${biddingLabel(c.bidding)}${c.end_date ? `, ends ${c.end_date}` : ""}; ` +
+        describe: `${buildHead("Demand Gen (YouTube video ads)", c)}, ${chosenBidding(c.bidding).label}${c.end_date ? `, ends ${c.end_date}` : ""}; ` +
           `${c.ad_groups.length} ad group(s): ${groups.join("; ")}; ${vids.count} video(s), ${imgs.summary}` +
           (c.bidding === "MAXIMIZE_CONVERSIONS" ? CONVERSIONS_WARN : "") + budgetWarn(c.daily_budget),
       };
@@ -705,7 +704,7 @@ export async function resolveChange(
       if (c.target_cpa != null && c.bidding !== "MAXIMIZE_CONVERSIONS") throw new Error("target_cpa only goes with MAXIMIZE_CONVERSIONS.");
       const T = tempIds(customerId);
       // Google's default since brand guidelines: business name and logo belong to the campaign, not the asset groups.
-      const { campaign, ops: base } = campaignOps(T, c, "PERFORMANCE_MAX", { brandGuidelinesEnabled: true, ...biddingFields(c.bidding, { targetCpa: c.target_cpa }) });
+      const { campaign, ops: base } = campaignOps(T, c, "PERFORMANCE_MAX", { brandGuidelinesEnabled: true, ...chosenBidding(c.bidding, { targetCpa: c.target_cpa }).bidding });
       const imgs = await imageAssets(q, T, customerId, [...c.logo_images, ...c.asset_groups.flatMap((g) =>
         [...g.marketing_images, ...g.square_marketing_images, ...g.portrait_marketing_images])]);
       const vids = videoAssets(T, c.asset_groups.flatMap((g) => g.videos));
@@ -738,16 +737,15 @@ export async function resolveChange(
         `${g.marketing_images.length + g.square_marketing_images.length + g.portrait_marketing_images.length} images, ${g.videos.length} video(s) → ${g.final_url})`);
       return {
         change, service: "googleAds", operations: ops,
-        describe: `${buildHead("Performance Max", c)}, ${biddingLabel(c.bidding, { targetCpa: c.target_cpa })}, ` +
+        describe: `${buildHead("Performance Max", c)}, ${chosenBidding(c.bidding, { targetCpa: c.target_cpa }).label}, ` +
           `${await targetingLabel(q, c.location_ids, c.language_ids)}${c.end_date ? `, ends ${c.end_date}` : ""}; business name "${c.business_name}"; ` +
           `${c.asset_groups.length} asset group(s): ${summary.join("; ")}; ${imgs.summary}` + CONVERSIONS_WARN +
           (c.asset_groups.some((g) => !g.videos.length) ? "; with no video, Google may auto-generate one from the images" : "") + budgetWarn(c.daily_budget),
       };
     }
     case "add_ad_group": {
-      const [c] = await q(`SELECT campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type
-        FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type
+        FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       if (c.campaign.status === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
       if (c.campaign.advertisingChannelType !== "SEARCH") throw new Error(`Campaign "${c.campaign.name}" isn't a Search campaign; ad groups can only be added to Search campaigns here.`);
       const g = change.ad_group;
@@ -764,13 +762,12 @@ export async function resolveChange(
       };
     }
     case "add_keywords": {
-      const [g] = await q(`SELECT ad_group.name, campaign.name, campaign.status FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
-      if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      const g = await one(`SELECT ad_group.name, campaign.name, campaign.status FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`, `Ad group ${change.ad_group_id} not found`);
       const existing = await q(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion
         WHERE ad_group.id = ${change.ad_group_id} AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.negative = false
         AND ad_group_criterion.status != 'REMOVED'`);
-      const have = new Set(existing.map((r) => `${String(r.adGroupCriterion?.keyword?.text ?? "").toLowerCase()}|${r.adGroupCriterion?.keyword?.matchType}`));
-      const fresh = change.keywords.filter((k) => isNew(have, `${k.text.toLowerCase()}|${k.match_type}`));
+      const have = new Set(existing.map((r) => kwKey(r.adGroupCriterion?.keyword?.text, r.adGroupCriterion?.keyword?.matchType)));
+      const fresh = freshKeywords(change.keywords, have);
       const skipped = change.keywords.length - fresh.length;
       const adGroup = `customers/${customerId}/adGroups/${change.ad_group_id}`;
       return {
@@ -779,12 +776,11 @@ export async function resolveChange(
           ...(change.request_review ? { exemptPolicyViolationKeys: change.request_review.map((x) => ({ policyName: x.policy_name, violatingText: x.violating_text })) } : {}) })),
         describe: `Add ${fresh.length} keyword(s) to ad group "${g.adGroup.name}" (campaign "${g.campaign.name}"): ` +
           fresh.map((k) => fmtKw(k.text, k.match_type) + (k.max_cpc ? ` @ ${k.max_cpc.toFixed(2)}` : "")).join(", ") +
-          (skipped ? ` (${skipped} already present or repeated, skipped)` : "") + reviewSaid(change.request_review?.map((x) => x.policy_name)),
+          skippedNote(skipped) + reviewSaid(change.request_review?.map((x) => x.policy_name)),
       };
     }
     case "add_responsive_search_ad": {
-      const [g] = await q(`SELECT ad_group.name, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
-      if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      const g = await one(`SELECT ad_group.name, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`, `Ad group ${change.ad_group_id} not found`);
       // Google allows 3 enabled responsive search ads per ad group and answers a 4th with a bare RESOURCE_LIMIT: a user's
       // assistant was left with no reason and replaced an ad only 52 minutes later (prod, 2026-10-29). Each change dry-runs
       // on its own, so a pause in the same proposal doesn't make room: it has to be applied first.
@@ -803,8 +799,7 @@ export async function resolveChange(
       };
     }
     case "add_sitelinks": {
-      const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       const T = tempIds(customerId);
       return {
         change, service: "googleAds",
@@ -861,10 +856,9 @@ export async function resolveChange(
     case "remove_campaign_assets":
       return { change, service: "googleAds", operations: change.resource_names.map((r) => ({ campaignAssetOperation: { remove: r } })), describe: `Remove ${change.what}` };
     case "set_keyword_bid": {
-      const [k] = await q(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.cpc_bid_micros,
+      const k = await one(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.cpc_bid_micros,
           ad_group.name, ad_group.cpc_bid_micros FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
-          AND ad_group_criterion.criterion_id = ${change.criterion_id}`);
-      if (!k) throw new Error(`Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
+          AND ad_group_criterion.criterion_id = ${change.criterion_id}`, `Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
       const before = k.adGroupCriterion.cpcBidMicros ? micros(k.adGroupCriterion.cpcBidMicros) : null;
       const label = (v: number | null) => (v == null ? `the ad group's ${micros(k.adGroup.cpcBidMicros).toFixed(2)}` : v.toFixed(2));
       const same = before === change.max_cpc;
@@ -878,8 +872,7 @@ export async function resolveChange(
       };
     }
     case "set_ad_group_bid": {
-      const [g] = await q(`SELECT ad_group.name, ad_group.cpc_bid_micros, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
-      if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      const g = await one(`SELECT ad_group.name, ad_group.cpc_bid_micros, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`, `Ad group ${change.ad_group_id} not found`);
       const before = micros(g.adGroup.cpcBidMicros);
       return {
         change, service: "adGroups",
@@ -890,9 +883,8 @@ export async function resolveChange(
     }
     case "pause_ad":
     case "enable_ad": {
-      const [a] = await q(`SELECT ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group.name, campaign.name FROM ad_group_ad
-        WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.ad.id = ${change.ad_id}`);
-      if (!a) throw new Error(`Ad ${change.ad_id} not found in ad group ${change.ad_group_id}`);
+      const a = await one(`SELECT ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group.name, campaign.name FROM ad_group_ad
+        WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.ad.id = ${change.ad_id}`, `Ad ${change.ad_id} not found in ad group ${change.ad_group_id}`);
       const { ad_group_id, ad_id } = change;
       return toggle(change, "pause_ad", "enable_ad", (type) => ({ type, ad_group_id, ad_id }), {
         service: "adGroupAds", before: a.adGroupAd.status, resourceName: `customers/${customerId}/adGroupAds/${ad_group_id}~${ad_id}`,
@@ -901,8 +893,7 @@ export async function resolveChange(
     }
     case "add_campaign_targeting":
     case "remove_campaign_targeting": {
-      const [c] = await q(`SELECT campaign.name, campaign.status FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.status FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       if (!change.location_ids.length && !change.language_ids.length) throw new Error("Give location_ids and/or language_ids.");
       const have = await q(`SELECT campaign_criterion.resource_name, campaign_criterion.type, campaign_criterion.location.geo_target_constant,
           campaign_criterion.language.language_constant FROM campaign_criterion WHERE campaign.id = ${change.campaign_id}
@@ -934,8 +925,7 @@ export async function resolveChange(
       };
     }
     case "set_location_mode": {
-      const [c] = await q(`SELECT campaign.name, campaign.geo_target_type_setting.positive_geo_target_type FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.geo_target_type_setting.positive_geo_target_type FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       const before = c.campaign.geoTargetTypeSetting?.positiveGeoTargetType === "PRESENCE";
       const label = (p: boolean) => (p ? "people in the locations only" : "people in or interested in the locations");
       return {
@@ -948,23 +938,16 @@ export async function resolveChange(
       };
     }
     case "set_bidding_strategy": {
-      const [c] = await q(`SELECT campaign.name, campaign.bidding_strategy_type, campaign.bidding_strategy, campaign.target_spend.cpc_bid_ceiling_micros,
+      const c = await one(`SELECT campaign.name, campaign.bidding_strategy_type, campaign.bidding_strategy, campaign.target_spend.cpc_bid_ceiling_micros,
           campaign.maximize_conversions.target_cpa_micros, campaign.maximize_conversion_value.target_roas
-        FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+        FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       // On a shared (portfolio) strategy: this campaign moves onto its own strategy; undo puts it back on the shared one.
-      const shared = c.campaign.biddingStrategy ? await sharedStrategy(q, c.campaign.biddingStrategy as string) : null;
+      const { shared, prev } = await currentBidding(q, c);
       if (change.max_cpc_ceiling && change.strategy !== "MAXIMIZE_CLICKS") throw new Error("max_cpc_ceiling only applies to MAXIMIZE_CLICKS.");
       if (change.target_cpa && change.strategy !== "MAXIMIZE_CONVERSIONS") throw new Error("target_cpa only applies to MAXIMIZE_CONVERSIONS.");
       const t = c.campaign.biddingStrategyType as string;
-      const prev = shared
-        ? { bidding: { biddingStrategy: shared.resourceName }, mask: "bidding_strategy", label: `shared strategy "${shared.name}"` }
-        : biddingOf(t, c.campaign);
       if (!prev) throw unsupported(`Campaign "${c.campaign.name}" uses ${t}, which Camberstack can't restore on undo; change it in Google Ads.`);
-      const next = biddingOf(change.strategy === "MAXIMIZE_CLICKS" ? "TARGET_SPEND" : change.strategy, {
-        targetSpend: { cpcBidCeilingMicros: change.max_cpc_ceiling ? toMicros(change.max_cpc_ceiling) : undefined },
-        maximizeConversions: { targetCpaMicros: change.target_cpa ? toMicros(change.target_cpa) : undefined },
-      })!;
+      const next = chosenBidding(change.strategy, { ceiling: change.max_cpc_ceiling, targetCpa: change.target_cpa });
       const others = shared ? shared.campaigns.filter((n) => n !== c.campaign.name) : [];
       return {
         change, service: "campaigns",
@@ -1040,15 +1023,11 @@ export async function resolveChange(
       const ops: object[] = [{ biddingStrategyOperation: { create: { resourceName: strategyRn, name: change.name, [field.key]: settings } } }];
       const moved: { campaign_id: string; name: string; bidding: Record<string, unknown>; mask: string; label: string }[] = [];
       for (const cid of [...new Set(change.campaign_ids)]) {
-        const [c] = await q(`SELECT campaign.name, campaign.status, campaign.bidding_strategy_type, campaign.bidding_strategy,
+        const c = await one(`SELECT campaign.name, campaign.status, campaign.bidding_strategy_type, campaign.bidding_strategy,
             campaign.target_spend.cpc_bid_ceiling_micros, campaign.maximize_conversions.target_cpa_micros,
-            campaign.maximize_conversion_value.target_roas FROM campaign WHERE campaign.id = ${cid}`);
-        if (!c) throw new Error(`Campaign ${cid} not found`);
+            campaign.maximize_conversion_value.target_roas FROM campaign WHERE campaign.id = ${cid}`, `Campaign ${cid} not found`);
         if (c.campaign.status === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
-        const shared = c.campaign.biddingStrategy ? await sharedStrategy(q, c.campaign.biddingStrategy as string) : null;
-        const prev = shared
-          ? { bidding: { biddingStrategy: shared.resourceName }, mask: "bidding_strategy", label: `shared strategy "${shared.name}"` }
-          : biddingOf(c.campaign.biddingStrategyType as string, c.campaign);
+        const { prev } = await currentBidding(q, c);
         if (!prev) throw unsupported(`Campaign "${c.campaign.name}" uses ${c.campaign.biddingStrategyType}, which Camberstack can't restore on undo; move it in Google Ads.`);
         moved.push({ campaign_id: cid, name: c.campaign.name, ...prev });
         ops.push({ campaignOperation: { update: { resourceName: `customers/${customerId}/campaigns/${cid}`, biddingStrategy: strategyRn }, updateMask: "bidding_strategy" } });
@@ -1083,8 +1062,7 @@ export async function resolveChange(
       };
     }
     case "set_url_suffix": {
-      const [c] = await q(`SELECT campaign.name, campaign.final_url_suffix FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.final_url_suffix FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       const before = c.campaign.finalUrlSuffix || "none";
       const next = change.suffix.replace(/^\?/, "") || "none";
       return {
@@ -1096,8 +1074,7 @@ export async function resolveChange(
       };
     }
     case "set_eu_political_advertising": {
-      const [c] = await q(`SELECT campaign.name, campaign.status, campaign.contains_eu_political_advertising FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.status, campaign.contains_eu_political_advertising FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       if (c.campaign.status === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
       const before = c.campaign.containsEuPoliticalAdvertising as string | undefined;
       const next = change.contains_eu_political_advertising ? EU_POLITICAL : NO_EU_POLITICAL;
@@ -1241,10 +1218,9 @@ export async function resolveChange(
       };
     }
     case "delete_keyword": {
-      const [k] = await q(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.cpc_bid_micros,
+      const k = await one(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.cpc_bid_micros,
           ad_group_criterion.status, ad_group.name, campaign.name FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
-          AND ad_group_criterion.criterion_id = ${change.criterion_id}`);
-      if (!k) throw new Error(`Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
+          AND ad_group_criterion.criterion_id = ${change.criterion_id}`, `Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
       const c = k.adGroupCriterion, label = fmtKw(c.keyword.text, c.keyword.matchType);
       if (c.status === "REMOVED") return { change, service: "adGroupCriteria", operations: [], describe: `Delete keyword ${label} (already in place)` };
       // add_keywords creates ENABLED, so undoing the delete of a paused keyword would start it spending.
@@ -1258,9 +1234,8 @@ export async function resolveChange(
       };
     }
     case "delete_ad": {
-      const [a] = await q(`SELECT ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group.name, campaign.name FROM ad_group_ad
-        WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.ad.id = ${change.ad_id}`);
-      if (!a) throw new Error(`Ad ${change.ad_id} not found in ad group ${change.ad_group_id}`);
+      const a = await one(`SELECT ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group.name, campaign.name FROM ad_group_ad
+        WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.ad.id = ${change.ad_id}`, `Ad ${change.ad_id} not found in ad group ${change.ad_group_id}`);
       const url = a.adGroupAd.ad?.finalUrls?.[0];
       const what = `ad ${change.ad_id}${url ? ` (→ ${url})` : ""}`;
       if (a.adGroupAd.status === "REMOVED") return { change, service: "adGroupAds", operations: [], describe: `Delete ${what} (already in place)` };
@@ -1273,8 +1248,7 @@ export async function resolveChange(
       };
     }
     case "delete_ad_group": {
-      const [g] = await q(`SELECT ad_group.name, ad_group.status, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
-      if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      const g = await one(`SELECT ad_group.name, ad_group.status, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`, `Ad group ${change.ad_group_id} not found`);
       if (g.adGroup.status === "REMOVED") return { change, service: "adGroups", operations: [], describe: `Delete ad group "${g.adGroup.name}" (already in place)` };
       const [keywords, ads] = await Promise.all([
         q(`SELECT ad_group_criterion.criterion_id FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
@@ -1286,8 +1260,7 @@ export async function resolveChange(
       };
     }
     case "delete_campaign": {
-      const [c] = await q(`SELECT campaign.name, campaign.status FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.status FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       if (c.campaign.status === "REMOVED") return { change, service: "campaigns", operations: [], describe: `Delete campaign "${c.campaign.name}" (already in place)` };
       const groups = await q(`SELECT ad_group.id FROM ad_group WHERE campaign.id = ${change.campaign_id} AND ad_group.status != 'REMOVED'`);
       return {
@@ -1298,10 +1271,7 @@ export async function resolveChange(
     case "delete_negative_keywords": {
       const rows = await q(`SELECT campaign.name, campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type
         FROM campaign_criterion WHERE campaign.id = ${change.campaign_id} AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = true`);
-      const byId = new Map(rows.map((r) => [String(r.campaignCriterion.resourceName).split("~").at(-1), r]));
-      const missing = change.criterion_ids.filter((i) => !byId.has(i));
-      if (missing.length) throw new Error(`No negative keyword ${missing.join(", ")} on campaign ${change.campaign_id}. Negatives from a shared list aren't the campaign's own.`);
-      const found = [...new Set(change.criterion_ids)].map((i) => byId.get(i)!);
+      const found = pick(rows, (r) => afterTilde(r.campaignCriterion.resourceName), change.criterion_ids, (ids) => `No negative keyword ${ids} on campaign ${change.campaign_id}. Negatives from a shared list aren't the campaign's own.`);
       return {
         change, service: "campaignCriteria", operations: found.map((r) => ({ remove: r.campaignCriterion.resourceName })),
         describe: `Delete ${found.length} negative keyword(s) from campaign "${found[0].campaign.name}": ` +
@@ -1314,10 +1284,7 @@ export async function resolveChange(
       const rows = await q(`SELECT campaign.id, campaign.name, campaign_asset.resource_name, asset.id, asset.final_urls, asset.sitelink_asset.link_text,
           asset.sitelink_asset.description1, asset.sitelink_asset.description2 FROM campaign_asset
         WHERE campaign.id = ${change.campaign_id} AND campaign_asset.field_type = 'SITELINK' AND campaign_asset.status != 'REMOVED'`);
-      const byId = new Map(rows.map((r) => [String(r.asset.id), r]));
-      const missing = change.asset_ids.filter((i) => !byId.has(i));
-      if (missing.length) throw new Error(`No sitelink ${missing.join(", ")} on campaign ${change.campaign_id}. Sitelinks on an ad group or the whole account aren't the campaign's own.`);
-      const found = [...new Set(change.asset_ids)].map((i) => byId.get(i)!);
+      const found = pick(rows, (r) => String(r.asset.id), change.asset_ids, (ids) => `No sitelink ${ids} on campaign ${change.campaign_id}. Sitelinks on an ad group or the whole account aren't the campaign's own.`);
       return {
         change, service: "googleAds", operations: found.map((r) => ({ campaignAssetOperation: { remove: r.campaignAsset.resourceName } })),
         describe: `Take ${found.length} sitelink(s) off campaign "${found[0].campaign.name}": ${found.map((r) => `"${r.asset.sitelinkAsset.linkText}"`).join(", ")}; undo adds them back as new sitelinks, without their history`,
@@ -1328,26 +1295,22 @@ export async function resolveChange(
       };
     }
     case "add_ad_group_negatives": {
-      const [g] = await q(`SELECT ad_group.name, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
-      if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      const g = await one(`SELECT ad_group.name, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`, `Ad group ${change.ad_group_id} not found`);
       const existing = await adGroupNegatives(q, change.ad_group_id);
-      const have = new Set(existing.map((r) => `${String(r.adGroupCriterion.keyword?.text ?? "").toLowerCase()}|${r.adGroupCriterion.keyword?.matchType}`));
-      const fresh = change.keywords.filter((k) => isNew(have, `${k.text.toLowerCase()}|${k.match_type}`));
+      const have = new Set(existing.map((r) => kwKey(r.adGroupCriterion.keyword?.text, r.adGroupCriterion.keyword?.matchType)));
+      const fresh = freshKeywords(change.keywords, have);
       const skipped = change.keywords.length - fresh.length;
       const adGroup = `customers/${customerId}/adGroups/${change.ad_group_id}`;
       return {
         change: { ...change, keywords: fresh }, service: "adGroupCriteria",
         operations: fresh.map((k) => ({ create: { adGroup, negative: true, keyword: { text: k.text, matchType: k.match_type } } })),
         describe: `Add ${fresh.length} negative keyword(s) to ad group "${g.adGroup.name}" (campaign "${g.campaign.name}"): ${fresh.map((k) => fmtKw(k.text, k.match_type)).join(", ")}` +
-          (skipped ? ` (${skipped} already present or repeated, skipped)` : ""),
+          skippedNote(skipped),
       };
     }
     case "delete_ad_group_negatives": {
       const rows = await adGroupNegatives(q, change.ad_group_id);
-      const byId = new Map(rows.map((r) => [String(r.adGroupCriterion.resourceName).split("~").at(-1), r]));
-      const missing = change.criterion_ids.filter((i) => !byId.has(i));
-      if (missing.length) throw new Error(`No negative keyword ${missing.join(", ")} on ad group ${change.ad_group_id}.`);
-      const found = [...new Set(change.criterion_ids)].map((i) => byId.get(i)!);
+      const found = pick(rows, (r) => afterTilde(r.adGroupCriterion.resourceName), change.criterion_ids, (ids) => `No negative keyword ${ids} on ad group ${change.ad_group_id}.`);
       return {
         change, service: "adGroupCriteria", operations: found.map((r) => ({ remove: r.adGroupCriterion.resourceName })),
         describe: `Delete ${found.length} negative keyword(s) from ad group "${found[0].adGroup.name}": ` +
@@ -1360,7 +1323,7 @@ export async function resolveChange(
       const dup = await q(`SELECT shared_set.id FROM shared_set WHERE shared_set.name = '${gaqlStr(change.name)}' AND shared_set.status = 'ENABLED'`);
       if (dup.length) throw new Error(`A shared list named "${change.name}" already exists (id ${dup[0].sharedSet.id}). Pick another name.`);
       const seen = new Set<string>();
-      const keywords = change.keywords.filter((k) => isNew(seen, `${k.text.toLowerCase()}|${k.match_type}`));
+      const keywords = freshKeywords(change.keywords, seen);
       const campaigns = await campaignNames(q, change.campaign_ids);
       const T = tempIds(customerId), sharedSet = T.next("sharedSets");
       return {
@@ -1379,12 +1342,9 @@ export async function resolveChange(
       const list = await negativeList(q, change.shared_set_id);
       const rows = await q(`SELECT shared_set.id, shared_criterion.resource_name, shared_criterion.keyword.text, shared_criterion.keyword.match_type
         FROM shared_criterion WHERE shared_set.id = ${change.shared_set_id}`);
-      const byId = new Map(rows.map((r) => [String(r.sharedCriterion.resourceName).split("~").at(-1), r]));
-      const missing = change.remove_criterion_ids.filter((i) => !byId.has(i));
-      if (missing.length) throw new Error(`No keyword ${missing.join(", ")} in list "${list.name}".`);
-      const removed = [...new Set(change.remove_criterion_ids)].map((i) => byId.get(i)!);
-      const have = new Set(rows.map((r) => `${String(r.sharedCriterion.keyword?.text ?? "").toLowerCase()}|${r.sharedCriterion.keyword?.matchType}`));
-      const fresh = change.add.filter((k) => isNew(have, `${k.text.toLowerCase()}|${k.match_type}`));
+      const removed = pick(rows, (r) => afterTilde(r.sharedCriterion.resourceName), change.remove_criterion_ids, (ids) => `No keyword ${ids} in list "${list.name}".`);
+      const have = new Set(rows.map((r) => kwKey(r.sharedCriterion.keyword?.text, r.sharedCriterion.keyword?.matchType)));
+      const fresh = freshKeywords(change.add, have);
       const sharedSet = `customers/${customerId}/sharedSets/${change.shared_set_id}`;
       const gone = removed.map((r) => ({ text: r.sharedCriterion.keyword.text as string, match_type: r.sharedCriterion.keyword.matchType as "EXACT" | "PHRASE" | "BROAD" }));
       return {
@@ -1424,10 +1384,9 @@ export async function resolveChange(
       };
     }
     case "edit_responsive_search_ad": {
-      const [a] = await q(`SELECT ad_group_ad.ad.id, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines,
+      const a = await one(`SELECT ad_group_ad.ad.id, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines,
           ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2,
-          ad_group.name, campaign.name FROM ad_group_ad WHERE ad_group_ad.ad.id = ${change.ad_id} AND ad_group_ad.status != 'REMOVED'`);
-      if (!a) throw new Error(`Ad ${change.ad_id} not found`);
+          ad_group.name, campaign.name FROM ad_group_ad WHERE ad_group_ad.ad.id = ${change.ad_id} AND ad_group_ad.status != 'REMOVED'`, `Ad ${change.ad_id} not found`);
       const ad = a.adGroupAd.ad, rsa = ad.responsiveSearchAd;
       if (ad.type !== "RESPONSIVE_SEARCH_AD" || !rsa) throw new Error(`Ad ${change.ad_id} is a ${ad.type}: only responsive search ads can be edited here.`);
       // Only text and pin: Google rejects the read-only fields a read returns alongside them.
@@ -1458,8 +1417,7 @@ export async function resolveChange(
       };
     }
     case "set_ad_schedule": {
-      const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       const rows = await q(`SELECT campaign.id, campaign_criterion.resource_name, campaign_criterion.bid_modifier, campaign_criterion.ad_schedule.day_of_week,
           campaign_criterion.ad_schedule.start_hour, campaign_criterion.ad_schedule.start_minute, campaign_criterion.ad_schedule.end_hour, campaign_criterion.ad_schedule.end_minute
         FROM campaign_criterion WHERE campaign.id = ${change.campaign_id} AND campaign_criterion.type = 'AD_SCHEDULE'`);
@@ -1487,8 +1445,7 @@ export async function resolveChange(
       };
     }
     case "set_device_bid": {
-      const [c] = await q(`SELECT campaign.name, campaign.bidding_strategy_type FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.bidding_strategy_type FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       const rows = await q(`SELECT campaign.id, campaign_criterion.resource_name, campaign_criterion.bid_modifier, campaign_criterion.device.type FROM campaign_criterion
         WHERE campaign.id = ${change.campaign_id} AND campaign_criterion.type = 'DEVICE'`);
       const row = rows.find((r) => r.campaignCriterion.device?.type === change.device);
@@ -1505,8 +1462,7 @@ export async function resolveChange(
       };
     }
     case "add_campaign_assets": {
-      const [c] = await q(`SELECT campaign.name, campaign.advertising_channel_type FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.advertising_channel_type FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       const T = tempIds(customerId), campaign = `customers/${customerId}/campaigns/${change.campaign_id}`;
       // A Search campaign refuses LOGO (FIELD_TYPE_INCOMPATIBLE_WITH_CAMPAIGN_TYPE, v23, 2026-10-30); Performance Max takes it.
       const logoField = c.campaign.advertisingChannelType === "SEARCH" ? "BUSINESS_LOGO" : "LOGO";
@@ -1534,17 +1490,13 @@ export async function resolveChange(
     case "delete_campaign_assets": {
       const rows = await q(`SELECT campaign.id, campaign.name, campaign_asset.resource_name, asset.id FROM campaign_asset
         WHERE campaign.id = ${change.campaign_id} AND campaign_asset.field_type = '${change.field_type}' AND campaign_asset.status != 'REMOVED'`);
-      const byId = new Map(rows.map((r) => [String(r.asset.id), r]));
-      const missing = change.asset_ids.filter((i) => !byId.has(i));
-      if (missing.length) throw new Error(`No ${change.field_type} asset ${missing.join(", ")} on campaign ${change.campaign_id}.`);
-      const found = [...new Set(change.asset_ids)].map((i) => byId.get(i)!);
+      const found = pick(rows, (r) => String(r.asset.id), change.asset_ids, (ids) => `No ${change.field_type} asset ${ids} on campaign ${change.campaign_id}.`);
       return { change, service: "googleAds", operations: found.map((r) => ({ campaignAssetOperation: { remove: r.campaignAsset.resourceName } })),
         describe: `Take ${found.length} ${change.field_type} asset(s) off campaign "${found[0].campaign.name}" ⚠ no undo: add them again if needed` };
     }
     case "set_ai_max": {
       if (change.ai_max === undefined && change.text_automation === undefined && change.url_expansion === undefined) throw new Error("Give ai_max, text_automation and/or url_expansion.");
-      const [c] = await q(`SELECT campaign.name, campaign.ai_max_setting.enable_ai_max, campaign.asset_automation_settings FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      const c = await one(`SELECT campaign.name, campaign.ai_max_setting.enable_ai_max, campaign.asset_automation_settings FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       const had: { assetAutomationType: string; assetAutomationStatus: string }[] = c.campaign.assetAutomationSettings ?? [];
       // Google refuses opting in without AI Max (AI_MAX_MUST_BE_ENABLED, dry-run against v23, 2026-10-30); opting out needs nothing.
       if ((change.text_automation || change.url_expansion) && !(change.ai_max ?? c.campaign.aiMaxSetting?.enableAiMax)) {
@@ -1580,9 +1532,8 @@ export async function resolveChange(
       return { change, service: "campaigns", operations: [{ update: { resourceName: `customers/${customerId}/campaigns/${change.campaign_id}`, ...change.fields }, updateMask: change.mask }],
         describe: `Put campaign ${change.campaign_id}'s AI Max and automation settings back` };
     case "set_conversion_settings": {
-      const [a] = await q(`SELECT conversion_action.name, conversion_action.type, conversion_action.value_settings.default_value, conversion_action.click_through_lookback_window_days,
-          conversion_action.attribution_model_settings.attribution_model FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`);
-      if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
+      const a = await one(`SELECT conversion_action.name, conversion_action.type, conversion_action.value_settings.default_value, conversion_action.click_through_lookback_window_days,
+          conversion_action.attribution_model_settings.attribution_model FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`, `Conversion action ${change.conversion_action_id} not found`);
       const c = a.conversionAction;
       if (ANALYTICS_IMPORT.test(String(c.type))) throw new Error(`Conversion action "${c.name}" is imported (${c.type}), so its settings come from there, and Google won't change them through the API.`);
       const MODEL = { LAST_CLICK: "GOOGLE_ADS_LAST_CLICK", DATA_DRIVEN: "GOOGLE_SEARCH_ATTRIBUTION_DATA_DRIVEN" } as const;
@@ -1624,10 +1575,8 @@ export async function resolveChange(
     case "remove_user_list":
       return { change, service: "userLists", operations: [{ remove: change.resource_name }], describe: `Remove remarketing list "${change.name}" that Camberstack created` };
     case "set_campaign_audience": {
-      const [c] = await q(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`);
-      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
-      const [l] = await q(`SELECT user_list.name FROM user_list WHERE user_list.id = ${change.user_list_id}`);
-      if (!l) throw new Error(`Remarketing list ${change.user_list_id} not found`);
+      const c = await one(`SELECT campaign.name FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
+      const l = await one(`SELECT user_list.name FROM user_list WHERE user_list.id = ${change.user_list_id}`, `Remarketing list ${change.user_list_id} not found`);
       const rn = `customers/${customerId}/userLists/${change.user_list_id}`;
       const rows = await q(`SELECT campaign.id, campaign_criterion.resource_name, campaign_criterion.bid_modifier, campaign_criterion.user_list.user_list FROM campaign_criterion
         WHERE campaign.id = ${change.campaign_id} AND campaign_criterion.type = 'USER_LIST'`);
@@ -1648,8 +1597,7 @@ export async function resolveChange(
     }
     case "act_on_recommendation": {
       const resourceName = `customers/${customerId}/recommendations/${change.recommendation_id}`;
-      const [r] = await q(`SELECT recommendation.type, recommendation.dismissed, recommendation.campaign FROM recommendation WHERE recommendation.resource_name = '${gaqlStr(resourceName)}'`);
-      if (!r) throw new Error(`Recommendation ${change.recommendation_id} not found. Google changes them often: read them again with run_gaql FROM recommendation.`);
+      const r = await one(`SELECT recommendation.type, recommendation.dismissed, recommendation.campaign FROM recommendation WHERE recommendation.resource_name = '${gaqlStr(resourceName)}'`, `Recommendation ${change.recommendation_id} not found. Google changes them often: read them again with run_gaql FROM recommendation.`);
       const [c] = r.recommendation.campaign ? await q(`SELECT campaign.name FROM campaign WHERE campaign.resource_name = '${gaqlStr(r.recommendation.campaign)}'`) : [];
       const what = `Google's ${r.recommendation.type} recommendation${c ? ` for campaign "${c.campaign.name}"` : ""}`;
       return {
@@ -1683,6 +1631,15 @@ const reviewSaid = (topics?: string[]) => (topics?.length ? `, asking Google to 
 const adGroupNegatives = (q: (query: string) => Promise<any[]>, adGroupId: string) =>
   q(`SELECT ad_group.id, ad_group.name, ad_group_criterion.resource_name, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type
     FROM ad_group_criterion WHERE ad_group.id = ${adGroupId} AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.negative = true`);
+
+/** `ids`' rows, each once; throws `absent` naming any that aren't there. */
+function pick(rows: any[], keyOf: (r: any) => string, ids: string[], absent: (ids: string) => string): any[] {
+  const byId = new Map(rows.map((r) => [keyOf(r), r]));
+  const missing = ids.filter((i) => !byId.has(i));
+  if (missing.length) throw new Error(absent(missing.join(", ")));
+  return [...new Set(ids)].map((i) => byId.get(i)!);
+}
+const afterTilde = (resourceName: unknown) => String(resourceName).split("~").at(-1)!;
 
 /** Campaign ids → names; throws on one that isn't in the account. */
 async function campaignNames(q: (query: string) => Promise<any[]>, ids: string[]): Promise<Map<string, string>> {
@@ -1756,6 +1713,15 @@ async function sharedStrategy(q: (query: string) => Promise<any[]>, resourceName
   const camps = await q(`SELECT campaign.name FROM campaign WHERE campaign.bidding_strategy = '${gaqlStr(resourceName)}' AND campaign.status != 'REMOVED'`);
   return { resourceName, name: b.biddingStrategy.name as string, type: b.biddingStrategy.type as string, raw: b.biddingStrategy as Record<string, any>,
     campaigns: camps.map((r) => r.campaign.name as string) };
+}
+
+/** A campaign's bidding now, to restore on undo; prev is null for a strategy biddingOf doesn't restore. */
+async function currentBidding(q: (query: string) => Promise<any[]>, c: any) {
+  const shared = c.campaign.biddingStrategy ? await sharedStrategy(q, c.campaign.biddingStrategy as string) : null;
+  const prev = shared
+    ? { bidding: { biddingStrategy: shared.resourceName } as Record<string, unknown>, mask: "bidding_strategy", label: `shared strategy "${shared.name}"` }
+    : biddingOf(c.campaign.biddingStrategyType as string, c.campaign);
+  return { shared, prev };
 }
 
 type SharedField = { camel: string; snake: string };
@@ -1836,23 +1802,12 @@ async function targetingLabel(q: (query: string) => Promise<any[]>, locationIds:
 }
 
 type Bidding = "MANUAL_CPC" | "MAXIMIZE_CLICKS" | "MAXIMIZE_CONVERSIONS" | "MAXIMIZE_CONVERSION_VALUE";
-function biddingFields(bidding: Bidding, o: { ceiling?: number; targetCpa?: number } = {}): object {
-  switch (bidding) {
-    case "MANUAL_CPC": return { manualCpc: { enhancedCpcEnabled: false } };
-    case "MAXIMIZE_CLICKS": return { targetSpend: o.ceiling ? { cpcBidCeilingMicros: toMicros(o.ceiling) } : {} };
-    case "MAXIMIZE_CONVERSIONS": return { maximizeConversions: o.targetCpa ? { targetCpaMicros: toMicros(o.targetCpa) } : {} };
-    case "MAXIMIZE_CONVERSION_VALUE": return { maximizeConversionValue: {} };
-  }
-}
-
-function biddingLabel(bidding: Bidding, o: { ceiling?: number; targetCpa?: number } = {}): string {
-  switch (bidding) {
-    case "MANUAL_CPC": return "manual CPC";
-    case "MAXIMIZE_CLICKS": return `maximize clicks${o.ceiling ? ` (max ${o.ceiling.toFixed(2)}/click)` : ""}`;
-    case "MAXIMIZE_CONVERSIONS": return `maximize conversions${o.targetCpa ? ` (target ${o.targetCpa.toFixed(2)}/conversion)` : ""}`;
-    case "MAXIMIZE_CONVERSION_VALUE": return "maximize conversion value";
-  }
-}
+/** The strategy a change asks for, in biddingOf's shape. */
+const chosenBidding = (bidding: Bidding, o: { ceiling?: number; targetCpa?: number } = {}) =>
+  biddingOf(bidding === "MAXIMIZE_CLICKS" ? "TARGET_SPEND" : bidding, {
+    targetSpend: { cpcBidCeilingMicros: o.ceiling ? toMicros(o.ceiling) : undefined },
+    maximizeConversions: { targetCpaMicros: o.targetCpa ? toMicros(o.targetCpa) : undefined },
+  })!;
 
 /** Swappable so tests don't download anything. */
 export const io = { fetchImage };
@@ -1969,6 +1924,14 @@ function sitelinkOps(T: ReturnType<typeof tempIds>, campaign: string, links: Sit
 }
 
 /** True the first time `key` is seen (adding it to `seen`): drops what's already there and repeats in one request. */
+const kwKey = (text: unknown, match: unknown) => `${String(text ?? "").toLowerCase()}|${match}`;
+/** Keywords not in `have`, each once. */
+const freshKeywords = <K extends { text: string; match_type: string }>(keywords: K[], have: Set<string>) =>
+  keywords.filter((k) => isNew(have, kwKey(k.text, k.match_type)));
+/** sameSummary leaves this out, so the two have to match. */
+const skippedNote = (n: number) => (n ? ` (${n} already present or repeated, skipped)` : "");
+const SKIPPED_NOTE = / \(\d+ already present or repeated, skipped\)/g;
+
 function isNew(seen: Set<string>, key: string): boolean {
   if (seen.has(key)) return false;
   seen.add(key);
@@ -2067,6 +2030,6 @@ export function summarize(resolved: { operations: unknown[]; describe: string }[
  * it stays, so keywords that appeared in the account meanwhile still read as a change.
  */
 export function sameSummary(a: string, b: string): boolean {
-  const norm = (s: string) => s.replace(/ \(\d+ already present or repeated, skipped\)/g, "");
+  const norm = (s: string) => s.replace(SKIPPED_NOTE, "");
   return norm(a) === norm(b);
 }
