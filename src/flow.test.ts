@@ -111,6 +111,9 @@ class FakeAds {
         resourceName: `customers/1112223333/campaignConversionGoals/10~${cat}~WEBSITE`, category: cat, origin: "WEBSITE", biddable } }));
     }
     if (q.includes("FROM ad_group WHERE")) return [{ adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Search", status: this.campaignStatus } }];
+    if (q.includes("ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'")) {
+      return Array.from({ length: this.rsas }, (_, i) => ({ adGroupAd: { ad: { id: String(900 + i), responsiveSearchAd: { headlines: [{ text: `Ad ${i + 1}` }] } } } }));
+    }
     if (q.includes("FROM ad_group_ad")) return [{ adGroupAd: { status: "ENABLED", ad: { finalUrls: ["https://example.com/old"] } }, adGroup: { name: "AG" }, campaign: { name: "Search" } }];
     if (q.includes("FROM conversion_action WHERE conversion_action.name")) return [];
     if (q.includes("AND conversion_action.google_analytics_4_settings.event_name")) {
@@ -179,6 +182,7 @@ class FakeAds {
   /** Campaigns a strategy-membership query returns; default: Search and Brand. */
   strategyCampaigns: { id: string; name: string }[] | undefined;
   agBid = "1000000";
+  rsas = 1;
   kwBid: string | undefined;
   removed: string[] = [];
   /** A test can make Google refuse operations mentioning `text`: at validation too, or only on the real write. */
@@ -617,8 +621,8 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT version FROM client_tools").all()).toEqual([{ version: SERVER_VERSION }]);
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
-    // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29).
-    expectToolBudget(tools, { total: 89_000, perTool: 6_000, except: { propose_changes: 41_100, propose_merchant_changes: 11_000 } });
+    // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29); +3.5K for the delete_ changes (2026-10-30).
+    expectToolBudget(tools, { total: 92_500, perTool: 6_000, except: { propose_changes: 44_100, propose_merchant_changes: 11_000 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -681,6 +685,28 @@ describe("OAuth + MCP end to end", () => {
     const r = await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 });
     expect(r.isError).toBe(false);
     expect(r.json.campaigns.length).toBeGreaterThan(0);
+  });
+
+  it("says what needs a look in the overview, and a read that fails only drops its line", async () => {
+    const realSearch = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => {
+      if (q.includes("FROM ad_group_ad")) return [{ adGroup: { name: "Drains" }, campaign: { name: "Search" }, adGroupAd: { ad: { id: "9" },
+        policySummary: { approvalStatus: "DISAPPROVED", policyTopicEntries: [{ topic: "DESTINATION_NOT_WORKING", type: "PROHIBITED" }] } } }];
+      if (q.includes("FROM recommendation")) throw new Error("not this time");
+      if (q.includes("FROM conversion_action") && q.includes("conversion_last_conversion_date")) return [
+        { conversionAction: { name: "Never", primaryForGoal: true } },
+        { conversionAction: { name: "Old", primaryForGoal: true }, metrics: { conversionLastConversionDate: "2020-01-01" } },
+        { conversionAction: { name: "Secondary", primaryForGoal: false } },
+        { conversionAction: { name: "Recent", primaryForGoal: true }, metrics: { conversionLastConversionDate: new Date().toISOString().slice(0, 10) } }];
+      return realSearch(cid, q);
+    };
+    try {
+      const r = await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 });
+      expect(r.json.attention).toEqual({
+        ads_with_policy_problems: [{ ad_id: "9", status: "DISAPPROVED", ad_group: "Drains", campaign: "Search", reasons: ["DESTINATION_NOT_WORKING"] }],
+        primary_conversions_quiet_for_30_days: [{ name: "Never", last_conversion: "never" }, { name: "Old", last_conversion: "2020-01-01" }],
+      });
+    } finally { ads.search = realSearch; }
   });
 
   it("remembers the time zone of the account they work on, for lifecycle email timing", async () => {
@@ -1113,8 +1139,8 @@ describe("OAuth + MCP end to end", () => {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } });
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
-      // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29).
-      expectToolBudget(tools, { total: 112_000, perTool: 6_000 });
+      // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29); +7K for the propose_delete_ tools (2026-10-30).
+      expectToolBudget(tools, { total: 119_000, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
@@ -1222,6 +1248,20 @@ describe("OAuth + MCP end to end", () => {
 
   it("lets Free switch accounts once a month, and keeps the most recent after a downgrade", async () => {
     const uid = (db.prepare("SELECT id FROM users WHERE email = 'owner@example.com'").get() as { id: string }).id;
+    // An account this login can't reach is no switch: no notice, and nothing spent (a one-account user got one, 2026-10-30).
+    const unreachable = await call(token, "switch_account", { customer_id: "222-333-4444" });
+    expect(unreachable.isError).toBe(true);
+    expect(unreachable.text).toContain("Nothing was spent");
+    expect(unreachable.text).not.toContain("Account switch:");
+    expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).not.toContain("Account switch:");
+    const realSearch = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
+      ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
+      : realSearch(cid, q);
+    // switch_account straight away stops with the same notice: an AI can't spend the switch before the user hears what it locks.
+    const direct = await call(token, "switch_account", { customer_id: "222-333-4444" });
+    expect(direct.json).toMatchObject({ status: "switch_confirmation_needed", switch_to: "2223334444", locks_account: "1112223333" });
+    expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
     // One account in use: a new one is the switch. The first call only says what spending it would lock, and uses nothing.
     const ask = await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 });
     // Not an error: nothing failed, and errors count against the directory's reliability metrics.
@@ -1243,19 +1283,10 @@ describe("OAuth + MCP end to end", () => {
     expect(db.prepare("SELECT tool, customer_id, ok, query_shape FROM tool_calls WHERE user_id = ? ORDER BY id DESC LIMIT 1").get(uid))
       .toEqual({ tool: "run_gaql", customer_id: null, ok: 1, query_shape: "SELECT name, category WHERE name LIKE ?" });
     expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
-    // The account in use, the demo and the switch once confirmed all go through (this login just can't read 2223334444).
+    // The account in use, the demo and the switch once confirmed all go through.
     expect((await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).not.toContain("Account switch:");
     expect((await call(token, "account_overview", { customer_id: "0000000001", days: 30 })).isError).toBe(false);
-    // Spending the switch is its own write tool: no read tool takes a flag that changes the plan. It never spends the
-    // switch on an account the login can't reach.
-    const unreachable = await call(token, "switch_account", { customer_id: "222-333-4444" });
-    expect(unreachable.isError).toBe(true);
-    expect(unreachable.text).toContain("Nothing was spent");
-    expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
-    const realSearch = ads.search.bind(ads);
-    ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
-      ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
-      : realSearch(cid, q);
+    // Spending the switch is its own write tool: no read tool takes a flag that changes the plan.
     try {
       const sw = await call(token, "switch_account", { customer_id: "222-333-4444" });
       expect(sw.json).toMatchObject({ switched_to: "2223334444", active_accounts: ["2223334444"] });
@@ -1296,8 +1327,12 @@ describe("OAuth + MCP end to end", () => {
       const back = await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 });
       expect(back.text).not.toContain("Plan limit:");
       expect(back.text).not.toContain("Account switch:");
+      ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
+        ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
+        : realSearch(cid, q);
       expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).toContain("Account switch:");
     } finally {
+      ads.search = realSearch;
       db.prepare("UPDATE users SET plan_reset_at = NULL WHERE id = ?").run(uid);
       db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
       // OR REPLACE: rows logged in the try reuse freed ids (no AUTOINCREMENT).
@@ -1664,6 +1699,16 @@ describe("OAuth + MCP end to end", () => {
     const endQ = `SELECT campaign.end_date_time FROM campaign WHERE campaign.id = 2001`;
     const end = (await call(token, "run_gaql", { customer_id: "0000000001", query: endQ })).json;
     expect(end.rows[0].campaign.endDateTime).toBe("2037-12-30 23:59:59");  // undo removed it
+
+    // Deleting on the demo: permanent ones say so and have no undo; a negative comes back.
+    const del = (await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "delete_campaign", campaign_id: "2003" }] })).json;
+    expect(del.summary).toContain("can't be undone");
+    expect((await call(token, "apply_changes", { proposal_id: del.proposal_id })).json.undo).toBeUndefined();
+    const neg = (await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "delete_negative_keywords", campaign_id: "2001", criterion_ids: ["9001"] }] })).json;
+    await call(token, "apply_changes", { proposal_id: neg.proposal_id });
+    const negUndo = (await call(token, "undo_changes", { proposal_id: neg.proposal_id })).json;
+    expect(negUndo.summary).toContain('"diy"');
+    await call(token, "apply_changes", { proposal_id: negUndo.proposal_id });
 
     // Building is simulated on the demo: it proposes, applies and undoes without touching Google.
     const ad = { headlines: ["Sewer Line Repair", "Same-Day Service", "Licensed Plumbers"], descriptions: ["Call now.", "Upfront prices."], final_url: "https://example.com/sewer" };
@@ -2034,6 +2079,13 @@ describe("OAuth + MCP end to end", () => {
     expect(ads.mutations.length).toBe(sent);
     expect((await propose([{ type: "add_responsive_search_ad", ad_group_id: "20", ad: { ...ad, headlines: ["Start Free", "start free", "Pay By Card"] } }])).summary)
       .toContain("3 headlines");
+    // A 4th enabled responsive search ad: Google's RESOURCE_LIMIT says nothing of why, so it's refused first, naming the ads to pause.
+    ads.rsas = 3;
+    const sentBefore = ads.mutations.length;
+    await expect(propose([{ type: "add_responsive_search_ad", ad_group_id: "20", ad }]))
+      .rejects.toThrow('already has 3 enabled responsive search ads, Google\'s limit is 3: 900 ("Ad 1"), 901 ("Ad 2"), 902 ("Ad 3"). Ask the user which to replace, propose pause_ad');
+    expect(ads.mutations.length).toBe(sentBefore);
+    ads.rsas = 1;
 
     const before = ads.mutations.length;
     const p = await propose([campaign]);

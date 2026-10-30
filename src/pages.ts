@@ -28,7 +28,7 @@ const paidCovers = () => (fp.kind === "accounts" ? "Everything in Free, on" : `$
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
-const PRIVACY_UPDATED = "2026-10-28";
+const PRIVACY_UPDATED = "2026-10-30";
 const TERMS_UPDATED = "2026-10-28";
 
 const CSS = `
@@ -317,7 +317,7 @@ export function homePage(baseUrl: string): string {
   return layout({
     baseUrl, path: "/", wide: true,
     title: "Camberstack: hosted Google Ads MCP for Claude and ChatGPT",
-    description: `A hosted Google Ads MCP server for Claude, ChatGPT and Cursor. Your AI proposes changes, you approve each one, and any applied change can be undone in one step. Free for 1 account with unlimited changes; ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}.`,
+    description: `A hosted Google Ads MCP server for Claude, ChatGPT and Cursor. Your AI proposes changes, you approve each one, and undo takes one step; the few changes Google can't reverse are flagged first. Free for 1 account with unlimited changes; ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}.`,
     jsonLd: {
       "@context": "https://schema.org", "@type": "SoftwareApplication", name: "Camberstack",
       applicationCategory: "BusinessApplication", operatingSystem: "Web", url: baseUrl,
@@ -338,7 +338,7 @@ export function homePage(baseUrl: string): string {
 <div class="hero-copy">
 <p class="eyebrow"><span class="dot ok"></span>Free for 1 Google Ads account. No card.</p>
 <h1>A hosted Google Ads MCP server</h1>
-<p class="lede">Your AI reads your Google Ads account and proposes changes. Nothing changes until you approve, and every change can be undone.</p>
+<p class="lede">Your AI reads your Google Ads account and proposes changes. Nothing changes until you approve, and undo takes one message; the few changes Google can't reverse are flagged first.</p>
 <div class="ctas"><a class="btn btn-lg" href="#setup">Connect for free</a><a class="btn btn-lg btn-ghost" href="#demo">Try the demo account</a></div>
 <p class="works">Works with <span>Claude</span><span>ChatGPT</span><span>Cursor</span><span>Claude Code</span><span>any MCP app</span></p>
 </div>
@@ -489,7 +489,7 @@ const ASK_FIRST = `<h2>What to ask first</h2>
 
 const CAN_CHANGE = `<h2>What it can change</h2>
 <p>Negative keywords, budgets and end dates, pausing and re-enabling, bids, targeting and bid strategy, conversion goals, and whole new
-Search, Performance Max, Display and YouTube campaigns (always created paused). You approve each change, and each one can be undone. <a href="/#changes">The full list</a>, and <a href="/tools">every tool</a>.</p>`;
+Search, Performance Max, Display and YouTube campaigns (always created paused). You approve each change, and each one can be undone, apart from the few Google can't reverse, which are flagged first. <a href="/#changes">The full list</a>, and <a href="/tools">every tool</a>.</p>`;
 
 /** The two troubleshooting entries that differ per app. `notUsed` and `reAdd` are the app-specific steps. */
 const appTroubleshooting = (app: string, notUsed: string, reAdd: string) => `<h3>${app} answers without using Camberstack</h3>
@@ -664,7 +664,7 @@ ${shot("chatgpt-plugin.webp", 540, 842, "Camberstack: Google Ads in ChatGPT's pl
 <ul>
 <li>Changes are stored as a proposal and checked with Google first; applying is a separate tool call. ChatGPT asks you to
 confirm tool calls that change things unless you've turned that off.</li>
-<li>Every applied change can be undone with one more message.</li>
+<li>Applied changes can be undone with one more message. The few Google can't reverse, such as deleting a campaign, are flagged before you approve.</li>
 <li>New campaigns are created paused, and risky changes (turning a campaign on, a big budget or bid jump) carry a warning before you approve. Nothing you built can be deleted.</li>
 </ul>
 
@@ -874,7 +874,7 @@ ${CAN_CHANGE}
 <h2>Questions</h2>
 <h3>Why does Gemini say the app "hasn't been reviewed by Google"?</h3>
 <p>Gemini shows that for every custom app. It isn't specific to Camberstack. Nothing in your account changes until you approve
-a specific proposal, every applied change can be undone, and nothing can be deleted.</p>
+a specific proposal, every applied change can be undone apart from deletions Google can't reverse, which are flagged before you approve.</p>
 <h3>Isn't Gemini already connected to my Google account?</h3>
 <p>Gemini's built-in Google apps don't include Google Ads. Camberstack adds it, with its own Google sign-in limited to Google Ads and your email address.</p>
 ${commonQuestions("Gemini")}
@@ -898,7 +898,7 @@ export function docsPage(baseUrl: string): string {
     body: `
 <h1>Camberstack documentation</h1>
 <p class="lede">Camberstack is a hosted MCP server that gives your AI assistant access to your Google Ads account and, optionally,
-read-only Search Console. The AI reads the account and proposes changes. Nothing changes until you approve a specific proposal, and every applied change can be undone.</p>
+read-only Search Console. The AI reads the account and proposes changes. Nothing changes until you approve a specific proposal, and applied changes can be undone, apart from deletions Google can't reverse, which are flagged first.</p>
 <ul>
 <li><a href="#connect">Connect</a></li>
 <li><a href="#how-it-works">How it works: read, propose, approve, apply, undo</a></li>
@@ -1026,7 +1026,7 @@ change your Google Ads account. This policy explains what we access, why, and wh
 <li>To apply changes to your Google Ads account, your Google Analytics setup or your Merchant Center products, <strong>only</strong> when you approve a specific proposal, and to reverse them if you ask.</li>
 </ul>
 <p>We do not sell your data, use it for advertising, share it with data brokers, or use it to train AI or machine-learning models.
-Humans at Camberstack do not read your Google Ads data unless you ask us to for support, it is needed for security or abuse investigation, or the law requires it.</p>
+Humans at Camberstack do not read your Google data unless you ask us to for support, it is needed for security or abuse investigation, or the law requires it.</p>
 
 <h2>Google API Services: Limited Use</h2>
 <p>Camberstack's use and transfer of information received from Google APIs will adhere to the
@@ -1047,19 +1047,29 @@ Humans at Camberstack do not read your Google Ads data unless you ask us to for 
 <tr><td>A sign-in session for the feedback page (a cookie; we store only its hash)</td><td>Know who a message is from, so we can reply and keep spam out</td><td>1 day, or until you sign out</td></tr>
 <tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
 </table>
-<p>"Without use" means no tool call from your AI app and no new connection. After six months of it we revoke and delete your
-Google token (Google stops honoring an unused one after six months anyway); connect again to carry on. After two years we delete your account,
-proposals and usage log.</p>
 <p>Reports, search-term lists, query results, Google Analytics reports and Merchant Center product statuses and reports are computed on request and returned to your AI assistant. We do not store them.
 When a proposed ad uses an image URL, we download that image only to upload it to your Google Ads account as an image asset; we do not keep the file.
-Standard web server logs (IP address, time, path) are kept for a limited period for security and then deleted.
+Web server and application logs (IP address, time, path, errors) are kept for up to 90 days for security and then deleted.
 When the server hits a bug, the error and where in the code it happened go to an error tracker we host ourselves; no request contents, cookies or tokens are sent with it.</p>
 
-<h2>Your AI assistant</h2>
-<p>Tool results go to the AI app you connected (for example Claude or ChatGPT). How that provider handles the conversation is governed by its own privacy policy.</p>
+<h2 id="retention">Data retention and deletion</h2>
+<p>We keep Google user data only as long as we need it to run Camberstack for you. The table above gives the period for each item we store; Google data we read for you and don't list there is not retained.</p>
+<ul>
+<li><strong>When you stop using Camberstack:</strong> "without use" means no tool call from your AI app and no new connection. After six months of it we revoke and delete your Google token (Google stops honoring an unused one after six months anyway); connect again to carry on. After two years we delete your account, proposals and usage log.</li>
+<li><strong>When you disconnect:</strong> the <code>disconnect</code> tool revokes our access at Google and immediately deletes your Google token and every token we issued to your AI app. If you remove Camberstack at Google instead, the token stops working at once and we delete it the next time it is tried, or after six months at the latest. Your account and change history stay until you ask us to delete them.</li>
+<li><strong>When you ask us to delete your data:</strong> email <a href="mailto:${CONTACT}">${CONTACT}</a> from your Google account's address and within 30 days we delete your Google token, account, proposals, usage log and feedback.</li>
+<li><strong>Backups:</strong> daily backups of our database hold the stored items above. They are used only to recover from a failure and expire after 35 days at most, so data you delete leaves them within 35 days of its deletion. A Google token in a backup stays encrypted, and stops working once revoked.</li>
+</ul>
+
+<h2>Who else handles your data</h2>
+<ul>
+<li><strong>Your AI app.</strong> Tool results go to the AI app you connected (for example Claude or ChatGPT). How that provider handles the conversation is governed by its own privacy policy.</li>
+<li><strong>Service providers.</strong> Resend delivers our emails, so it receives your email address. Stripe handles payments if you upgrade, so it receives your email address and keeps payment records under its own policy. Cloudflare R2 stores an encrypted-at-rest copy of our backups. They receive this only to provide these services to us.</li>
+</ul>
+<p>We do not transfer your Google data to anyone else unless you ask us to or the law requires it.</p>
 
 <h2>Where it runs</h2>
-<p>Camberstack runs on infrastructure we operate in the United States. We use no third-party analytics on your Google data.</p>
+<p>Camberstack runs on infrastructure we operate in the United States, with the off-site backup copy on Cloudflare R2. We use no third-party analytics on your Google data.</p>
 
 <h2>Emails</h2>
 <p>We may send you a few short emails about using Camberstack: a welcome when you connect, a note if you connect but don't try it within a
@@ -1085,12 +1095,20 @@ None of your Google Ads, Search Console, Google Analytics or Merchant Center dat
 <h2>Your choices</h2>
 <ul>
 <li><strong>Disconnect:</strong> ask your AI to run the <code>disconnect</code> tool, or remove Camberstack at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Either stops all access; the tool also deletes the stored token.</li>
-<li><strong>Delete everything:</strong> email <a href="mailto:${CONTACT}">${CONTACT}</a> from your Google account's address and we delete your account and change history within 30 days.</li>
+<li><strong>Delete everything:</strong> email <a href="mailto:${CONTACT}">${CONTACT}</a> from your Google account's address and we delete your account and change history within 30 days (see <a href="#retention">Data retention and deletion</a>).</li>
 </ul>
 
-<h2>Security</h2>
-<p>All traffic uses HTTPS. Google refresh tokens are encrypted at rest; tokens we issue are stored only as SHA-256 hashes.
-Changes are validated with Google before you approve them and are limited to the operations listed on the homepage.</p>
+<h2>Data protection</h2>
+<p>We protect your Google user data and other sensitive data, including Google tokens, account details and your change history, with these measures:</p>
+<ul>
+<li><strong>Encryption in transit:</strong> all traffic between your AI app or browser, Camberstack and Google uses HTTPS (TLS 1.2 or newer). Plain HTTP requests are redirected to HTTPS.</li>
+<li><strong>Encryption of credentials at rest:</strong> Google refresh tokens are encrypted with AES-256-GCM, using a key kept outside the database. Tokens we issue and sign-in sessions are stored only as SHA-256 hashes, so a copy of the database alone can't be used to reach Google or to sign in.</li>
+<li><strong>Keeping as little as possible:</strong> reports and query results pass through and are not stored, and the usage log leaves out tool results and the values in your queries.</li>
+<li><strong>Access control:</strong> only Camberstack's operator can sign in to the server, the database and the backups. Each person's data is tied to their own Google account, and the service acts only on the accounts that Google account can reach.</li>
+<li><strong>Isolation:</strong> the application runs as an unprivileged user in its own container, and is not exposed to the internet directly: requests reach it only through a rate-limited HTTPS proxy.</li>
+<li><strong>Protected backups:</strong> backups are checked for integrity after every run. The encryption key is backed up separately, itself encrypted to a private key that is not on the server, and the off-site copy sits in a locked bucket that the server can't alter or delete.</li>
+<li><strong>Safeguards on changes:</strong> changes are validated with Google before you approve them, are limited to the operations listed on the homepage, and are logged so they can be undone.</li>
+</ul>
 
 <h2>Children</h2>
 <p>Camberstack is a business tool and not directed at anyone under 18.</p>

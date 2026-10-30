@@ -138,8 +138,7 @@ export function checkGaql(query: string, cat: Catalog): string[] {
         const near = closest(name, pool.filter(usable).map((x) => x.name));
         // Another resource's field only when it's the same field under another path (performance_label): a looser match
         // offered segments.webpage for conversion_action.webpage_code, and the model dropped the whole query (prod, 2026-10-26).
-        const leaf = name.split(".").at(-1);
-        const anywhere = near.length ? [] : closest(name, pool.map((x) => x.name)).filter((c) => c.split(".").at(-1) === leaf);
+        const anywhere = near.length ? [] : closest(name, pool.map((x) => x.name)).filter((c) => sameLeaf(c, name));
         issues.push(`${name} doesn't exist${near.length ? `. Closest usable FROM ${p.from}: ${near.join(", ")}.`
           : anywhere.length ? `. Closest: ${anywhere.join(", ")} (not usable FROM ${p.from}).`
           : `. Drop it, or find the name with run_gaql: ${lookupQuery(keyWord(name))}`}`);
@@ -272,7 +271,7 @@ export function closest(name: string, pool: string[]): string[] {
   const scored = pool.map((c) => {
     const cp = c.split(".");
     let s = levenshtein(name, c);
-    if (cp.at(-1) === leaf) s -= 100;
+    if (sameLeaf(c, name)) s -= 100;
     else if (cp.at(-1)!.includes(leaf) || leaf.includes(cp.at(-1)!)) s -= 20;
     if (cp[0] === parts[0]) s -= 10;
     return { c, s };
@@ -281,12 +280,12 @@ export function closest(name: string, pool: string[]): string[] {
   if (!best) return [];
   // Same last part (e.g. every *.cpc_bid_ceiling_micros): offer them all, since the path is what was guessed wrong and
   // names alone can't tell which (maximize clicks is target_spend in the API, say).
-  const sameLeaf = scored.filter((x) => x.c.split(".").at(-1) === leaf);
+  const leafMatches = scored.filter((x) => sameLeaf(x.c, name));
   // The resource's own name prefixed to the leaf: experiment.id is experiment.experiment_id, and the same-leaf rule alone
   // offered only customer.id for it (2026-10-23).
   const own = parts.length > 1 ? `${parts.slice(0, -1).join(".")}.${parts.at(-2)}_${leaf}` : "";
-  if (pool.includes(own)) return [own, ...sameLeaf.map((x) => x.c)].slice(0, 8);
-  if (sameLeaf.length) return sameLeaf.slice(0, 8).map((x) => x.c);
+  if (pool.includes(own)) return [own, ...leafMatches.map((x) => x.c)].slice(0, 8);
+  if (leafMatches.length) return leafMatches.slice(0, 8).map((x) => x.c);
   // Otherwise only names that are plausibly what was meant, judged on the last part: sharing the resource prefix alone
   // offered campaign.campaign_group for campaign.url_expansion_opt_out (2026-10-15), and a wrong guess costs a retry.
   const flat = name.replace(/\./g, "_");
@@ -299,6 +298,15 @@ export function closest(name: string, pool: string[]): string[] {
       || levenshtein(leaf, cl) <= Math.max(2, Math.floor(leaf.length / 3));
   };
   return scored.filter((x) => x.s <= best.s + 3 && plausible(x.c)).slice(0, 3).map((x) => x.c);
+}
+
+/**
+ * Same last part, numbering aside: dynamic_search_ad.description1 is expanded_dynamic_search_ad.description, and an
+ * exact match alone offered only text_ad.description1 and in_feed.description1 (prod, 2026-10-30).
+ */
+function sameLeaf(a: string, b: string): boolean {
+  const stem = (n: string) => n.split(".").at(-1)!.replace(/\d+$/, "");
+  return stem(a) === stem(b);
 }
 
 function levenshtein(a: string, b: string): number {

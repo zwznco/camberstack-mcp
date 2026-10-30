@@ -12,8 +12,9 @@
  * building and spending are two separate approvals), ad groups, keywords, responsive search ads,
  * sitelinks, which conversion category a campaign bids on, a campaign's EU political advertising declaration, a campaign's bid strategy (including moving it off a shared one),
  * a shared (portfolio) strategy's targets, and creating a shared strategy (undo moves its campaigns back, then removes it). YouTube is Demand Gen with video ads: the
- * API refuses to create VIDEO campaigns (MUTATE_NOT_ALLOWED, checked against v23 on 2026-10-12). Nothing
- * a user built is ever deleted: the only removals are undos of things this service created.
+ * API refuses to create VIDEO campaigns (MUTATE_NOT_ALLOWED, checked against v23 on 2026-10-12). A user can also delete
+ * what they built (the delete_ changes). Google can't bring back a removed ad, ad group or campaign, so those carry a ⚠ and
+ * no undo; a keyword, negative or sitelink goes back as a new one, without its history.
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -24,6 +25,9 @@ import { micros, toMicros, type AdsClient } from "./google.js";
 export const MAX_CHANGES = 50;
 const SOURCE_LABEL = { UPLOAD_CLICKS: "uploaded click ids", WEBPAGE: "website tag", AD_CALL: "calls from ads", WEBSITE_CALL: "calls from the website" } as const;
 /** conversion_action.type values imported from an analytics tool, whose counting the tool decides. */
+/** Enabled responsive search ads Google allows in one ad group. */
+const RSA_LIMIT = 3;
+const NO_UNDO = " ⚠ permanent: Google can't restore it, so this can't be undone; to only stop it, pause it instead";
 const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTICS|UNIVERSAL_ANALYTICS)/;
 
 const id = z.string().regex(/^\d+$/, "numeric id");
@@ -294,6 +298,20 @@ export const PUBLIC_CHANGES = [
     .describe("Remove the link between a Merchant Center account and this Google Ads account; Shopping and Performance Max campaigns using its products stop serving"),
   z.object({ type: z.literal("remove_conversion_action"), conversion_action_id: id.describe("conversion_action.id from run_gaql") })
     .describe("Remove a conversion action. Permanent unless a GA4 import: say so before they approve"),
+  z.object({ type: z.literal("delete_keyword"), ad_group_id: adGroupId, criterion_id: criterionId })
+    .describe("Delete one keyword. Undo adds it back as a new keyword without its history; to keep the history, pause it"),
+  z.object({ type: z.literal("delete_ad"), ad_group_id: adGroupId, ad_id: id.describe("Ad id, digits only (ad_group_ad.ad.id from run_gaql)") })
+    .describe("Delete one ad. Permanent, with no undo: say so before they approve; to only stop it, pause it"),
+  z.object({ type: z.literal("delete_ad_group"), ad_group_id: adGroupId })
+    .describe("Delete an ad group with its ads and keywords. Permanent, with no undo: say so before they approve; to only stop it, pause it"),
+  z.object({ type: z.literal("delete_campaign"), campaign_id: campaignId })
+    .describe("Delete a whole campaign. Permanent, with no undo: say so before they approve; to only stop it, pause it"),
+  z.object({ type: z.literal("delete_negative_keywords"), campaign_id: campaignId,
+    criterion_ids: z.array(id).min(1).max(MAX_CHANGES).describe("campaign_criterion.criterion_id of each negative, from run_gaql WHERE campaign_criterion.negative = TRUE") })
+    .describe("Delete negative keywords from a campaign, so those searches can show its ads again"),
+  z.object({ type: z.literal("delete_sitelinks"), campaign_id: campaignId,
+    asset_ids: z.array(id).min(1).max(8).describe("asset.id of each sitelink, from run_gaql FROM campaign_asset WHERE campaign_asset.field_type = 'SITELINK'") })
+    .describe("Take sitelinks off a campaign. Google can't edit a sitelink: to change one, delete it and add_sitelinks in the same proposal"),
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
@@ -691,6 +709,16 @@ export async function resolveChange(
     case "add_responsive_search_ad": {
       const [g] = await q(`SELECT ad_group.name, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
       if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      // Google allows 3 enabled responsive search ads per ad group and answers a 4th with a bare RESOURCE_LIMIT: a user's
+      // assistant was left with no reason and replaced an ad only 52 minutes later (prod, 2026-10-29). Each change dry-runs
+      // on its own, so a pause in the same proposal doesn't make room: it has to be applied first.
+      const live = await q(`SELECT ad_group_ad.ad.id, ad_group_ad.ad.responsive_search_ad.headlines FROM ad_group_ad
+        WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.status = 'ENABLED' AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'`);
+      if (live.length >= RSA_LIMIT) {
+        const ads = live.map((r) => `${r.adGroupAd.ad.id} ("${r.adGroupAd.ad.responsiveSearchAd?.headlines?.[0]?.text ?? "?"}")`).join(", ");
+        throw new Error(`Ad group "${g.adGroup.name}" already has ${live.length} enabled responsive search ads, Google's limit is ${RSA_LIMIT}: ${ads}. `
+          + `Ask the user which to replace, propose pause_ad for it and apply that, then propose this ad again. Nothing was proposed.`);
+      }
       return {
         change, service: "adGroupAds",
         operations: [{ create: adCreate(`customers/${customerId}/adGroups/${change.ad_group_id}`, change.ad) }],
@@ -1134,6 +1162,93 @@ export async function resolveChange(
         describe: `Remove conversion action "${c.name}" (${c.status === "HIDDEN" ? "not imported" : c.primaryForGoal ? "primary" : "secondary"}); its past conversions stay in reports`
           + (ga4 ? "" : " ⚠ Google can't restore a removed conversion action, so this can't be undone"),
         inverse: ga4 ? { type: "import_ga4_key_event", property_id: String(g.propertyId), event_name: g.eventName, primary: !!c.primaryForGoal } : undefined,
+      };
+    }
+    case "delete_keyword": {
+      const [k] = await q(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.cpc_bid_micros,
+          ad_group_criterion.status, ad_group.name, campaign.name FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
+          AND ad_group_criterion.criterion_id = ${change.criterion_id}`);
+      if (!k) throw new Error(`Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
+      const c = k.adGroupCriterion, label = fmtKw(c.keyword.text, c.keyword.matchType);
+      if (c.status === "REMOVED") return { change, service: "adGroupCriteria", operations: [], describe: `Delete keyword ${label} (already in place)` };
+      // add_keywords creates ENABLED, so undoing the delete of a paused keyword would start it spending.
+      const paused = c.status !== "ENABLED";
+      const max_cpc = c.cpcBidMicros ? micros(c.cpcBidMicros) : undefined;
+      return {
+        change, service: "adGroupCriteria", operations: [{ remove: `customers/${customerId}/adGroupCriteria/${change.ad_group_id}~${change.criterion_id}` }],
+        describe: `Delete keyword ${label} from ad group "${k.adGroup.name}" (campaign "${k.campaign.name}"; now ${c.status})` +
+          (paused ? " ⚠ a paused keyword has no undo" : "; undo adds it back as a new keyword, without its history"),
+        inverse: paused ? undefined : { type: "add_keywords", ad_group_id: change.ad_group_id, keywords: [{ text: c.keyword.text, match_type: c.keyword.matchType, ...(max_cpc ? { max_cpc } : {}) }] },
+      };
+    }
+    case "delete_ad": {
+      const [a] = await q(`SELECT ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group.name, campaign.name FROM ad_group_ad
+        WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.ad.id = ${change.ad_id}`);
+      if (!a) throw new Error(`Ad ${change.ad_id} not found in ad group ${change.ad_group_id}`);
+      const url = a.adGroupAd.ad?.finalUrls?.[0];
+      const what = `ad ${change.ad_id}${url ? ` (→ ${url})` : ""}`;
+      if (a.adGroupAd.status === "REMOVED") return { change, service: "adGroupAds", operations: [], describe: `Delete ${what} (already in place)` };
+      const live = await q(`SELECT ad_group_ad.ad.id FROM ad_group_ad WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.status = 'ENABLED'`);
+      const last = a.adGroupAd.status === "ENABLED" && live.length === 1;
+      return {
+        change, service: "adGroupAds", operations: [{ remove: `customers/${customerId}/adGroupAds/${change.ad_group_id}~${change.ad_id}` }],
+        describe: `Delete ${what} from ad group "${a.adGroup.name}" (campaign "${a.campaign.name}"; now ${a.adGroupAd.status})` +
+          (last ? " ⚠ the ad group's last enabled ad: it stops showing" : "") + NO_UNDO,
+      };
+    }
+    case "delete_ad_group": {
+      const [g] = await q(`SELECT ad_group.name, ad_group.status, campaign.name FROM ad_group WHERE ad_group.id = ${change.ad_group_id}`);
+      if (!g) throw new Error(`Ad group ${change.ad_group_id} not found`);
+      if (g.adGroup.status === "REMOVED") return { change, service: "adGroups", operations: [], describe: `Delete ad group "${g.adGroup.name}" (already in place)` };
+      const [keywords, ads] = await Promise.all([
+        q(`SELECT ad_group_criterion.criterion_id FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
+          AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.negative = false AND ad_group_criterion.status != 'REMOVED'`),
+        q(`SELECT ad_group_ad.ad.id FROM ad_group_ad WHERE ad_group.id = ${change.ad_group_id} AND ad_group_ad.status != 'REMOVED'`)]);
+      return {
+        change, service: "adGroups", operations: [{ remove: `customers/${customerId}/adGroups/${change.ad_group_id}` }],
+        describe: `Delete ad group "${g.adGroup.name}" (campaign "${g.campaign.name}"; now ${g.adGroup.status}), with its ${keywords.length} keyword(s) and ${ads.length} ad(s)` + NO_UNDO,
+      };
+    }
+    case "delete_campaign": {
+      const [c] = await q(`SELECT campaign.name, campaign.status FROM campaign WHERE campaign.id = ${change.campaign_id}`);
+      if (!c) throw new Error(`Campaign ${change.campaign_id} not found`);
+      if (c.campaign.status === "REMOVED") return { change, service: "campaigns", operations: [], describe: `Delete campaign "${c.campaign.name}" (already in place)` };
+      const groups = await q(`SELECT ad_group.id FROM ad_group WHERE campaign.id = ${change.campaign_id} AND ad_group.status != 'REMOVED'`);
+      return {
+        change, service: "campaigns", operations: [{ remove: `customers/${customerId}/campaigns/${change.campaign_id}` }],
+        describe: `Delete campaign "${c.campaign.name}" (now ${c.campaign.status}), with its ${groups.length} ad group(s)` + NO_UNDO,
+      };
+    }
+    case "delete_negative_keywords": {
+      const rows = await q(`SELECT campaign.name, campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type
+        FROM campaign_criterion WHERE campaign.id = ${change.campaign_id} AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = true`);
+      const byId = new Map(rows.map((r) => [String(r.campaignCriterion.resourceName).split("~").at(-1), r]));
+      const missing = change.criterion_ids.filter((i) => !byId.has(i));
+      if (missing.length) throw new Error(`No negative keyword ${missing.join(", ")} on campaign ${change.campaign_id}. Negatives from a shared list aren't the campaign's own.`);
+      const found = [...new Set(change.criterion_ids)].map((i) => byId.get(i)!);
+      return {
+        change, service: "campaignCriteria", operations: found.map((r) => ({ remove: r.campaignCriterion.resourceName })),
+        describe: `Delete ${found.length} negative keyword(s) from campaign "${found[0].campaign.name}": ` +
+          found.map((r) => fmtKw(r.campaignCriterion.keyword.text, r.campaignCriterion.keyword.matchType)).join(", ") + ", so those searches can show its ads again",
+        inverse: { type: "add_negative_keywords", campaign_id: change.campaign_id,
+          keywords: found.map((r) => ({ text: r.campaignCriterion.keyword.text, match_type: r.campaignCriterion.keyword.matchType })) },
+      };
+    }
+    case "delete_sitelinks": {
+      const rows = await q(`SELECT campaign.name, campaign_asset.resource_name, asset.id, asset.final_urls, asset.sitelink_asset.link_text,
+          asset.sitelink_asset.description1, asset.sitelink_asset.description2 FROM campaign_asset
+        WHERE campaign.id = ${change.campaign_id} AND campaign_asset.field_type = 'SITELINK' AND campaign_asset.status != 'REMOVED'`);
+      const byId = new Map(rows.map((r) => [String(r.asset.id), r]));
+      const missing = change.asset_ids.filter((i) => !byId.has(i));
+      if (missing.length) throw new Error(`No sitelink ${missing.join(", ")} on campaign ${change.campaign_id}. Sitelinks on an ad group or the whole account aren't the campaign's own.`);
+      const found = [...new Set(change.asset_ids)].map((i) => byId.get(i)!);
+      return {
+        change, service: "googleAds", operations: found.map((r) => ({ campaignAssetOperation: { remove: r.campaignAsset.resourceName } })),
+        describe: `Take ${found.length} sitelink(s) off campaign "${found[0].campaign.name}": ${found.map((r) => `"${r.asset.sitelinkAsset.linkText}"`).join(", ")}; undo adds them back as new sitelinks, without their history`,
+        inverse: { type: "add_sitelinks", campaign_id: change.campaign_id, sitelinks: found.map((r) => {
+          const l = r.asset.sitelinkAsset;
+          return { text: l.linkText, url: r.asset.finalUrls[0], ...(l.description1 && l.description2 ? { description1: l.description1, description2: l.description2 } : {}) };
+        }) },
       };
     }
     case "remove_negative_keywords": {

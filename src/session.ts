@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -67,6 +67,10 @@ const inFlight = new Map<string, Map<string, number>>();
 const servicesInFlight = new Map<string, Map<Service, number>>();
 /** When each user was last asked to pick Free's service (checkService). In memory: a restart just asks again. */
 const serviceAsked = new Map<string, number>();
+/** How many ads account_overview's attention block names, and how long a primary conversion can stay quiet before it says so. */
+const ATTENTION_ADS = 10, ATTENTION_CONVERSION_DAYS = 30;
+/** The account each user was last told about in an "Account switch:" notice, and when. */
+const switchAsked = new Map<string, { cid: string; at: number }>();
 
 /**
  * `fn` over `items`, at most `limit` at a time, results in input order. If any fail, throws the error of the
@@ -424,7 +428,11 @@ export class UserSession {
     }
     // A new account on a full plan is the switch: it passes only once the user has said yes to spending it.
     const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
-    if (isSwitch() && !confirmSwitch) {
+    // switch_account spends it only after the notice: an AI that called it straight away spent a new user's switch 41
+    // seconds after their first pick, locking that account for 30 days with no warning (prod, 2026-10-30).
+    const asked = switchAsked.get(this.user.id);
+    const agreed = confirmSwitch && asked?.cid === cid && now() - asked.at <= SWITCH_ANSWER_SECONDS;
+    if (isSwitch() && !agreed) {
       const managers = await managerIds();
       if (!managers.has(cid)) {
         st = this.planState(managers, pool);
@@ -432,7 +440,8 @@ export class UserSession {
           this.reloadPlan();
           st = this.planState(managers, pool);
         }
-        if (isSwitch()) this.noticeSwitch(cid, st, pool);
+        // An Ads account this login can't reach has nothing to switch to: the call fails on its own and spends nothing.
+        if (isSwitch() && (pool !== "ads" || await this.mayReach(cid))) this.noticeSwitch(cid, st, pool);
       }
     }
     if (!st.allows(cid)) {
@@ -470,8 +479,19 @@ export class UserSession {
         to_go_ahead: "once the user picks, call switch_account with that customer_id, then this tool again" });
   }
 
+  /** False only when a complete account list says no: unsure must still stop for the notice, or a read could spend the switch unasked. */
+  private async mayReach(cid: string): Promise<boolean> {
+    try {
+      const reaches = (list: Account[]) => list.some((a) => a.customerId === cid);
+      return reaches(await this.accounts()) || reaches(await this.accounts({ fresh: true })) || this.lastUnreadable.length > 0;
+    } catch {
+      return true;
+    }
+  }
+
   /** Stop before the switch is spent: what it locks, until when, and how to go ahead. */
   private noticeSwitch(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool = "ads"): never {
+    switchAsked.set(this.user.id, { cid, at: now() });
     const locks = st.active.at(-1)!;
     // Once spent, the switch comes back when the account it locks ages out of the window.
     const last = this.usage(pool).find((u) => u.c === locks)?.last ?? now();
@@ -728,7 +748,42 @@ export class UserSession {
       window: `last ${days} days`,
       totals: { cost: round(cost), conversions: round(conv), cost_per_conversion: conv > 0 ? round(cost / conv) : null },
       campaigns,
+      ...(isDemo(a.customerId) ? {} : await this.attention(a)),
     };
+  }
+
+  /**
+   * What needs a look, read whatever the question was: models only found these if they knew the query. Each read is
+   * optional, so a failed one drops its line and never the overview; an empty result adds nothing to the response.
+   */
+  private async attention(a: Account) {
+    const read = (query: string) => this.ads.search(a.customerId, query, a.loginCustomerId);
+    const [adRows, recRows, actionRows] = await Promise.all([
+      read(`SELECT ad_group_ad.ad.id, ad_group_ad.policy_summary.approval_status, ad_group_ad.policy_summary.policy_topic_entries, ad_group.name, campaign.name
+        FROM ad_group_ad WHERE ad_group_ad.status = 'ENABLED' AND ad_group_ad.policy_summary.approval_status IN ('DISAPPROVED', 'APPROVED_LIMITED')
+        AND campaign.status != 'REMOVED'`).catch(() => []),
+      read(`SELECT recommendation.type FROM recommendation WHERE recommendation.dismissed = FALSE`).catch(() => []),
+      read(`SELECT conversion_action.name, conversion_action.primary_for_goal, metrics.conversion_last_conversion_date
+        FROM conversion_action WHERE conversion_action.status = 'ENABLED'`).catch(() => []),
+    ]);
+    const ads = adRows.filter((r) => r.adGroupAd?.policySummary), recs = recRows.filter((r) => r.recommendation?.type);
+    const actions = actionRows.filter((r) => r.conversionAction?.name);
+    const policy = ads.slice(0, ATTENTION_ADS).map((r) => ({
+      ad_id: String(r.adGroupAd.ad?.id), status: r.adGroupAd.policySummary.approvalStatus, ad_group: r.adGroup?.name, campaign: r.campaign?.name,
+      reasons: (r.adGroupAd.policySummary.policyTopicEntries ?? []).map((t: { topic?: string }) => t.topic).filter(Boolean),
+    }));
+    const recommendations: Record<string, number> = {};
+    for (const r of recs) recommendations[r.recommendation.type] = (recommendations[r.recommendation.type] ?? 0) + 1;
+    // Google leaves the date out for an action that has never had a conversion.
+    const cutoff = new Date(now() * 1000 - ATTENTION_CONVERSION_DAYS * 86400_000).toISOString().slice(0, 10);
+    const quiet = actions.filter((r) => r.conversionAction.primaryForGoal && !(r.metrics?.conversionLastConversionDate >= cutoff))
+      .map((r) => ({ name: r.conversionAction.name, last_conversion: r.metrics?.conversionLastConversionDate ?? "never" }));
+    const attention = {
+      ...(policy.length ? { ads_with_policy_problems: policy, ...(ads.length > policy.length ? { more_ads_with_policy_problems: ads.length - policy.length } : {}) } : {}),
+      ...(recs.length ? { google_recommendations: recommendations } : {}),
+      ...(quiet.length ? { primary_conversions_quiet_for_30_days: quiet } : {}),
+    };
+    return Object.keys(attention).length ? { attention } : {};
   }
 
   async runQuery(customerId: string, query: string) {

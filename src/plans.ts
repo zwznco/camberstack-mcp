@@ -52,6 +52,8 @@ export const SERVICE_LIMIT_PREFIX = "Service limit:";
 export const SERVICE_CHOICE_PREFIX = "Service choice:";
 /** How long after a Service choice notice the next real call counts as the user's answer (session.ts checkService). */
 export const SERVICE_CHOICE_SECONDS = 15 * 60;
+/** How long a switch_account call counts as the user's answer to an "Account switch:" notice. */
+export const SWITCH_ANSWER_SECONDS = 60 * 60;
 
 /**
  * Which Free plan is live: by Google Ads account (FREE_ONE_SERVICE unset), one-service Free announced for a date, or on

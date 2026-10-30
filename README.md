@@ -5,11 +5,11 @@
 Connect Google Ads (and, optionally, Search Console) to Claude, ChatGPT, Cursor or any MCP client. Your AI
 reads the account with read-only tools and can propose changes, from negative keywords to whole Search,
 Performance Max, Display and YouTube campaigns. **Nothing changes in the account until you approve a specific
-proposal, and every applied change can be undone in one call, on every plan.** Risky changes (turning a campaign on,
+proposal, and applied changes can be undone in one call, on every plan, apart from deletions Google can't reverse, which are flagged first.** Risky changes (turning a campaign on,
 more than doubling a budget or bid, switching bid strategy) are flagged in the proposal before you approve. A demo
 account lets anyone try every tool first.
 
-Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes on 1 Google Ads account at a time, with one switch a month; from November 16, Free covers one Google service at a time: Google Ads, Search Console or Google Analytics. Plus $7/mo: all three together on 1 account; Pro $15/mo: all three on up to 5 accounts; Agency $49/mo: up to 25).
+Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes on 1 Google Ads account at a time, with one switch a month; from November 15, Free covers one Google service at a time: Google Ads, Search Console or Google Analytics. Plus $7/mo: all three together on 1 account; Pro $15/mo: all three on up to 5 accounts; Agency $49/mo: up to 25).
 
 **Setup guides, with screenshots and troubleshooting:** [Connect Google Ads to Claude](https://camberstack.io/google-ads-claude) ·
 [Connect Google Ads to ChatGPT](https://camberstack.io/google-ads-chatgpt) · [every tool](https://camberstack.io/tools) ·
@@ -20,7 +20,7 @@ Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes o
 | tool | writes? | what it does |
 |---|---|---|
 | `list_accounts` | no | every account the login reaches, including client accounts under a manager (MCC) |
-| `account_overview` | no | spend, conversions, cost per conversion per campaign |
+| `account_overview` | no | spend, conversions, cost per conversion per campaign, plus `attention` when something needs a look: ads with policy problems and why, Google's open recommendations, primary conversions quiet for 30 days |
 | `keyword_ideas` | no | Keyword Planner ideas from seed keywords and/or a URL: monthly searches, competition, top-of-page bid range; marks ideas the account already targets or blocks |
 | `keyword_metrics` | no | Keyword Planner numbers for an exact list, with the last 12 months of searches |
 | `run_gaql` | no | any read-only GAQL `SELECT` |
@@ -102,15 +102,16 @@ What a proposal can do:
 - **Tune:** keyword and ad group bids, bid strategy, location and language targeting, presence-only location
   mode, final URL suffix, and a campaign's EU political advertising declaration (Google refuses every change to an
   account while any campaign lacks one).
+- **Delete:** keywords, ads, ad groups, campaigns, a campaign's negatives and sitelinks (`delete_*`).
 - **Measure:** create or remove a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 - **Connect:** link or unlink a Merchant Center account (`productLinks:create`/`:remove`; neither dry-runs: create has
   none and remove's always answers 500, so propose checks the account is reachable and not a test account, which Google won't link).
 
 Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, more than doubling a budget or a
 bid, switching bid strategy, removing the last location, a new primary conversion action, removing a conversion
-action. Undo removes only what Camberstack itself created. The one deletion a user can propose is
-`remove_conversion_action`, and Google can't restore it, so it carries a ⚠ and no undo (a GA4 import is the exception:
-undo imports it again). (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
+action, deleting an ad, ad group or campaign. Undo removes only what Camberstack itself created. Google can't restore a removed
+ad, ad group, campaign or conversion action, so those carry a ⚠ and no undo (a GA4 import is the exception: undo imports it
+again). A deleted keyword, negative or sitelink goes back as a new one, without its history; a paused keyword has no undo. (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
 restores it.) Search Console is read-only.
 
 ## How auth works
