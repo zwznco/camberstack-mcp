@@ -211,6 +211,15 @@ describe("schedules, devices, assets, AI Max, conversion settings", () => {
     expect(r.inverse).toEqual({ type: "restore_campaign_fields", campaign_id: "10", fields: { aiMaxSetting: { enableAiMax: false } }, mask: "ai_max_setting.enable_ai_max" });
   });
 
+  it("set_ai_max off opts Google-written text out in the same request, and undo restores both", async () => {
+    const had = [{ assetAutomationType: "TEXT_ASSET_AUTOMATION", assetAutomationStatus: "OPTED_IN" }];
+    const ads = { async search(): Promise<any[]> { return [{ campaign: { name: "Search", aiMaxSetting: { enableAiMax: true }, assetAutomationSettings: had } }]; } };
+    const r = await resolveChange(ads, "1", null, { type: "set_ai_max", campaign_id: "10", ai_max: false });
+    expect(r.operations).toEqual([{ update: { resourceName: "customers/1/campaigns/10", aiMaxSetting: { enableAiMax: false },
+      assetAutomationSettings: [{ assetAutomationType: "TEXT_ASSET_AUTOMATION", assetAutomationStatus: "OPTED_OUT" }] }, updateMask: "ai_max_setting.enable_ai_max,asset_automation_settings" }]);
+    expect(r.inverse).toEqual({ type: "restore_campaign_fields", campaign_id: "10", fields: { aiMaxSetting: { enableAiMax: true }, assetAutomationSettings: had }, mask: "ai_max_setting.enable_ai_max,asset_automation_settings" });
+  });
+
   it("set_ai_max explains that Google-written text needs AI Max", async () => {
     const ads = { async search(): Promise<any[]> { return [{ campaign: { name: "Search" } }]; } };
     await expect(resolveChange(ads, "1", null, { type: "set_ai_max", campaign_id: "10", text_automation: true })).rejects.toThrow("with AI Max on");
