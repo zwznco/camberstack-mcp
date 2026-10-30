@@ -25,7 +25,6 @@ export const toMicros = (x: number) => String(Math.round(x * 1_000_000));
 export interface GoogleCreds {
   clientId: string;
   clientSecret: string;
-  developerToken?: string;
 }
 
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -339,7 +338,6 @@ export class AdsApiError extends Error {
 export class AdsClient {
   constructor(
     private accessToken: () => Promise<string>,
-    private developerToken?: string,
     private f: FetchLike = fetch,
     private grantLink: () => string | null = () => null,
   ) {}
@@ -348,7 +346,6 @@ export class AdsClient {
     return {
       Authorization: `Bearer ${await this.accessToken()}`,
       "Content-Type": "application/json",
-      ...(this.developerToken ? { "developer-token": this.developerToken } : {}),
       ...(loginCustomerId ? { "login-customer-id": loginCustomerId } : {}),
     };
   }

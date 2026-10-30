@@ -135,7 +135,7 @@ until v2 (or a companion package) has `/authorize`, `/token` and `/register`.
 ```bash
 npm ci && npm test
 ENCRYPTION_KEY=$(openssl rand -hex 32) \
-GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… GOOGLE_ADS_DEVELOPER_TOKEN=… \
+GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… \
 BASE_URL=https://your.host npm run dev
 ```
 
@@ -143,7 +143,6 @@ BASE_URL=https://your.host npm run dev
 |---|---|
 | `ENCRYPTION_KEY` | 32 bytes, hex or base64. **Losing it only forces users to reconnect**; leaking it exposes stored Google tokens |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth client from a **dedicated** Google Cloud project with Google Ads API access. Redirect URI: `<BASE_URL>/oauth/google/callback`. Unset = pages only, sign-in reports "not open yet" |
-| `GOOGLE_ADS_DEVELOPER_TOKEN` | sent when set |
 | `BASE_URL` | public origin, the OAuth issuer (default `https://camberstack.io`) |
 | `DATA_DIR` | SQLite location (default `./data`) |
 | `FREE_ACCOUNTS` / `PRO_ACCOUNTS` / `PRO_EMAILS` | Google Ads accounts each plan covers at a time, counted as distinct accounts used in the last 30 days plus one switch per 30 days, manager and demo accounts excluded (defaults 1 / 5) / emails treated as Pro |

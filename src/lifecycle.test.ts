@@ -136,6 +136,9 @@ describe("lifecycle emails", () => {
     user("other", "other@example.com", 10); call("other", "propose_changes"); refused("other", 0.3, "Google said no");  // not the gate
     user("pro", "pro@example.com", 10, "pro"); call("pro", "propose_changes"); refused("pro", 0.3);
     user("reset", "reset@example.com", 10); call("reset", "propose_changes"); refused("reset", 0.3);  // a reset by hand cancels it
+    user("store", "store@example.com", 10); call("store", "propose_changes");  // a Merchant Center refusal isn't about Google Ads accounts
+    db.prepare("INSERT INTO tool_calls (at, user_id, customer_id, tool, ok, error, ms, bytes) VALUES (?, 'store', 'mc:123', 'merchant_report', 0, ?, 10, 10)")
+      .run(now() - 0.3 * DAY, "Plan limit: Camberstack has been used on 2 Merchant Center accounts");
     db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = 'reset'").run(now() - 0.1 * DAY);
     expect(await lc.run()).toBe(1);
     expect(sent[0].to).toEqual(["capped@example.com"]);

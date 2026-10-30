@@ -48,6 +48,18 @@ const keyId = (k: ProductKey) => `${k.contentLanguage}~${k.feedLabel}~${k.offerI
  * Camberstack's copy of the overrides it holds per product: Merchant Center applies them but can't read them back, and
  * undo has to restore exactly what was there. Keyed by account, not user, since it mirrors the account's source.
  */
+/** product_view has a row per channel (online, local) and feed label: one row per offer, with every issue, or an offer's spend counts twice. */
+export function oneRowPerOffer<T extends { offerId?: unknown; itemIssues?: { type?: { code?: string } }[] }>(rows: T[]): T[] {
+  const byOffer = new Map<string, T>();
+  for (const p of rows) {
+    const key = String(p.offerId).toLowerCase(), had = byOffer.get(key);
+    if (!had) { byOffer.set(key, p); continue; }
+    const codes = new Set((had.itemIssues ?? []).map((i) => i.type?.code));
+    byOffer.set(key, { ...had, itemIssues: [...(had.itemIssues ?? []), ...(p.itemIssues ?? []).filter((i) => !codes.has(i.type?.code))] });
+  }
+  return [...byOffer.values()];
+}
+
 export class OverrideStore {
   private mem = new Map<string, Overrides>();
   constructor(private db?: DB) {}

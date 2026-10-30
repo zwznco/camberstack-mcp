@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { NotGrantedError } from "./google.js";
-import { DEMO_MERCHANT, DemoMerchant, MerchantClient, listMerchantAccounts, merchantReport, productIssues, type Merchant } from "./merchant.js";
+import { DEMO_MERCHANT, DemoMerchant, MerchantClient, oneRowPerOffer, listMerchantAccounts, merchantReport, productIssues, type Merchant } from "./merchant.js";
 import { toolCatalog } from "./tools.js";
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 const client = (f: (url: string, init?: RequestInit) => Response) =>
   new MerchantClient(async () => "t", () => "https://camberstack.io/connect/merchant-center?t=x", (async (u: string, i?: RequestInit) => f(String(u), i)) as typeof fetch);
+
+describe("oneRowPerOffer", () => {
+  it("merges an offer's channels, keeping each issue once and ignoring case", () => {
+    expect(oneRowPerOffer([
+      { offerId: "SKU-1", itemIssues: [{ type: { code: "a" } }] },
+      { offerId: "sku-1", itemIssues: [{ type: { code: "a" } }, { type: { code: "b" } }] },
+      { offerId: "sku-2" },
+    ])).toEqual([{ offerId: "SKU-1", itemIssues: [{ type: { code: "a" } }, { type: { code: "b" } }] }, { offerId: "sku-2" }]);
+  });
+});
 
 describe("MerchantClient", () => {
   it("lists accounts across pages", async () => {

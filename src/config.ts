@@ -21,7 +21,6 @@ export interface Config {
     clientId: string;
     clientSecret: string;
     /** Sent when set. Google moved access decisions to the Cloud project on 2026-09-10. */
-    developerToken?: string;
   };
   /** Google Ads accounts a plan covers at a time: distinct accounts used in the last 30 days, plus one switch (session.ts planState). */
   freeAccounts: number;
@@ -81,7 +80,6 @@ export function loadConfig(): Config {
       // verification needs the homepage first). Without them, sign-in reports "not open yet".
       clientId: process.env.GOOGLE_CLIENT_ID ?? "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-      developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN || undefined,
     },
     freeAccounts: Number(process.env.FREE_ACCOUNTS ?? 1),
     freeOneServiceFrom: parseFreeOneService(process.env.FREE_ONE_SERVICE),

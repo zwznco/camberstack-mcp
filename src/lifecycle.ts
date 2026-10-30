@@ -30,6 +30,7 @@ import { deriveKey, safeEqual, sign } from "./crypto.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, freePlan, freePlanChange, oneServiceFree, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
+import { DEMO_MERCHANT } from "./merchant.js";
 
 export interface MailConfig {
   apiKey: string; from: string; replyTo: string;
@@ -78,7 +79,7 @@ const WELCOME_WITHIN = DAY;
 /** Tools that mean someone has asked Camberstack something real (not just listed accounts or sites). */
 const USED_TOOLS = "('account_overview','run_gaql','keyword_ideas','keyword_metrics','propose_changes','paid_organic_overlap',"
   + "'search_console_summary','search_console_performance','search_console_trend','search_console_opportunities',"
-  + "'search_console_inspect_urls','search_console_sitemaps')";
+  + "'search_console_inspect_urls','search_console_sitemaps','merchant_product_issues','merchant_report','merchant_ad_spend','propose_merchant_changes')";
 
 export class Lifecycle {
   constructor(private d: LifecycleDeps) {}
@@ -109,6 +110,7 @@ export class Lifecycle {
     // the refusals before it: this email would say the account is still locked (sent minutes after one, 2026-10-16).
     const limit = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.ok = 0 AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
+        AND coalesce(c.customer_id, '') NOT LIKE 'mc:%'
       WHERE ${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("service_limit")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
@@ -130,7 +132,7 @@ export class Lifecycle {
       .all(`${SERVICE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // First applied change to a real account (not the demo, not an undo) 2–14 days ago; any plan, connected or not.
     const checkIn = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, min(p.applied_at) first FROM users u
-      JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.undo_of IS NULL AND p.customer_id <> ?
+      JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.undo_of IS NULL AND p.customer_id <> ? AND p.customer_id <> 'mc:${DEMO_MERCHANT}'
       WHERE u.email_opt_out = 0 AND ${notSent("check_in")}
       GROUP BY u.id HAVING first BETWEEN ? AND ?`)
       .all(DEMO_CID, t - 15 * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; first: number }[];
@@ -154,7 +156,7 @@ export class Lifecycle {
   private askedAccounts(userId: string): number {
     const since = now() - ACCOUNT_WINDOW_DAYS * DAY;
     const rows = this.d.db.prepare(`SELECT customer_id c, error FROM tool_calls WHERE user_id = ? AND at >= ?
-      AND ((ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?)) OR error LIKE ?)`)
+      AND ((ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?) AND customer_id NOT LIKE 'mc:%') OR error LIKE ?)`)
       .all(userId, since, DEMO_CID, GA_TARGET, `${SWITCH_NOTICE_PREFIX}%`) as { c: string | null; error: string | null }[];
     // A notice names its account in the text ("using 1234567890 spends"); before 0.19.0 it was also in customer_id.
     return new Set(rows.map((r) => r.error?.startsWith(SWITCH_NOTICE_PREFIX) ? /using (\d+) spends/.exec(r.error)?.[1] : r.c).filter(Boolean)).size;

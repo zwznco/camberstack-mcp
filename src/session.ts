@@ -12,7 +12,7 @@ import {
 } from "./google.js";
 import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
-import { DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
+import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -186,7 +186,7 @@ export class UserSession {
   constructor(private deps: SessionDeps, readonly user: UserRow, o: { chatgpt?: boolean } = {}) {
     this.chatgpt = o.chatgpt ?? false;
     const link = (kind: GrantKind) => () => deps.grantLink?.(kind, user.id) ?? null;
-    const google = deps.adsFactory?.(user) ?? new AdsClient(() => this.googleAccessToken(), deps.google.developerToken, fetch, link("google-ads"));
+    const google = deps.adsFactory?.(user) ?? new AdsClient(() => this.googleAccessToken(), fetch, link("google-ads"));
     this.ads = routed(google, new DemoAds(deps.db, user.id));
     this.sc = routedSc(deps.scFactory?.(user) ?? new SearchConsoleClient(() => this.googleAccessToken(), link("search-console")), new DemoSearchConsole());
     this.ga = routedAnalytics(deps.gaFactory?.(user)
@@ -1171,7 +1171,7 @@ export class UserSession {
       const id = String(r.segments?.productItemId ?? "").toLowerCase();
       recentCost.set(id, (recentCost.get(id) ?? 0) + micros(r.metrics?.costMicros));
     }
-    const problems = (products.rows as any[]).filter((p) => p.aggregatedReportingContextStatus !== "ELIGIBLE" || (p.itemIssues ?? []).length);
+    const problems = oneRowPerOffer((products.rows as any[]).filter((p) => p.aggregatedReportingContextStatus !== "ELIGIBLE" || (p.itemIssues ?? []).length));
     const ranked = problems.map((p) => {
       const s = spend.get(String(p.offerId).toLowerCase());
       const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -1250,7 +1250,8 @@ export class UserSession {
     // Linking has no dry run either: a Merchant Center account this login can't reach, or a test account (Google won't
     // link those), would only fail at apply. The demo Ads account links only the demo Merchant Center account.
     for (const c of changes) {
-      if (c.type !== "link_merchant_center") continue;
+      // An undo isn't asked to prove access again: nothing may stand between a user and reversing a change, and Google answers at apply.
+      if (c.type !== "link_merchant_center" || undoOf) continue;
       if (isDemo(a.customerId)) {
         if (c.merchant_center_id !== DEMO_MERCHANT) throw new Error(`The demo Google Ads account links only the demo Merchant Center account, ${DEMO_MERCHANT}.`);
         continue;

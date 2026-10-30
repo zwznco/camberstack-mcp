@@ -165,7 +165,7 @@ describe("Merchant Center changes (demo)", () => {
 });
 
 describe("Merchant Center ↔ Google Ads link (AdsClient)", () => {
-  const ads = (calls: { url: string; body: any }[]) => new AdsClient(async () => "t", "dev", (async (u: string, i?: RequestInit) => {
+  const ads = (calls: { url: string; body: any }[]) => new AdsClient(async () => "t", (async (u: string, i?: RequestInit) => {
     calls.push({ url: String(u), body: JSON.parse(String(i!.body)) });
     return json({ resourceName: "customers/1/productLinks/9" });
   }) as typeof fetch);

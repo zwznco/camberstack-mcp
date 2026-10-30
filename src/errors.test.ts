@@ -122,7 +122,7 @@ describe("expandDuring", () => {
 });
 
 describe("AdsClient.search", () => {
-  const client = (batches: unknown[]) => new AdsClient(async () => "t", "dev",
+  const client = (batches: unknown[]) => new AdsClient(async () => "t",
     (async () => new Response(JSON.stringify(batches), { status: 200 })) as typeof fetch);
 
   it("joins the stream's batches", async () => {

@@ -33,6 +33,8 @@ const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
 const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
   ...[...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES].map((c) => `propose_${c.shape.type.value}`)]);
 
+const LINK_CHANGES = new Set(MERCHANT_LINK_CHANGES.map((c) => c.shape.type.value as string));
+const LINK_TOOLS = new Set([...LINK_CHANGES].map((c) => `propose_${c}`));
 /** Tools that read or change one Merchant Center account (account_id): their own allowance, logged as mc:<id>. */
 const MC_GATED = new Set(["merchant_product_issues", "merchant_report", "propose_merchant_changes", ...PUBLIC_MC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
 
@@ -43,10 +45,13 @@ const GA_PROPOSES = new Set(PUBLIC_GA_CHANGES.map((c) => `propose_${c.shape.type
  * use none; nor do apply/undo/history, which act on a proposal the gate already let through.
  */
 export function servicesOf(name: string, a: unknown): Service[] {
-  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; changes?: { property_id?: unknown }[] };
+  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; changes?: { property_id?: unknown; type?: unknown }[] };
   const realGa = (p: unknown) => p !== DEMO_PROPERTY;
   const realMc = typeof x.account_id === "string" && x.account_id !== DEMO_MERCHANT;
   // Reads Ads and Merchant Center together, so like paid_organic_overlap it needs a paid plan on one-service Free.
+  // Linking touches both, so it's paid too; undo isn't gated, so a link can always be reversed.
+  if (LINK_TOOLS.has(name) || (name === "propose_changes" && x.changes?.some((c) => LINK_CHANGES.has(String(c?.type)))))
+    return typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads", "merchant"] : [];
   if (name === "merchant_ad_spend")
     return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(realMc ? ["merchant" as const] : [])];
   if (MC_GATED.has(name)) return realMc ? ["merchant"] : [];
@@ -512,9 +517,13 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         limit: z.number().int().min(1).max(200).default(25).describe("Most products to return") },
       annotations: read,
     }, async ({ customer_id, account_id, ...o }: { customer_id: string; account_id: string; days: number; limit: number }) => {
-      // The Ads account is gated (and logged) by wrap; the Merchant Center one here.
+      // The Ads account is gated and logged by wrap; the Merchant Center one here, in its own row, or it would never count as used.
       const release = await session().checkAccount(mcTarget(account_id));
-      try { return await session().merchantAdSpend(customer_id, account_id, o); } finally { release(); }
+      try {
+        const out = await session().merchantAdSpend(customer_id, account_id, o);
+        log({ tool: "merchant_ad_spend", customerId: mcTarget(account_id), ok: true, error: null, ms: 0, bytes: 0, queryShape: null, service: null });
+        return out;
+      } finally { release(); }
     });
 
     if (!o.chatgpt) tool("propose_merchant_changes", {

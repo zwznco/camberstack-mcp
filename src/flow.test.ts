@@ -2857,6 +2857,11 @@ describe("OAuth + MCP end to end", () => {
     expect(servicesOf("merchant_accounts", {})).toEqual([]);
     expect(servicesOf("merchant_ad_spend", { customer_id: "111-222-3333", account_id: "5878651753" })).toEqual(["ads", "merchant"]);
     expect(servicesOf("merchant_ad_spend", { customer_id: "000-000-0001", account_id: "000000001" })).toEqual([]);
+    // Linking touches both services, in propose_changes as much as in ChatGPT's own tools.
+    expect(servicesOf("propose_changes", { customer_id: "111-222-3333", changes: [{ type: "link_merchant_center" }] })).toEqual(["ads", "merchant"]);
+    expect(servicesOf("propose_unlink_merchant_center", { customer_id: "111-222-3333" })).toEqual(["ads", "merchant"]);
+    expect(servicesOf("propose_changes", { customer_id: "111-222-3333", changes: [{ type: "pause_campaign" }] })).toEqual(["ads"]);
+    expect(servicesOf("propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center" }] })).toEqual([]);
   });
 
   it("names Merchant Center in the plan copy only once it's public", () => {
@@ -2987,6 +2992,9 @@ describe("Merchant Center issues by ad spend (demo)", () => {
   it("ranks the problems by what they earned in Shopping ads, and flags the ones that stopped", async () => {
     const owner = await merchantOwner();
     const r = (await call(owner, "merchant_ad_spend", { customer_id: "000-000-0001", account_id: "000000001", days: 30 })).json;
+    // Both accounts log, or the Merchant Center one never counts against its allowance.
+    expect((db.prepare("SELECT customer_id c FROM tool_calls WHERE tool = 'merchant_ad_spend' ORDER BY rowid DESC LIMIT 2").all() as { c: string }[]).map((x) => x.c).sort())
+      .toEqual(["0000000001", "mc:000000001"]);
     expect(r.note).toMatch(/demo/i);
     expect(r.shopping_ad_cost).toBeGreaterThan(0);
     // The two disapproved best sellers come first: they earned the most, and stopped 9 days ago.
