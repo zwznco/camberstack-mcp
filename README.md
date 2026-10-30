@@ -103,7 +103,7 @@ What a proposal can do:
   mode, final URL suffix, and a campaign's EU political advertising declaration (Google refuses every change to an
   account while any campaign lacks one).
 - **Delete:** keywords, ads, ad groups, campaigns, a campaign's negatives and sitelinks (`delete_*`).
-- **Edit and organize:** edit a responsive search ad in place (it keeps its id and stats), ad group negatives, shared negative lists, ad schedules, device bids, callouts, snippets, business name, logos and images, AI Max and Google-written text, conversion value, window and attribution.
+- **Edit and organize:** edit a responsive search ad in place (it keeps its id and stats), ad group negatives, shared negative lists, ad schedules, device bids, callouts, snippets, business name, logos and images, AI Max and Google-written text, conversion value, window and attribution, remarketing lists, applying or dismissing recommendations, and review requests for exemptible refusals.
 - **Measure:** create or remove a conversion action, set its counting, import a GA4 key event, scope a campaign to one conversion goal.
 - **Connect:** link or unlink a Merchant Center account (`productLinks:create`/`:remove`; neither dry-runs: create has
   none and remove's always answers 500, so propose checks the account is reachable and not a test account, which Google won't link).

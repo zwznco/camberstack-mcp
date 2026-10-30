@@ -1,6 +1,6 @@
 {
   "name": "camberstack-mcp",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Google Ads + Search Console MCP server: build Search, Performance Max, Display and YouTube (Demand Gen) campaigns, research keywords, and make only the changes you approve, with undo.",
   "private": true,
   "type": "module",

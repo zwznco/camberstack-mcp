@@ -7,6 +7,16 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.23.0", date: "2026-10-30",
+    summary: "Remarketing lists, acting on Google's recommendations, review requests, and a fix for logos on Search.",
+    items: [
+      "**Remarketing lists** (`create_remarketing_list`): a list of your site's visitors built from the Google tag, with no customer data uploaded. `set_campaign_audience` adds a list to a campaign in observation, with an optional bid change, and takes it off again.",
+      "**Google's recommendations** (`act_on_recommendation`): apply or dismiss one. Applying has no undo and Google picks the details, so the summary warns you first. `account_overview` also links to the recommendations page.",
+      "**Ask Google to review a refused ad or keyword:** when a refusal is exemptible and you say it complies, your assistant can resubmit it with a review request. It can't run until Google approves, and prohibited content can't be exempted.",
+      "**Fixed:** adding a logo to a Search campaign failed. It now uses Google's business logo, and says so if the campaign already has one.",
+    ],
+  },
+  {
     version: "0.22.0", date: "2026-10-30",
     summary: "Ad schedules, device bids, callouts and other assets, AI Max, and conversion settings.",
     items: [

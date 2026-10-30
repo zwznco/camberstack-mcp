@@ -407,6 +407,18 @@ export class AdsClient {
     return body ? JSON.parse(body) : {};
   }
 
+  /** Applying or dismissing a recommendation isn't a mutate and has no dry run, so a propose only checks it still exists (changes.ts). */
+  private async recommendation(customerId: string, op: { apply?: string; dismiss?: string },
+    opts: { validateOnly?: boolean; loginCustomerId?: string | null }): Promise<{ results: { resourceName?: string }[] }> {
+    if (opts.validateOnly) return { results: [] };
+    const res = await this.f(`${ADS_API}/customers/${customerId}/recommendations:${op.apply ? "apply" : "dismiss"}`, {
+      method: "POST", headers: await this.headers(opts.loginCustomerId),
+      body: JSON.stringify({ operations: [{ resourceName: op.apply ?? op.dismiss }], partialFailure: false }),
+    });
+    const body = await this.body(res);
+    return { results: (body ? JSON.parse(body) : {}).results ?? [] };
+  }
+
   /**
    * ProductLinkService has create and remove instead of a mutate. Neither dry-runs: create has no validateOnly, and
    * remove's answers 500 every time (seen live 2026-10-22, request shJd7BNiYk67JPth23JjwA), which would block every
@@ -423,18 +435,6 @@ export class AdsClient {
     const body = await this.body(res);
     const r = body ? JSON.parse(body) : {};
     return { results: r.resourceName ? [{ resourceName: r.resourceName }] : [] };
-  }
-
-  /** Applying or dismissing a recommendation isn't a mutate and has no dry run, so a propose only checks it still exists (changes.ts). */
-  private async recommendation(customerId: string, op: { apply?: string; dismiss?: string },
-    opts: { validateOnly?: boolean; loginCustomerId?: string | null }): Promise<{ results: { resourceName?: string }[] }> {
-    if (opts.validateOnly) return { results: [] };
-    const res = await this.f(`${ADS_API}/customers/${customerId}/recommendations:${op.apply ? "apply" : "dismiss"}`, {
-      method: "POST", headers: await this.headers(opts.loginCustomerId),
-      body: JSON.stringify({ operations: [{ resourceName: op.apply ?? op.dismiss }], partialFailure: false }),
-    });
-    const body = await this.body(res);
-    return { results: (body ? JSON.parse(body) : {}).results ?? [] };
   }
 
   /**
