@@ -8,7 +8,7 @@
  * the feed (a file, Shopify, …) would overwrite anything else on its next sync. Adding an offer_id another feed
  * already has is refused: Google would move that product into Camberstack's source ("offer stealing").
  *
- * Camberstack never edits the merchant's products in their own feed (a file, Shopify, the Content API). Every change is
+ * Camberstack never edits the merchant's products in their own feed (a file, Shopify, the Content API). A change to one is
  * an override in Camberstack's own supplemental data source, which Merchant Center layers on top of the feed: the feed
  * keeps its values, and clearing the override brings them back. Google applies a supplemental source only once it's in
  * the primary source's rules, so the first override on a feed's products also puts Camberstack's source first in that
@@ -24,14 +24,14 @@ export const mcTarget = (accountId: string) => `${MC_PREFIX}${accountId}`;
 export const isMcTarget = (target: string) => target.startsWith(MC_PREFIX);
 
 /** Attributes Camberstack can override, as the tools name them → the Merchant API's productAttributes field. */
-export const ATTRIBUTES = {
+const ATTRIBUTES = {
   title: "title", description: "description", link: "link", image_link: "imageLink", brand: "brand", gtin: "gtins", mpn: "mpn",
   price: "price", sale_price: "salePrice", availability: "availability", condition: "condition",
   google_product_category: "googleProductCategory", product_type: "productTypes", identifier_exists: "identifierExists",
   custom_label_0: "customLabel0", custom_label_1: "customLabel1", custom_label_2: "customLabel2", custom_label_3: "customLabel3",
   custom_label_4: "customLabel4", excluded_destinations: "excludedDestinations",
 } as const;
-export type Attr = keyof typeof ATTRIBUTES;
+type Attr = keyof typeof ATTRIBUTES;
 
 /** Where a product can show, as Merchant Center names it. */
 const DESTINATIONS = ["SHOPPING_ADS", "DISPLAY_ADS", "LOCAL_INVENTORY_ADS", "FREE_LISTINGS", "FREE_LOCAL_LISTINGS", "YOUTUBE_SHOPPING"] as const;

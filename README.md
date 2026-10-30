@@ -145,20 +145,17 @@ BASE_URL=https://your.host npm run dev
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth client from a **dedicated** Google Cloud project with Google Ads API access. Redirect URI: `<BASE_URL>/oauth/google/callback`. Unset = pages only, sign-in reports "not open yet" |
 | `BASE_URL` | public origin, the OAuth issuer (default `https://camberstack.io`) |
 | `DATA_DIR` | SQLite location (default `./data`) |
-| `FREE_ACCOUNTS` / `PRO_ACCOUNTS` / `PRO_EMAILS` | Google Ads accounts each plan covers at a time, counted as distinct accounts used in the last 30 days plus one switch per 30 days, manager and demo accounts excluded (defaults 1 / 5) / emails treated as Pro |
+| `PRO_EMAILS` | emails treated as Pro |
 | `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console or GA4: the most recently used, over 30 days); paid plans cover all three. `YYYY-MM-DD` = announced until that day, 08:00 UTC (midnight Pacific): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
 | `MERCHANT_PUBLIC` | `1` lists the Merchant Center tools for everyone; unset = internal users only (while the scope awaits Google's verification) |
-| `STRIPE_AGENCY_PRICE_ID` / `AGENCY_ACCOUNTS` | the Agency plan's price (its own product) / accounts it covers (default 25); unset price = no Agency offered. Which plan a user is on follows their subscription's price, so a Pro ↔ Agency switch in Stripe's billing portal (which must list both prices) moves it within the hour |
+| `STRIPE_AGENCY_PRICE_ID` | the Agency plan's price (its own product); unset = no Agency offered. Which plan a user is on follows their subscription's price, so a Pro ↔ Agency switch in Stripe's billing portal (which must list both prices) moves it within the hour |
 
 The hosted HTTP server is `npm run start:http` (the Docker image runs `node dist/server.js`).
 `npm start` is a stdio mode that needs no env, database or Google login: it lists every tool for
 directory inspectors (Glama runs `mcp-proxy -- pnpm run start`), and any tool call answers with
 the hosted URL to connect to. `pnpm-workspace.yaml` turns off native builds for pnpm installs, so
 stdio mode installs anywhere; production installs with npm.
-
-`scripts/try-account.ts` runs the read tools against a real account from an existing refresh
-token, skipping OAuth. Use it for dogfooding.
 
 ## License
 

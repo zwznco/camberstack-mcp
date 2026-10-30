@@ -1,5 +1,5 @@
 /**
- * "Sign in with Google" for our own web pages (/admin, /account): identity only (openid email), no Ads
+ * "Sign in with Google" for our own web pages (the admin site, /account): identity only (openid email), no Ads
  * scope, no refresh token. It reuses the registered redirect URI (/oauth/google/callback); each page's
  * states carry its own prefix and server.ts routes the callback by prefix, so the verified OAuth client
  * never changes. Sessions are random tokens stored as hashes, in an HttpOnly cookie scoped to the page.
@@ -66,7 +66,7 @@ export class SignIn {
   }
 
   /**
-   * Start a session for `subject` (an email for /admin, a user id for /account). `impersonator` marks one an admin
+   * Start a session for `subject` (an email for the admin site, a user id for /account). `impersonator` marks one an admin
    * opened through "Log in as user" (account.ts), usually with a shorter `ttl`.
    */
   open(res: Response, subject: string, o: { impersonator?: string; ttl?: number } = {}): void {

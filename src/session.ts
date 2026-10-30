@@ -37,12 +37,12 @@ export interface Account {
 }
 
 const tokenCache = new Map<string, { token: string; exp: number }>();
+/** An account (or the whole login) Google refused to read, and why; `grant_url` when Google Ads isn't granted yet. */
+type Unreadable = { customerId: string; error: string; grant_url?: string };
 /**
  * Each user's account list, shared across requests. A UserSession lives for one MCP request, so a cache on the
  * instance never hit and every account-scoped tool paid ~1s re-listing accounts before doing its own work.
  */
-/** An account (or the whole login) Google refused to read, and why; `grant_url` when Google Ads isn't granted yet. */
-type Unreadable = { customerId: string; error: string; grant_url?: string };
 const accountsCache = new Map<string, { at: number; list: Account[]; unreadable: Unreadable[] }>();
 const ACCOUNTS_TTL_MS = 10 * 60_000;
 /** Which accounts spent in the last 30 days, per user: shown when the user picks an account (2026-10-26). */
@@ -123,7 +123,7 @@ export interface SessionDeps {
 export class NotConnectedError extends Error {}
 
 /** The Google Ads calls the tools make; the demo account answers the same ones. */
-type Ads = Pick<AdsClient, "listAccessibleCustomers" | "search" | "mutate" | "keywordPlan"> & Partial<Pick<AdsClient, "searchFields">>;
+type Ads = Pick<AdsClient, "listAccessibleCustomers" | "search" | "mutate" | "keywordPlan" | "searchFields">;
 
 /** Sends the demo account's calls to the demo and everything else to Google. */
 function routed(google: Ads, demo: DemoAds): Ads {
@@ -132,7 +132,7 @@ function routed(google: Ads, demo: DemoAds): Ads {
     search: (cid, query, login) => (cid === DEMO_CID ? demo.search(cid, query) : google.search(cid, query, login)),
     mutate: (cid, service, ops, opts) => (cid === DEMO_CID ? demo.mutate(cid, service, ops, opts) : google.mutate(cid, service, ops, opts)),
     keywordPlan: (cid, method, req, login) => (cid === DEMO_CID ? demo.keywordPlan(cid, method, req) : google.keywordPlan(cid, method, req, login)),
-    ...(google.searchFields ? { searchFields: (q: string) => google.searchFields!(q) } : {}),
+    searchFields: (q) => google.searchFields(q),
   };
 }
 
@@ -195,13 +195,13 @@ export class UserSession {
       ?? new MerchantClient(() => this.googleAccessToken(), link("merchant-center"), fetch, new OverrideStore(deps.db)), new DemoMerchant(deps.db, user.id));
   }
 
-  /** `seen: false` leaves last_seen_at alone: an admin viewing the user's /account through "Log in as user". */
   /** The name a result should give a write tool: ChatGPT connections have per-operation tools instead (tools.ts). */
   tool(name: "propose_changes" | "undo_changes"): string {
     if (!this.chatgpt) return name;
     return name === "undo_changes" ? "propose_undo" : "the matching propose_<operation> tool";
   }
 
+  /** `seen: false` leaves last_seen_at alone: an admin viewing the user's /account through "Log in as user". */
   static load(deps: SessionDeps, userId: string, o: { seen?: boolean; chatgpt?: boolean } = {}): UserSession {
     const user = deps.db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow | undefined;
     if (!user) throw new NotConnectedError("Unknown user; connect Camberstack again.");
@@ -490,7 +490,7 @@ export class UserSession {
   }
 
   /** Stop before the switch is spent: what it locks, until when, and how to go ahead. */
-  private noticeSwitch(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool = "ads"): never {
+  private noticeSwitch(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool): never {
     switchAsked.set(this.user.id, { cid, at: now() });
     const locks = st.active.at(-1)!;
     // Once spent, the switch comes back when the account it locks ages out of the window.
@@ -507,7 +507,7 @@ export class UserSession {
         ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
   }
 
-  private refuse(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool = "ads"): never {
+  private refuse(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool): never {
     const used = `${PLAN_LIMIT_PREFIX} Camberstack has been used on ${accountsLabel(st.used.length, pool)} in the last ${ACCOUNT_WINDOW_DAYS} days`;
     const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with one switch per ${ACCOUNT_WINDOW_DAYS} days, `
       + `already used; the next opens ${st.switchOpens}.`;
@@ -628,7 +628,7 @@ export class UserSession {
     // Every level, not just direct clients: a manager under a manager has its own clients, which a level <= 1 read never
     // listed (2026-10-23). The root works as login-customer-id at any depth below it.
     const perRoot = await Promise.all(roots.map((root) => this.ads.search(root, `SELECT customer_client.id, customer_client.descriptive_name,
-        customer_client.currency_code, customer_client.time_zone, customer_client.manager, customer_client.level, customer_client.status
+        customer_client.currency_code, customer_client.time_zone, customer_client.manager, customer_client.status
       FROM customer_client WHERE customer_client.status = 'ENABLED'`, root)
       .then((rows) => ({ rows }), (e: Error) => ({ error: e.message }))));
     for (const [i, root] of roots.entries()) {
@@ -837,11 +837,9 @@ export class UserSession {
    * to an account, so it needs none and counts toward no plan (tools.ts skips the gate for it).
    */
   private async fieldLookup(query: string) {
-    const fetch = this.ads.searchFields;
-    if (!fetch) throw new Error("Google's field catalog isn't reachable right now. Try again in a few minutes.");
     let rows: any[];
     try {
-      rows = await fetch(query);
+      rows = await this.ads.searchFields(query);
     } catch (e) {
       // A rejected lookup (400) would draw run_gaql's account-query fixes (UNRECOGNIZED_FIELD…), which don't apply: swap them
       // for the lookup's own, and say how to read an account, since a query that forgot its FROM lands here too.
@@ -866,8 +864,7 @@ export class UserSession {
   }
 
   private fieldCatalog() {
-    const fetch = this.ads.searchFields;
-    return fetch ? catalog(() => fetch(CATALOG_QUERY)) : Promise.resolve(null);
+    return catalog(() => this.ads.searchFields(CATALOG_QUERY));
   }
 
   async gaqlFields(o: { resource?: string; search?: string }) {
@@ -1137,10 +1134,6 @@ export class UserSession {
   }
 
   /**
-   * Ads search terms joined with the same site's organic queries over the same days: searches the account pays for
-   * where the site already ranks near the top, and searches the site ranks on page 2+ for with no ads at all.
-   */
-  /**
    * Merchant Center product issues ranked by what the products earned in Shopping and Performance Max ads: which
    * problems cost money. Joins the Ads account's shopping_performance_view (item ids come back lowercased) with the
    * Merchant Center account's product statuses. A disapproved product stops spending, so a window that reaches back
@@ -1198,6 +1191,10 @@ export class UserSession {
     };
   }
 
+  /**
+   * Ads search terms joined with the same site's organic queries over the same days: searches the account pays for
+   * where the site already ranks near the top, and searches the site ranks on page 2+ for with no ads at all.
+   */
   async paidOrganicOverlap(customerId: string, site: string, o: { days: number; max_position: number; min_impressions: number; limit: number }) {
     const a = await this.account(customerId);
     const w = searchConsoleWindow(o.days);
@@ -1382,13 +1379,6 @@ export class UserSession {
     };
   }
 
-  /**
-   * The user approved a summary, and the summary carries the account's values at proposal time ("now ENABLED",
-   * "$10 → $20"). Re-resolved against the account as it is now, the same changes must read the same, however old the
-   * proposal is; if they don't, the account moved and what they approved is no longer what would run. Then nothing is
-   * written: the old proposal is discarded and the same request is proposed afresh, for the user to approve. Not an
-   * error: it's the expected answer to an account that changed. (Replaced a flat 24-hour expiry, 2026-10-15.)
-   */
   /** A repeat apply of an applied proposal: not an error, the change is in, and that is the answer (2026-10-28: a model
    *  re-sent apply_changes 8s after it succeeded). Nothing is written again; the first apply's results are returned. */
   private alreadyApplied(p: ProposalRow) {
@@ -1398,6 +1388,13 @@ export class UserSession {
       results: publicResults(outcomes) };
   }
 
+  /**
+   * The user approved a summary, and the summary carries the account's values at proposal time ("now ENABLED",
+   * "$10 → $20"). Re-resolved against the account as it is now, the same changes must read the same, however old the
+   * proposal is; if they don't, the account moved and what they approved is no longer what would run. Then nothing is
+   * written: the old proposal is discarded and the same request is proposed afresh, for the user to approve. Not an
+   * error: it's the expected answer to an account that changed. (Replaced a flat 24-hour expiry, 2026-10-15.)
+   */
   private async drifted(p: ProposalRow, resolved: AnyResolved[]) {
     const live = resolved.filter((r) => r.operations.length);
     if (live.length && sameSummary(summarize(live), p.summary)) return null;
@@ -1548,7 +1545,7 @@ export class UserSession {
   }
 }
 
-export interface KeywordPlanOpts { location_ids: string[]; language_id: string }
+interface KeywordPlanOpts { location_ids: string[]; language_id: string }
 
 /** keyword_metrics answers with one object per keyword up to this many, a compact table above it. */
 const COMPACT_OVER = 100;

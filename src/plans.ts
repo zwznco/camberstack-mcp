@@ -1,4 +1,4 @@
-/** What the paid plan costs and includes: the one copy every page, email and tool reads. */
+/** What the paid plans cost and include: the one copy every page, email and tool reads. */
 
 export const PRO_PRICE_LABEL = "$15/month";
 /**
@@ -7,10 +7,10 @@ export const PRO_PRICE_LABEL = "$15/month";
  */
 export const PLUS_PRICE_LABEL = "$7/month";
 export const PLUS_ACCOUNTS = 1;
-/** Google Ads accounts Pro covers at a time (PRO_ACCOUNTS overrides it, e.g. in tests). Was 10 until 2026-10-22. */
+/** Google Ads accounts Pro covers at a time. Was 10 until 2026-10-22. */
 export const PRO_ACCOUNTS = 5;
 export const AGENCY_PRICE_LABEL = "$49/month";
-/** Google Ads accounts Agency covers at a time (AGENCY_ACCOUNTS overrides it). */
+/** Google Ads accounts Agency covers at a time. */
 export const AGENCY_ACCOUNTS = 25;
 /** users.plan: free, or a paid plan its Stripe subscription's price decides (billing.ts). */
 export type Plan = "free" | "plus" | "pro" | "agency";
@@ -21,7 +21,7 @@ export const planLabel = (plan: string) => plan === "agency" ? "Agency" : plan =
 export const ACCOUNT_WINDOW_DAYS = 30;
 /** Error text the account gate starts with; lifecycle.ts finds blocked users by it in tool_calls. */
 export const PLAN_LIMIT_PREFIX = "Plan limit:";
-/** Text of the notice before a plan's one switch is spent (session.ts admit, SwitchNotice). Not a refusal: lifecycle.ts doesn't match it. */
+/** Text of the notice before a plan's one switch is spent (session.ts admit, SwitchNotice). Not a refusal: logged as ok, and lifecycle.ts matches it for switch_wanted. */
 export const SWITCH_NOTICE_PREFIX = "Account switch:";
 /** Text of the notice before a plan's first account is taken (session.ts admit): a choice, not a switch, so no switch_wanted email. */
 export const ACCOUNT_CHOICE_PREFIX = "Account choice:";

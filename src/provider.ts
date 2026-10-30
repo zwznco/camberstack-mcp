@@ -23,7 +23,7 @@ import { encrypt, randomToken, sha256 } from "./crypto.js";
 import { consentPage } from "./pages.js";
 import { clearGoogleCache } from "./session.js";
 import {
-  ADS_SCOPE, SEARCH_CONSOLE_SCOPE, exchangeGoogleCode, googleAuthUrl, idTokenClaims, type GoogleCreds,
+  ADS_SCOPE, GRANTS, SEARCH_CONSOLE_SCOPE, exchangeGoogleCode, googleAuthUrl, idTokenClaims, type GoogleCreds,
 } from "./google.js";
 
 export const MCP_SCOPE = "ads";
@@ -76,9 +76,7 @@ export class CamberstackProvider implements OAuthServerProvider {
 
   constructor(
     private db: DB,
-    private opts: { baseUrl: string; google: GoogleCreds; encryptionKey: Buffer; fetch?: typeof fetch; allowedEmails?: Set<string>;
-      /** Asked at sign-in on top of Ads + Search Console (server.ts: Google Analytics). */
-      extraGoogleScopes?: readonly string[] },
+    private opts: { baseUrl: string; google: GoogleCreds; encryptionKey: Buffer; fetch?: typeof fetch; allowedEmails?: Set<string> },
   ) {
     this.clientsStore = new ClientsStore(db);
   }
@@ -116,7 +114,7 @@ export class CamberstackProvider implements OAuthServerProvider {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
-    res.status(200).type("html").send(consentPage(this.opts.baseUrl, {
+    res.status(200).type("html").send(consentPage({
       id, clientName: client.client_name ?? "", redirectHost: new URL(params.redirectUri).host || params.redirectUri,
       known: KNOWN_REDIRECT.test(params.redirectUri),
     }));
@@ -151,7 +149,7 @@ export class CamberstackProvider implements OAuthServerProvider {
       return back.toString();
     }
     this.db.prepare("UPDATE pending_auth SET params = ? WHERE id = ?").run(JSON.stringify({ ...p, approved: true }), row.id);
-    return googleAuthUrl(this.opts.google, this.googleRedirectUri, row.id, this.opts.extraGoogleScopes);
+    return googleAuthUrl(this.opts.google, this.googleRedirectUri, row.id, GRANTS.analytics.scopes);
   }
 
   /**
@@ -176,9 +174,8 @@ export class CamberstackProvider implements OAuthServerProvider {
 
     const g = await exchangeGoogleCode(this.opts.google, q.code, this.googleRedirectUri, this.opts.fetch);
     // À la carte: any one service is enough to connect; a tool that needs another returns a link that adds it (grant.ts).
-    // Google Analytics counts only where sign-in asks for it (extraGoogleScopes).
     const granted = g.scope.split(" ");
-    const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, ...(this.opts.extraGoogleScopes ?? []).slice(0, 1)];
+    const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, GRANTS.analytics.scopes[0]];
     if (!enough.some((s) => granted.includes(s))) {
       back.searchParams.set("error", "access_denied");
       back.searchParams.set("error_description", "No Google service was granted (every box was unticked).");

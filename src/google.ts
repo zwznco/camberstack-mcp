@@ -2,7 +2,7 @@
  * Google OAuth (the user's consent to Google access) and a thin Google Ads REST client.
  *
  * Scopes requested at sign-in: `adwords` (the Ads API), `webmasters.readonly` (Search Console, read-only), the Google
- * Analytics pair (provider.ts extraGoogleScopes) and `openid email` (to know who the user is, so a reconnect finds the same
+ * Analytics pair (provider.ts) and `openid email` (to know who the user is, so a reconnect finds the same
  * account and change log). Each service is an untickable box and any one is enough to connect (provider.ts callback);
  * a missing one is added later by link (grant.ts). Nothing else from the Google account is touched.
  */
@@ -10,13 +10,13 @@
 export const ADS_SCOPE = "https://www.googleapis.com/auth/adwords";
 export const SEARCH_CONSOLE_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 /** Google Analytics (GA4): reports, and setup changes (properties, key events, Google Ads links). Asked for together at
- *  sign-in (server.ts extraGoogleScopes), and by link when a connection lacks them (ga4.ts). */
+ *  sign-in (provider.ts), and by link when a connection lacks them (ga4.ts). */
 export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
-/** Google Merchant Center (Merchant API), read through merchant.ts. Not in the main consent: asked for separately, by link. */
+/** Google Merchant Center (Merchant API), used through merchant.ts. Not in the main consent: asked for separately, by link. */
 export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
-export const ADS_API = "https://googleads.googleapis.com/v23";
+const ADS_API = "https://googleads.googleapis.com/v23";
 
 /** The Ads API counts money in millionths of the account currency. */
 export const micros = (m: unknown) => Number(m ?? 0) / 1_000_000;
@@ -93,7 +93,7 @@ export function googleSignInUrl(creds: GoogleCreds, redirectUri: string, state: 
   })}`;
 }
 
-export interface GoogleTokenResponse {
+interface GoogleTokenResponse {
   access_token: string;
   expires_in: number;
   refresh_token?: string;
@@ -117,10 +117,8 @@ export async function exchangeGoogleCode(
   return (await res.json()) as GoogleTokenResponse;
 }
 
-export async function refreshGoogleToken(
-  creds: Pick<GoogleCreds, "clientId" | "clientSecret">, refreshToken: string, f: FetchLike = fetch,
-): Promise<{ access_token: string; expires_in: number; scope?: string }> {
-  const res = await postForm(f, GOOGLE_TOKEN, {
+export async function refreshGoogleToken(creds: GoogleCreds, refreshToken: string): Promise<{ access_token: string; expires_in: number; scope?: string }> {
+  const res = await postForm(fetch, GOOGLE_TOKEN, {
     refresh_token: refreshToken, client_id: creds.clientId, client_secret: creds.clientSecret,
     grant_type: "refresh_token",
   });
@@ -133,8 +131,8 @@ export async function refreshGoogleToken(
   return (await res.json()) as { access_token: string; expires_in: number; scope?: string };
 }
 
-export async function revokeGoogleToken(token: string, f: FetchLike = fetch): Promise<void> {
-  await postForm(f, "https://oauth2.googleapis.com/revoke", { token }).catch(() => undefined);
+export async function revokeGoogleToken(token: string): Promise<void> {
+  await postForm(fetch, "https://oauth2.googleapis.com/revoke", { token }).catch(() => undefined);
 }
 
 /**
@@ -151,6 +149,9 @@ export function idTokenClaims(idToken: string): { sub: string; email: string; em
 const DURING_LITERALS = "TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS, LAST_30_DAYS, THIS_MONTH, LAST_MONTH, LAST_BUSINESS_WEEK, "
   + "THIS_WEEK_MON_TODAY, THIS_WEEK_SUN_TODAY, LAST_WEEK_MON_SUN, LAST_WEEK_SUN_SAT";
 
+const NO_OR = "GAQL has no parentheses or OR: WHERE conditions can only be joined with AND. Use field IN ('a', 'b') for alternatives, "
+  + "LIKE for one pattern, or separate queries.";
+
 /**
  * How to fix the GAQL and request errors AIs actually hit (tool_calls.error), appended to Google's message.
  * The rules are in run_gaql's description too, but a fix next to the error gets the retry right first time.
@@ -159,9 +160,6 @@ const DURING_LITERALS = "TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS, LAST_30_DA
  * fields that moved or were renamed, and which resource a thing lives on. A generic guess next to the catalog's finding
  * contradicted it ("check the name" for FROM invoice, which has no such resource, 2026-10-20).
  */
-const NO_OR = "GAQL has no parentheses or OR: WHERE conditions can only be joined with AND. Use field IN ('a', 'b') for alternatives, "
-  + "LIKE for one pattern, or separate queries.";
-
 function adsErrorFix(code: string, message: string, field: string): string | null {
   switch (code) {
     case "METRIC_ACCESS_DENIED":

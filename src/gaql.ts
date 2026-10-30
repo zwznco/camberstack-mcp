@@ -54,8 +54,6 @@ export async function catalog(fetchFields: () => Promise<FieldMeta[]>): Promise<
   cached = { at: now, catalog: cached?.catalog ?? null, loading };
   return loading;
 }
-/** Tests only. */
-export const resetCatalog = () => { cached = undefined; };
 
 /**
  * A query with every value taken out, for the usage log: which fields and resources custom queries use, so the common
@@ -75,7 +73,7 @@ export function queryShape(query: string): string {
 export const FIELD_COLUMNS = "name, category, data_type, selectable, filterable, sortable, is_repeated, selectable_with, attribute_resources, metrics, segments, enum_values";
 
 /** The field lookup to suggest for a name: every field whose name holds `part`. */
-export const lookupQuery = (part: string) => `SELECT name, category, selectable, filterable WHERE name LIKE '%${part}%'`;
+const lookupQuery = (part: string) => `SELECT name, category, selectable, filterable WHERE name LIKE '%${part}%'`;
 
 /**
  * A query for Google's field catalog rather than an account: SELECT … [WHERE …] with no FROM, as GoogleAdsFieldService
@@ -90,7 +88,7 @@ export function fieldQuery(query: string): string | null {
   return query.replace(/\s+FROM\s+google_ads_field\b/i, "").trim();
 }
 
-export interface ParsedGaql { select: string[]; from: string; where: string[]; orderBy: string[] }
+interface ParsedGaql { select: string[]; from: string; where: string[]; orderBy: string[] }
 
 const FIELD = /\b[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\b/g;
 /** SELECT … FROM … [WHERE …] [ORDER BY …] [LIMIT n] [PARAMETERS …]. Null for anything else (the check then stays out of the way). */
@@ -116,12 +114,9 @@ export function checkGaql(query: string, cat: Catalog): string[] {
     return [`FROM ${p.from}: there is no such resource${near.length ? `. Closest: ${near.join(", ")}` : ""}.`];
   }
   const usable = (f: FieldMeta) => fromAllows(from, f);
-  const seen = new Set<string>();
   const unknown = new Set<string>();
   for (const [clause, names] of [["SELECT", p.select], ["WHERE", p.where], ["ORDER BY", p.orderBy]] as const) {
     for (const name of names) {
-      if (seen.has(`${clause}:${name}`)) continue;
-      seen.add(`${clause}:${name}`);
       const f = cat.get(name);
       if (!f) {
         // Another resource's real field written under this one (campaign.conversion_goal_campaign_config.goal_config_level):
@@ -227,13 +222,13 @@ const BROAD = ["customer", "campaign"];
  * what that query wanted: `metrics.conversions FROM conversion_action` was pointed at ad_group (catalog order), not
  * at customer or campaign with segments.conversion_action (2026-10-15).
  */
-function whereFrom(f: FieldMeta, cat: Catalog, from?: string, fields: string[] = []): string {
+function whereFrom(f: FieldMeta, cat: Catalog, from: string, fields: string[] = []): string {
   const own = f.category === "ATTRIBUTE" ? f.name.split(".")[0]! : null;
   const ok = [...cat.values()].filter((r) => r.category === "RESOURCE" && fromAllows(r, f)).map((r) => r.name);
   // A view that carries the FROM resource keeps its rows: metrics FROM ad_group_criterion belong FROM keyword_view, and
   // campaign/ad_group (the generic list) drop the per-keyword split the query was after (prod, 2026-10-22). Which view
   // fits is named by the query's own fields: ad_group_criterion.keyword.text → keyword_view.
-  const grain = from && f.category !== "ATTRIBUTE"
+  const grain = f.category !== "ATTRIBUTE"
     ? ok.filter((r) => r.endsWith("_view") && (cat.get(r)!.attributeResources ?? []).includes(from)) : [];
   if (grain.length) {
     const parts = new Set(fields.filter((n) => n.startsWith(`${from}.`)).map((n) => n.split(".")[1]!));
@@ -247,7 +242,7 @@ function whereFrom(f: FieldMeta, cat: Catalog, from?: string, fields: string[] =
     const pick = [...named, ...rest, ...grain.filter((r) => !named.includes(r) && !rest.includes(r))].slice(0, named.length || 4);
     return `; query it FROM ${pick.join(" or FROM ")}, ${pick.length > 1 ? "each keeping" : "which keeps"} one row per ${from}, with its fields`;
   }
-  const seg = from && cat.get(`segments.${from}`)?.category === "SEGMENT" ? `segments.${from}` : null;
+  const seg = cat.get(`segments.${from}`)?.category === "SEGMENT" ? `segments.${from}` : null;
   const split = seg ? ok.filter((r) => (cat.get(r)!.segments ?? []).includes(seg)) : [];
   if (split.length) {
     const broad = BROAD.filter((r) => split.includes(r));

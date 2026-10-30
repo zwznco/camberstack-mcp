@@ -57,9 +57,7 @@ p,li{color:var(--fg)}.lede{font-size:20px;color:var(--muted);max-width:680px}
 .card h3{margin-top:0}
 code,pre{font:14px/1.5 "IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);border-radius:6px}
 code{padding:2px 5px}pre{padding:14px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
-.convo{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:24px}
-.convo p{margin:8px 0}.who{font-weight:600;color:var(--muted);font-size:14px;margin:16px 0 4px!important}.convo .who:first-child{margin-top:0!important}
-.convo .said{display:inline-block;background:var(--code);border-radius:12px;padding:8px 14px;margin-top:0}
+.who{font-weight:600;color:var(--muted);font-size:14px;margin:16px 0 4px!important}
 table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:10px 8px;text-align:left;vertical-align:top}
 footer{border-top:1px solid var(--line);margin-top:72px;padding:28px 0;font-size:14px;color:var(--muted)}
 footer a{color:var(--muted);margin-right:16px}
@@ -77,13 +75,12 @@ ol.steps>li{margin-bottom:28px}
 .acct .grid{margin-top:0}.acct .card{display:flex;flex-direction:column;gap:10px}
 .label{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:0}
 .big{font-size:26px;font-weight:600;letter-spacing:-.01em;margin:0}
-.meter{display:flex;gap:6px}.meter i{flex:1;height:8px;border-radius:4px;background:var(--line)}.meter i.on{background:var(--accent)}
 .acct .card p{margin:0}.acct .card .btn{align-self:flex-start;margin-top:auto}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;background:var(--muted)}.dot.ok{background:#2f9e6e}
 .chips{display:flex;flex-wrap:wrap;gap:6px}.chip{font-size:13px;border:1px solid var(--line);border-radius:99px;padding:2px 10px;color:var(--muted)}
 .change{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px}
 .change-top{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
-.change-meta{font-size:14px;color:var(--muted)}.change-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.change-time{font-size:14px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}.change-acct{margin:2px 0 0;font-size:14px;color:var(--muted);overflow-wrap:anywhere}.change ul{margin:8px 0 0;padding-left:20px}.change li{margin:2px 0;overflow-wrap:anywhere}
+.change-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.change-time{font-size:14px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}.change-acct{margin:2px 0 0;font-size:14px;color:var(--muted);overflow-wrap:anywhere}.change ul{margin:8px 0 0;padding-left:20px}.change li{margin:2px 0;overflow-wrap:anywhere}
 .fold summary{display:block;cursor:pointer;list-style:none;margin-top:8px}.fold summary::-webkit-details-marker{display:none}
 .fold .preview{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere}
 .fold .toggle{display:inline-block;margin-top:4px;font-size:14px;font-weight:600;color:var(--accent)}
@@ -198,8 +195,6 @@ ol.steps .shot{max-width:400px;box-shadow:0 8px 24px -12px rgba(20,24,20,.18)}
 .ctas .btn{flex:1 1 auto;text-align:center}.btn-lg{padding:12px 16px;font-size:15px}
 .window-body{padding:16px;font-size:14px}.defs{grid-template-columns:1fr;gap:2px}.defs dd{margin-bottom:10px}
 .url-lg code{font-size:13px}.nav-hide{display:none}
-}
-@media (max-width:600px){
 nav a{margin-left:12px}nav{white-space:nowrap}
 @media (max-width:400px){header .wrap{padding:0 16px}nav a{margin-left:10px;font-size:14px}}
 .btn{padding:9px 14px;font-size:15px;border-radius:7px}
@@ -637,7 +632,6 @@ ${closer("Ask Claude about your Google Ads.", "Free for one account, with unlimi
  * the plugin page and a Google sign-in; developer mode and the custom-MCP-server path are no longer needed.
  */
 export function chatgptGuidePage(baseUrl: string): string {
-  const mcpUrl = `${baseUrl}/mcp`;
   return layout({
     baseUrl, path: "/google-ads-chatgpt", wide: true,
     title: "Connect Google Ads to ChatGPT: MCP setup, step by step | Camberstack",
@@ -1267,7 +1261,7 @@ export function infoPage(baseUrl: string, title: string, body: string): string {
  * Google's own screen names only Camberstack, so without this a link built by a stranger looks identical.
  * A bare card, not the site shell: the buttons are the page. The warning is the one line that matters.
  */
-export function consentPage(_baseUrl: string, o: { id: string; clientName: string; redirectHost: string; known: boolean }): string {
+export function consentPage(o: { id: string; clientName: string; redirectHost: string; known: boolean }): string {
   const host = esc(o.redirectHost);
   return `<!doctype html>
 <html lang="en"><head>

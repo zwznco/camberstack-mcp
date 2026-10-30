@@ -37,17 +37,16 @@ const MAX_ATTEMPTS = 8;
 export class AdConversions {
   constructor(private db: DB, private cfg: ConversionConfig | undefined, private secure: boolean, private f: typeof fetch = fetch) {}
 
-  /** On any page view: keep an ad click id if the URL carries one. Returns true when it set the cookie. */
-  captureClick(req: Request, res: Response): boolean {
+  /** On any page view: keep an ad click id if the URL carries one. */
+  captureClick(req: Request, res: Response): void {
     for (const kind of KINDS) {
       const v = req.query[kind];
       if (typeof v === "string" && /^[A-Za-z0-9_\-.~]{10,300}$/.test(v)) {
         res.append("Set-Cookie", `${COOKIE}=${kind}:${v}; Path=/; Max-Age=${MAX_AGE}; HttpOnly; SameSite=Lax${this.secure ? "; Secure" : ""}`);
         res.setHeader("Cache-Control", "private, no-store");  // a page that sets a per-visitor cookie must not be shared-cached
-        return true;
+        return;
       }
     }
-    return false;
   }
 
   /** After a successful Google Ads connection: record the conversion for a first-time user, then try to upload it. */
@@ -86,13 +85,8 @@ export class AdConversions {
         // Handed over: operations uploads it, retries it, and mails the operator if Google rejects it.
         this.db.prepare("UPDATE ad_conversions SET uploaded_at = ?, error = NULL, attempts = attempts + 1 WHERE user_id = ?").run(now(), p.user_id);
       } catch (e) {
-        this.fail(p.user_id, (e as Error).message);
+        this.db.prepare("UPDATE ad_conversions SET error = ?, attempts = attempts + 1 WHERE user_id = ?").run((e as Error).message.slice(0, 500), p.user_id);
       }
     }
   }
-
-  private fail(userId: string, error: string): void {
-    this.db.prepare("UPDATE ad_conversions SET error = ?, attempts = attempts + 1 WHERE user_id = ?").run(error.slice(0, 500), userId);
-  }
-
 }

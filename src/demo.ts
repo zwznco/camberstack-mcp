@@ -5,7 +5,7 @@
  * and so directory reviewers never need a shared Google login with Ads access.
  *
  * Shown in list_accounts only when a login has no readable real account; reachable by its id always.
- * Writes change a per-user copy kept in SQLite (demo_state), never Google, and never use free applies.
+ * Writes change a per-user copy kept in SQLite (demo_state), never Google.
  *
  * search() understands the GAQL the tools send and simple hand-written queries (run_gaql): FROM one of
  * the resources below, WHERE conditions joined by AND (=, !=, <, >, <=, >=, IN, LIKE), ORDER BY, LIMIT.
@@ -256,9 +256,9 @@ export class DemoAds {
       case "language_constant":
         return Object.entries(LANGUAGES).map(([id, name]) => ({ languageConstant: { resourceName: `languageConstants/${id}`, id, name } }));
       default:
-        throw new Error(`The demo account supports these GAQL resources: customer, campaign, ad_group, keyword_view, ad_group_criterion, `
+        throw new Error(`The demo account supports these GAQL resources: customer, customer_client, campaign, ad_group, keyword_view, ad_group_criterion, `
           + `search_term_view, campaign_criterion, ad_group_ad, asset, campaign_asset, shared_set, shared_criterion, campaign_shared_set, user_list, recommendation, `
-          + `bidding_strategy, conversion_action, customer_conversion_goal, campaign_conversion_goal, geo_target_constant, language_constant. "${resource}" isn't one of them.`);
+          + `bidding_strategy, conversion_action, customer_conversion_goal, campaign_conversion_goal, shopping_performance_view, product_link, geo_target_constant, language_constant. "${resource}" isn't one of them.`);
     }
   }
 
@@ -337,7 +337,7 @@ export class DemoAds {
         s.negatives = s.negatives.filter((n) => n.resourceName !== op.remove);
         return { resourceName: op.remove };
       }
-      // Targeting, conversion settings, bids, URL suffixes and bid strategies are simulated like builds:
+      // Targeting, conversion settings, URL suffixes and bid strategies are simulated like builds:
       // accepted, but the sample reports don't change. Only status, budget, end date and bids are tracked.
       if (op.create) return { resourceName: `customers/${DEMO_CID}/${service}/${s.nextId++}` };
       if (op.remove) return { resourceName: op.remove as string };

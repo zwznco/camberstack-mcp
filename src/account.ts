@@ -1,6 +1,6 @@
 /**
- * /account: a connected user's own page, for what they'd otherwise have to ask their AI for: plan and
- * free applies left, upgrade or manage billing, every change Camberstack made, and disconnect.
+ * /account: a connected user's own page, for what they'd otherwise have to ask their AI for: plan,
+ * upgrade or manage billing, every change Camberstack made, and disconnect.
  * Google sign-in (signin.ts, identity only) matched to the user who connected through an AI app.
  */
 import express, { type Express, type Request } from "express";
@@ -15,13 +15,12 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LABELS, allN, listedServices, planLabel } from "./plans.js";
 
-export interface AccountDeps {
+interface AccountDeps {
   db: DB;
   google: GoogleCreds;
   baseUrl: string;
   fetch?: typeof fetch;
   session: (userId: string, o?: { seen?: boolean }) => UserSession;
-  billingLink: (kind: "upgrade" | "billing" | "agency" | "plus", userId: string) => string | null;
   /** The admin site's origin: where ending a "Log in as user" session returns to. */
   adminUrl?: string;
 }

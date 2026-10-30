@@ -5,7 +5,7 @@
  *              it with a plain-English diff. Nothing is written.
  *   apply    → only a stored, un-applied proposal belonging to this user, and only if, re-resolved against
  *              the account now, it still reads as the summary the user approved (else it is proposed afresh).
- *              Each change records its inverse, so any applied proposal can be undone.
+ *              Each change records its inverse, so an applied proposal can be undone (bar the deletions below).
  *
  * Surface: negatives, pause/enable keyword, ad group or campaign, daily budget, campaign end date, and
  * building: a whole Search, Display, Demand Gen or Performance Max campaign (always created PAUSED, so
@@ -25,10 +25,10 @@ import { micros, toMicros, type AdsClient } from "./google.js";
 
 export const MAX_CHANGES = 50;
 const SOURCE_LABEL = { UPLOAD_CLICKS: "uploaded click ids", WEBPAGE: "website tag", AD_CALL: "calls from ads", WEBSITE_CALL: "calls from the website" } as const;
-/** conversion_action.type values imported from an analytics tool, whose counting the tool decides. */
 /** Enabled responsive search ads Google allows in one ad group. */
 const RSA_LIMIT = 3;
 const NO_UNDO = " ⚠ permanent: Google can't restore it, so this can't be undone; to only stop it, pause it instead";
+/** conversion_action.type values imported from an analytics tool, whose counting the tool decides. */
 const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTICS|UNIVERSAL_ANALYTICS)/;
 
 const id = z.string().regex(/^\d+$/, "numeric id");
@@ -393,7 +393,7 @@ const byId = (c: unknown) => {
     ? { type: o.type, conversion_action_id: o.resource_name.split("/").at(-1) } : c;
 };
 
-/** Everything the server accepts, including the change only undo creates. */
+/** Everything the server accepts, including the changes only undo creates. */
 export const ChangeSchema = z.preprocess(byId, z.discriminatedUnion("type", [
   ...PUBLIC_CHANGES,
   ...MERCHANT_LINK_CHANGES,
@@ -464,7 +464,7 @@ function endDateOf(endDateTime: string | undefined): string {
  * resolved against the live account, so without this an "enable campaign" next to a budget change
  * warned about the old budget.
  */
-export interface Pending { budgets: Map<string, number>; endDates: Map<string, string> }
+interface Pending { budgets: Map<string, number>; endDates: Map<string, string> }
 
 export function pendingOf(changes: Change[]): Pending {
   const p: Pending = { budgets: new Map(), endDates: new Map() };

@@ -26,7 +26,7 @@ export interface AdminDeps {
   /** Always left out of the numbers (operator + testers: ADMIN_EMAILS, PRO_EMAILS). */
   internalEmails: Set<string>;
   /** Announcement emails (announce.ts); unset = no Announcements page. */
-  announcements?: Announcements;
+  announcements: Announcements;
   fetch?: typeof fetch;
 }
 
@@ -106,34 +106,32 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
     res.redirect(303, startLoginAs(d.db, d.baseUrl, id, who));
   });
   const ann = d.announcements;
-  if (ann) {
-    site.get("/announcements", (req, res) => {
-      const who = email(req);
-      if (!who) { res.redirect(302, "/login"); return; }
-      res.type("html").send(shell("/announcements", who, view(req), announcementsPage(ann)));
-    });
-    site.get("/announcements/:id", (req, res) => {
-      const who = email(req);
-      if (!who) { res.redirect(302, "/login"); return; }
-      const p = ann.preset(req.params.id);
-      if (!p) { res.status(404).send("No such announcement."); return; }
-      const heading = `<a class="muted" href="/announcements">Announcements</a> <span class="dim">/</span> ${esc(p.subject)}`;
-      res.type("html").send(shell("/announcements", who, view(req), announcementPage(ann, p, who, String(req.query.note ?? "")), heading));
-    });
-    post("/announcements/:id/test", async (req, res, who) => {
-      await ann.sendTest(String(req.params.id), who);
-      res.redirect(303, `/announcements/${req.params.id}?note=test`);
-    });
-    post("/announcements/:id/send", (req, res) => {
-      const p = ann.preset(String(req.params.id));
-      // The count the page showed must still hold: a stale tab can't send to a different list than the one confirmed.
-      if (!p || String(ann.recipients(p).length) !== (req.body as Record<string, string>).count) {
-        throw new Error("The recipient list changed since the page loaded; go back, reload and check it again.");
-      }
-      void ann.start(p.id).catch((e) => console.error(`announcement ${p.id}: ${(e as Error).message}`));
-      res.redirect(303, `/announcements/${p.id}?note=sending`);
-    });
-  }
+  site.get("/announcements", (req, res) => {
+    const who = email(req);
+    if (!who) { res.redirect(302, "/login"); return; }
+    res.type("html").send(shell("/announcements", who, view(req), announcementsPage(ann)));
+  });
+  site.get("/announcements/:id", (req, res) => {
+    const who = email(req);
+    if (!who) { res.redirect(302, "/login"); return; }
+    const p = ann.preset(req.params.id);
+    if (!p) { res.status(404).send("No such announcement."); return; }
+    const heading = `<a class="muted" href="/announcements">Announcements</a> <span class="dim">/</span> ${esc(p.subject)}`;
+    res.type("html").send(shell("/announcements", who, view(req), announcementPage(ann, p, who, String(req.query.note ?? "")), heading));
+  });
+  post("/announcements/:id/test", async (req, res, who) => {
+    await ann.sendTest(String(req.params.id), who);
+    res.redirect(303, `/announcements/${req.params.id}?note=test`);
+  });
+  post("/announcements/:id/send", (req, res) => {
+    const p = ann.preset(String(req.params.id));
+    // The count the page showed must still hold: a stale tab can't send to a different list than the one confirmed.
+    if (!p || String(ann.recipients(p).length) !== (req.body as Record<string, string>).count) {
+      throw new Error("The recipient list changed since the page loaded; go back, reload and check it again.");
+    }
+    void ann.start(p.id).catch((e) => console.error(`announcement ${p.id}: ${(e as Error).message}`));
+    res.redirect(303, `/announcements/${p.id}?note=sending`);
+  });
   site.use((_req, res) => { res.status(404).send("Not found."); });
 
   app.use((req, res, next) => (req.get("host") === host ? site(req, res, next) : next()));
@@ -208,7 +206,7 @@ const EXTERNAL: [string, string][] = [
 ];
 
 function shell(path: string, who: string, v: View, body: string, heading?: string): string {
-  // Counts as of page load (no live polling): users all time, tool errors in the window (red), Pro users.
+  // Counts as of page load (no live polling): users all time, tool errors in the window (red), paying users.
   const errs = v.report.errorsInWindow;
   const nav: [string, string, string][] = [
     ["/", "Overview", ""],

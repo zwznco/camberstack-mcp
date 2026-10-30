@@ -13,7 +13,6 @@ import { deriveKey } from "./crypto.js";
 import { CamberstackProvider, MCP_SCOPE, consentCookie } from "./provider.js";
 import { UserSession, clearGoogleCache, type SessionDeps } from "./session.js";
 import { Grants } from "./grant.js";
-import { GRANTS } from "./google.js";
 import { buildServer, SERVER_VERSION, toolCatalog } from "./tools.js";
 import { Analytics, BEACON_JS, gtagJs, parseBeacon } from "./analytics.js";
 import { mountAdmin } from "./admin.js";
@@ -87,7 +86,6 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   const provider = new CamberstackProvider(db, {
     baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey, fetch: overrides.fetch, allowedEmails: cfg.allowedEmails,
     // Google verified the Analytics scopes 2026-10-17, so sign-in asks for them next to Ads + Search Console.
-    extraGoogleScopes: GRANTS.analytics.scopes,
   });
   const grants = new Grants({ db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
     signingKey: deriveKey(cfg.encryptionKey, "grant-links"), forgetToken: clearGoogleCache, fetch: overrides.fetch });
@@ -181,7 +179,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
 
   const account = mountAccount(app, {
     db, google: cfg.google, baseUrl: cfg.baseUrl, fetch: overrides.fetch,
-    session: (userId, o) => UserSession.load(deps, userId, o), billingLink: (kind, userId) => billing.link(kind, userId, "account"),
+    session: (userId, o) => UserSession.load(deps, userId, o),
     adminUrl: cfg.adminUrl,
   });
   const feedback = mountFeedback(app, {
@@ -202,7 +200,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   });
 
   app.get("/oauth/google/callback", async (req, res) => {
-    // One registered redirect URI serves every Google flow. Web sign-ins (/admin, /account) are told
+    // One registered redirect URI serves every Google flow. Web sign-ins (the admin site, /account) are told
     // apart by their state prefix and finish on their own path, where their session cookie is scoped.
     const site = [admin, account, feedback].find((s) => s?.owns(req.query.state));
     if (site) {

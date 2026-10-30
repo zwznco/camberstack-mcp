@@ -15,8 +15,8 @@ export const DEMO_PROPERTY = "000000001";
 const DEMO_NOTE = "Sample data from Camberstack's demo Google Analytics property (a fictional plumbing business), not a real property.";
 
 export interface Property { property_id: string; name: string; account: string; account_id: string }
-export interface GaAccount { account_id: string; name: string }
-export interface ReportRequest {
+interface GaAccount { account_id: string; name: string }
+interface ReportRequest {
   startDate: string;
   endDate: string;
   dimensions: string[];
@@ -126,7 +126,7 @@ const DAY = 86_400_000;
 const ymd = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 /** `days` up to yesterday (GA4's today is still filling in), or an exact start/end. */
-export function gaWindow(o: { days: number; start_date?: string; end_date?: string }): { startDate: string; endDate: string } {
+function gaWindow(o: { days: number; start_date?: string; end_date?: string }): { startDate: string; endDate: string } {
   if (o.start_date || o.end_date) {
     if (!o.start_date || !o.end_date) throw new Error("Give both start_date and end_date, or neither.");
     if (o.start_date > o.end_date) throw new Error("start_date is after end_date.");

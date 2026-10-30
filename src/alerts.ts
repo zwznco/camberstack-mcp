@@ -13,7 +13,7 @@
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { esc } from "./pages.js";
-import { isPaid, PLAN_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, ACCOUNT_CHOICE_PREFIX } from "./plans.js";
+import { isPaid, PLAN_LIMIT_PREFIX } from "./plans.js";
 
 /**
  * Starts our refusals of something Camberstack doesn't do (yet). No retry gets past one, so the model never repeats it
@@ -23,13 +23,13 @@ export const UNSUPPORTED_PREFIX = "Not supported:";
 export const unsupported = (message: string) => new Error(`${UNSUPPORTED_PREFIX} ${message}`);
 
 /** How long a later success of the same tool has to turn up before the error counts as unrecovered. */
-export const RECOVERY = 10 * 60;
+const RECOVERY = 10 * 60;
 /** Unrecovered errors with the same key that make a free user's episode worth a mail. */
-export const MIN_REPEATS = 3;
+const MIN_REPEATS = 3;
 /** How far back each run looks. */
 const LOOKBACK = 86400;
 
-export interface AlertDeps {
+interface AlertDeps {
   db: DB;
   internalEmails: Set<string>;
   /** Resend, as in config.ts; unset (dev, tests without it) = logged only. */
@@ -41,7 +41,7 @@ export interface AlertDeps {
 }
 
 interface Call { id: number; at: number; tool: string; customer_id: string | null; ok: number; error: string | null; query_shape: string | null }
-export interface Episode {
+interface Episode {
   key: string;
   userId: string; email: string; plan: string; app: string | null;
   tool: string; code: string;
@@ -73,11 +73,9 @@ export function verdict(code: string, error: string, recoveredLater: boolean): {
     return { act: true, why: "Camberstack doesn't do this, and the user wanted it. Consider building it; email them when it ships." };
   if (/^HTTP_5\d\d$/.test(code)) return { act: false, why: "Google was down (5xx). Transient; act only if it keeps happening (Bugsink tracks these)." };
   if (error.startsWith(PLAN_LIMIT_PREFIX)) return { act: true, why: "Plan limit: working as designed, but they wanted more. An upgrade nudge may land." };
-  if (error.startsWith(SWITCH_NOTICE_PREFIX) || error.startsWith(ACCOUNT_CHOICE_PREFIX))
-    return { act: false, why: "Plan notice asking the user to choose. Working as designed unless it repeats with no choice made." };
   if (/access isn't part of this Google connection|needs its edit access/.test(error))
     return { act: true, why: "Missing Google grant. The message carries the grant link; if they never clicked it, email them the link." };
-  if (code === "METRIC_ACCESS_DENIED") return { act: false, why: "Data our developer token can't reach (auction insights). Nothing we can fix." };
+  if (code === "METRIC_ACCESS_DENIED") return { act: false, why: "Data Google doesn't give Camberstack (auction insights). Nothing we can fix." };
   if (ACCOUNT_REFUSALS.test(code)) return { act: true, why: "Google refuses this for their account; the user must fix it in Google Ads. Check our message says how, and consider emailing them." };
   if (/^[A-Z_]+$/.test(code)) return { act: true, why: "The model kept writing a request Google rejects. Check the error tells it the fix (src/gaql.ts catalog, or the hint in google.ts)." };
   if (/^(TypeError|ReferenceError|SqliteError|RangeError)|Cannot read propert|is not a function|fetch failed/.test(error))
@@ -149,7 +147,7 @@ export function findStuck(db: DB, internalEmails: Set<string>, t = now(), mailed
 const when = (at: number) => new Date(at * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
 const line = (c: Call) => `${when(c.at)}  ${c.tool}${c.customer_id ? ` [${c.customer_id}]` : ""}  ${c.ok ? "ok" : "ERROR"}${c.query_shape ? `  ${c.query_shape.slice(0, 160)}` : ""}`;
 
-export function render(eps: Episode[], adminUrl?: string): { subject: string; text: string; html: string } {
+function render(eps: Episode[], adminUrl?: string): { subject: string; text: string; html: string } {
   const act = eps.filter((e) => e.verdict.act);
   const paid = eps.filter((e) => isPaid(e.plan));
   const subject = `Camberstack: ${eps.length === 1 ? `${eps[0].email} stuck on ${eps[0].tool}` : `${eps.length} users stuck`}`

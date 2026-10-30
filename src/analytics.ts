@@ -1,7 +1,7 @@
 /**
  * Self-hosted Matomo for the public pages only. Nothing from Google Ads ever goes here: tool usage is
- * logged in our own SQLite (tool_calls), and the only server-side event is "a Google Ads account
- * connected", with no account, email or id attached.
+ * logged in our own SQLite (tool_calls), and the only server-side events are "a Google Ads account
+ * connected" and a Google service added, with no account, email or id attached.
  *
  * Ported from the GEO app that used to run on this domain (Matomo site 7, now this app's), where each
  * rule below was learned the hard way:

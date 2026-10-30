@@ -118,7 +118,7 @@ function fail(e: unknown) {
   return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}${detail}` }], isError: true };
 }
 
-export interface ToolCall {
+interface ToolCall {
   tool: string;
   customerId: string | null;
   ok: boolean;

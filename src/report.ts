@@ -206,7 +206,8 @@ export const RETENTION_WEEKS = 8;
  * `applied` stops at the last week its earliest signup has begun, and only the first `done` have ended for its latest one.
  * Past `done` a cell is still filling in, not a drop.
  */
-function retention(q: <T>(sql: string, ...p: unknown[]) => T[], t = now()) {
+function retention(q: <T>(sql: string, ...p: unknown[]) => T[]) {
+  const t = now();
   // Day 0 of the epoch was a Thursday, so a day's Monday is (day + 3) % 7 days back.
   const monday = (col: string) => `(${col} - ${col} % 86400 - ((${col} / 86400 + 3) % 7) * 86400)`;
   const since = t - (t % 86400) - ((Math.floor(t / 86400) + 3) % 7) * 86400 - (RETENTION_WEEKS - 1) * 7 * 86400;

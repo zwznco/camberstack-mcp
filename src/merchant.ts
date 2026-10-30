@@ -38,16 +38,12 @@ export const SOURCE_NAME = "Camberstack overrides";
 /** Camberstack's primary data source, for products it creates (merchant-changes.ts add_product), found by this name. */
 export const PRODUCTS_SOURCE_NAME = "Camberstack products";
 /** OverrideStore key space for the products Camberstack created: their full attributes, as last written. */
-export const ownSpace = (account: string) => `own:${account}`;
+const ownSpace = (account: string) => `own:${account}`;
 
 /** The API's product id: unpadded base64url of contentLanguage~feedLabel~offerId, which any offer id survives. */
 export const encodeKey = (k: ProductKey) => Buffer.from(`${k.contentLanguage}~${k.feedLabel}~${k.offerId}`).toString("base64url");
 const keyId = (k: ProductKey) => `${k.contentLanguage}~${k.feedLabel}~${k.offerId}`;
 
-/**
- * Camberstack's copy of the overrides it holds per product: Merchant Center applies them but can't read them back, and
- * undo has to restore exactly what was there. Keyed by account, not user, since it mirrors the account's source.
- */
 /** product_view has a row per channel (online, local) and feed label: one row per offer, with every issue, or an offer's spend counts twice. */
 export function oneRowPerOffer<T extends { offerId?: unknown; itemIssues?: { type?: { code?: string } }[] }>(rows: T[]): T[] {
   const byOffer = new Map<string, T>();
@@ -60,6 +56,10 @@ export function oneRowPerOffer<T extends { offerId?: unknown; itemIssues?: { typ
   return [...byOffer.values()];
 }
 
+/**
+ * Camberstack's copy of the overrides it holds per product: Merchant Center applies them but can't read them back, and
+ * undo has to restore exactly what was there. Keyed by account, not user, since it mirrors the account's source.
+ */
 export class OverrideStore {
   private mem = new Map<string, Overrides>();
   constructor(private db?: DB) {}
@@ -122,7 +122,7 @@ function merchantFix(status: number, msg: string): string {
   return "";
 }
 
-/** One user's view of the Merchant API (read-only). */
+/** One user's view of the Merchant API. */
 export class MerchantClient implements Merchant {
   constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null, private f: typeof fetch = fetch,
     private store = new OverrideStore()) {}

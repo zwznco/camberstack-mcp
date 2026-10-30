@@ -1,5 +1,5 @@
 /**
- * Paid plans (Pro, Agency) billing: a Stripe Checkout subscription, no webhook. Which plan someone is on follows their
+ * Paid plans (Plus, Pro, Agency) billing: a Stripe Checkout subscription, no webhook. Which plan someone is on follows their
  * subscription's price, so switching between Pro and Agency in Stripe's billing portal moves the plan too (the sweep).
  *
  * The user is in a chat, not on our site, so every billing link we hand out is a signed, expiring,
@@ -7,7 +7,7 @@
  * Checkout Session server-side and flips the plan. Two things that page can't see are covered by an
  * hourly sweep against Stripe: a buyer who pays
  * and closes the tab, and a subscription that later ends (cancelled at period end, unpaid).
- * past_due stays Pro while Stripe retries the card.
+ * past_due keeps the plan while Stripe retries the card.
  */
 import type { Express, Request, Response } from "express";
 import type { DB, UserRow } from "./db.js";
@@ -17,7 +17,7 @@ import { esc } from "./pages.js";
 import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, isPaid, planLabel, type Plan } from "./plans.js";
 
 const LINK_TTL = 7 * 86400;
-/** Subscription statuses that keep Pro (past_due: Stripe is still retrying the card). */
+/** Subscription statuses that keep a paid plan (past_due: Stripe is still retrying the card). */
 const LIVE = new Set(["active", "trialing", "past_due"]);
 const APP = "camberstack-mcp";
 /** Where a personal upgrade link was handed out (plan_events.src): an AI tool result, a lifecycle email, the account page. */

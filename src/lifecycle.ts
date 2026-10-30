@@ -13,9 +13,9 @@
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on a paid plan (Plus, Pro, Agency) with a Stripe subscription → what it adds, where billing lives
  * Those two are transactional: sent within a minute (transactional(), every minute), not held for the morning.
- * The first three go out in the user's morning (SEND_HOURS in the time zone of their Google Ads account, or FALLBACK_TZ),
+ * The first five go out in the user's morning (SEND_HOURS in the time zone of their Google Ads account, or FALLBACK_TZ),
  * so being due only holds it until the next hourly run inside that window.
- * Never sent to internal accounts (ADMIN_EMAILS, PRO_EMAILS) or anyone who unsubscribed; first_steps and limit_reached
+ * Never sent to internal accounts (ADMIN_EMAILS, PRO_EMAILS) or anyone who unsubscribed.
  * switch_wanted and limit_reached also skip Pro users and the disconnected.
  *
  * Content stays generic on purpose: counts and links, never campaign names or other Google Ads data
@@ -219,12 +219,12 @@ export class Lifecycle {
     return sent;
   }
 
-  /** `once`: Resend's idempotency key (kept 24h), so a send that timed out after Resend took it isn't sent again an hour later. */
   /** An announcement (announce.ts): the same footer and unsubscribe link, plus the postal address. */
   sendAnnouncement(to: string, m: { subject: string; text: string; html: string }, userId: string, once?: string): Promise<void> {
     return this.send(to, m, userId, once, this.d.mail?.postalAddress);
   }
 
+  /** `once`: Resend's idempotency key (kept 24h), so a send that timed out after Resend took it isn't sent again an hour later. */
   private async send(to: string, m: { subject: string; text: string; html: string }, userId: string, once?: string, address?: string): Promise<void> {
     const unsub = this.unsubscribeUrl(userId);
     const footer = `You're getting this because you connected Camberstack (camberstack.io) to Google Ads.${address ? ` Camberstack, ${address}.` : ""}`;
@@ -431,7 +431,7 @@ camberstack.io`,
 }
 
 /** Transactional: right after signup. Doesn't name Google Ads as connected: someone can sign up with only Search Console. */
-function welcome(base: string, fp: FreePlan = { kind: "accounts" }) {
+function welcome(base: string, fp: FreePlan) {
   const ask = "How did each of my Google Ads campaigns do last month?";
   const plans = fp.kind === "one_service"
     ? `Free covers ${oneServiceFree()}; Plus (${PLUS_PRICE_LABEL}) covers ${allServices()} on 1 Google Ads account, Pro (${PRO_PRICE_LABEL}) on up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`
@@ -460,7 +460,6 @@ Camberstack`,
   };
 }
 
-/** Transactional: confirms the upgrade. Billing changes and cancelling live on /account (Stripe's portal), receipts come from Stripe. */
 /** Plus adds services, not accounts: every listed service together on the one account. */
 function plusWelcome(base: string) {
   const ask = "Which searches do I pay for that already rank on Google?";
@@ -492,7 +491,10 @@ Camberstack`,
   };
 }
 
-/** The welcome for a new subscriber, on the plan they bought (Pro or Agency; the kind stays pro_welcome for both). */
+/**
+ * The welcome for a new subscriber, on the plan they bought (Pro or Agency; the kind stays pro_welcome for both).
+ * Transactional: confirms the upgrade. Billing changes and cancelling live on /account (Stripe's portal), receipts come from Stripe.
+ */
 function proWelcome(base: string, plan: string) {
   if (plan === "plus") return plusWelcome(base);
   const ask = "List my Google Ads accounts";
