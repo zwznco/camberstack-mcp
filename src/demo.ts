@@ -226,6 +226,8 @@ export class DemoAds {
       case "shared_set":
       case "shared_criterion":
       case "campaign_shared_set":
+      case "user_list":
+      case "recommendation":
         return [];
       // So a build's summary names its targeting ("United States, English") as it does on a real account.
       case "geo_target_constant":
@@ -235,7 +237,7 @@ export class DemoAds {
         return Object.entries(LANGUAGES).map(([id, name]) => ({ languageConstant: { resourceName: `languageConstants/${id}`, id, name } }));
       default:
         throw new Error(`The demo account supports these GAQL resources: customer, campaign, ad_group, keyword_view, ad_group_criterion, `
-          + `search_term_view, campaign_criterion, campaign_asset, shared_set, shared_criterion, campaign_shared_set, conversion_action, geo_target_constant, language_constant. "${resource}" isn't one of them.`);
+          + `search_term_view, campaign_criterion, campaign_asset, shared_set, shared_criterion, campaign_shared_set, user_list, recommendation, conversion_action, geo_target_constant, language_constant. "${resource}" isn't one of them.`);
     }
   }
 
