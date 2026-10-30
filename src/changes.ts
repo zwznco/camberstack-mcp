@@ -14,7 +14,7 @@
  * a shared (portfolio) strategy's targets, and creating a shared strategy (undo moves its campaigns back, then removes it). YouTube is Demand Gen with video ads: the
  * API refuses to create VIDEO campaigns (MUTATE_NOT_ALLOWED, checked against v23 on 2026-10-12). A user can also delete
  * what they built (the delete_ changes). Google can't bring back a removed ad, ad group or campaign, so those carry a ⚠ and
- * no undo; a keyword, negative or sitelink goes back as a new one, without its history. Also ad group negatives, shared
+ * no undo; a keyword goes back with its id and stats (live, 2026-10-30), a sitelink as a new asset, so its history restarts. Also ad group negatives, shared
  * negative lists, and editing a responsive search ad in place.
  */
 import { createHash } from "node:crypto";
@@ -310,7 +310,7 @@ export const PUBLIC_CHANGES = [
   z.object({ type: z.literal("remove_conversion_action"), conversion_action_id: id.describe("conversion_action.id from run_gaql") })
     .describe("Remove a conversion action. Permanent unless a GA4 import: say so before they approve"),
   z.object({ type: z.literal("delete_keyword"), ad_group_id: adGroupId, criterion_id: criterionId })
-    .describe("Delete one keyword. Undo adds it back as a new keyword without its history; to keep the history, pause it"),
+    .describe("Delete one keyword. Undo adds it back with its history"),
   z.object({ type: z.literal("delete_ad"), ad_group_id: adGroupId, ad_id: id.describe("Ad id, digits only (ad_group_ad.ad.id from run_gaql)") })
     .describe("Delete one ad. Permanent, with no undo: say so before they approve; to only stop it, pause it"),
   z.object({ type: z.literal("delete_ad_group"), ad_group_id: adGroupId })
@@ -1247,7 +1247,7 @@ export async function resolveChange(
       return {
         change, service: "adGroupCriteria", operations: [{ remove: `customers/${customerId}/adGroupCriteria/${change.ad_group_id}~${change.criterion_id}` }],
         describe: `Delete keyword ${label} from ad group "${k.adGroup.name}" (campaign "${k.campaign.name}"; now ${c.status})` +
-          (paused ? " ⚠ a paused keyword has no undo" : "; undo adds it back as a new keyword, without its history"),
+          (paused ? " ⚠ a paused keyword has no undo" : "; undo adds it back with its history"),
         inverse: paused ? undefined : { type: "add_keywords", ad_group_id: change.ad_group_id, keywords: [{ text: c.keyword.text, match_type: c.keyword.matchType, ...(max_cpc ? { max_cpc } : {}) }] },
       };
     }

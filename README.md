@@ -112,7 +112,7 @@ Risky changes carry a ⚠ line in the proposal summary: enabling a campaign, mor
 bid, switching bid strategy, removing the last location, a new primary conversion action, removing a conversion
 action, deleting an ad, ad group or campaign. Undo removes only what Camberstack itself created. Google can't restore a removed
 ad, ad group, campaign or conversion action, so those carry a ⚠ and no undo (a GA4 import is the exception: undo imports it
-again). A deleted keyword, negative or sitelink goes back as a new one, without its history; a paused keyword has no undo. (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
+again). Undo adds a deleted keyword back with its id and stats, and a negative or sitelink as a new one; a paused keyword has no undo. (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
 restores it.) Search Console is read-only.
 
 ## How auth works
