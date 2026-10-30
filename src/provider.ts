@@ -16,10 +16,10 @@ import type {
   OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { InvalidGrantError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { DB, UserRow } from "./db.js";
 import { now } from "./db.js";
-import { encrypt, randomToken, sha256 } from "./crypto.js";
+import { encrypt, randomToken, safeEqual, sha256 } from "./crypto.js";
 import { consentPage } from "./pages.js";
 import { clearGoogleCache } from "./session.js";
 import {
@@ -30,6 +30,18 @@ export const MCP_SCOPE = "ads";
 const ACCESS_TTL = 3600;              // 1 hour
 const REFRESH_TTL = 90 * 24 * 3600;   // 90 days, rotated on every use
 const CODE_TTL = 600;                 // 10 minutes
+
+/** Where the MCP client asked to come back to, carrying its state. */
+function clientRedirect(redirectUri: string, state?: string): URL {
+  const back = new URL(redirectUri);
+  if (state) back.searchParams.set("state", state);
+  return back;
+}
+function denied(back: URL, description: string, error = "access_denied"): string {
+  back.searchParams.set("error", error);
+  back.searchParams.set("error_description", description);
+  return back.toString();
+}
 
 interface PendingParams {
   redirectUri: string;
@@ -88,11 +100,7 @@ export class CamberstackProvider implements OAuthServerProvider {
   /** Step 1: park the MCP client's request and send the user to Google. */
   async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
     if (!this.opts.google.clientId) {
-      const back = new URL(params.redirectUri);
-      if (params.state) back.searchParams.set("state", params.state);
-      back.searchParams.set("error", "temporarily_unavailable");
-      back.searchParams.set("error_description", "Camberstack sign-in is not open yet. See https://camberstack.io");
-      res.redirect(302, back.toString());
+      res.redirect(302, denied(clientRedirect(params.redirectUri, params.state), "Camberstack sign-in is not open yet. See https://camberstack.io", "temporarily_unavailable"));
       return;
     }
     const id = randomToken(24);
@@ -130,8 +138,7 @@ export class CamberstackProvider implements OAuthServerProvider {
       throw new Error("This sign-in link has expired. Start the connection again from your AI app.");
     }
     const p = JSON.parse(row.params) as PendingParams;
-    const a = Buffer.from(p.nonce ?? ""), b = Buffer.from(browserNonce ?? "");
-    if (!p.nonce || a.length !== b.length || !timingSafeEqual(a, b)) {
+    if (!p.nonce || !safeEqual(p.nonce, browserNonce ?? "")) {
       throw new Error("This sign-in wasn't started in this browser. Start the connection again from your AI app.");
     }
     return { row, p };
@@ -142,11 +149,7 @@ export class CamberstackProvider implements OAuthServerProvider {
     const { row, p } = this.pendingFor(id, browserNonce);
     if (!approve) {
       this.db.prepare("DELETE FROM pending_auth WHERE id = ?").run(row.id);
-      const back = new URL(p.redirectUri);
-      if (p.state) back.searchParams.set("state", p.state);
-      back.searchParams.set("error", "access_denied");
-      back.searchParams.set("error_description", "The user cancelled the connection.");
-      return back.toString();
+      return denied(clientRedirect(p.redirectUri, p.state), "The user cancelled the connection.");
     }
     this.db.prepare("UPDATE pending_auth SET params = ? WHERE id = ?").run(JSON.stringify({ ...p, approved: true }), row.id);
     return googleAuthUrl(this.opts.google, this.googleRedirectUri, row.id, GRANTS.analytics.scopes);
@@ -163,13 +166,10 @@ export class CamberstackProvider implements OAuthServerProvider {
     const { row: pending, p } = this.pendingFor(q.state, browserNonce);
     if (!p.approved) throw new Error("This sign-in wasn't approved on Camberstack. Start the connection again from your AI app.");
     this.db.prepare("DELETE FROM pending_auth WHERE id = ?").run(pending.id);
-    const back = new URL(p.redirectUri);
-    if (p.state) back.searchParams.set("state", p.state);
+    const back = clientRedirect(p.redirectUri, p.state);
 
     if (q.error || !q.code) {
-      back.searchParams.set("error", "access_denied");
-      back.searchParams.set("error_description", "Google access was not granted.");
-      return { to: back.toString() };
+      return { to: denied(back, "Google access was not granted.") };
     }
 
     const g = await exchangeGoogleCode(this.opts.google, q.code, this.googleRedirectUri, this.opts.fetch);
@@ -177,17 +177,13 @@ export class CamberstackProvider implements OAuthServerProvider {
     const granted = g.scope.split(" ");
     const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, GRANTS.analytics.scopes[0]];
     if (!enough.some((s) => granted.includes(s))) {
-      back.searchParams.set("error", "access_denied");
-      back.searchParams.set("error_description", "No Google service was granted (every box was unticked).");
-      return { to: back.toString() };
+      return { to: denied(back, "No Google service was granted (every box was unticked).") };
     }
     if (!g.id_token) throw new Error("Google did not return an id_token");
     const { sub, email } = idTokenClaims(g.id_token);
     const allowed = this.opts.allowedEmails;
     if (allowed?.size && !allowed.has(email.toLowerCase())) {
-      back.searchParams.set("error", "access_denied");
-      back.searchParams.set("error_description", "This Camberstack server is private. Connect https://camberstack.io/mcp instead.");
-      return { to: back.toString() };
+      return { to: denied(back, "This Camberstack server is private. Connect https://camberstack.io/mcp instead.") };
     }
     const { user, created } = this.upsertUser(sub, email, g.refresh_token, g.scope, pending.client_id);
 

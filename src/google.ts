@@ -71,6 +71,11 @@ export function googleGrantUrl(creds: GoogleCreds, redirectUri: string, state: s
 }
 
 /** Google's answer when the token lacks the scope a call needs. */
+/** Google's own message from an error body, else the body's start. */
+export function googleMessage(body: string): string {
+  try { return JSON.parse(body).error?.message ?? body.slice(0, 300); } catch { return body.slice(0, 300); }
+}
+
 export const scopeMissing = (status: number, body: string) =>
   status === 403 && /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficient authentication scopes/i.test(body);
 
@@ -480,8 +485,7 @@ export class SearchConsoleClient {
     const body = await res.text();
     if (!res.ok) {
       if (scopeMissing(res.status, body)) throw new NotGrantedError("search-console", this.grantLink());
-      let msg = body.slice(0, 300);
-      try { msg = JSON.parse(body).error?.message ?? msg; } catch { /* not JSON */ }
+      const msg = googleMessage(body);
       // AIs guess sc-domain:example.com when the user's property is https://www.example.com/ (or the reverse).
       const fix = res.status === 403 && /permission/i.test(msg)
         ? " → use a property exactly as search_console_sites lists it: sc-domain:example.com and https://www.example.com/ are different properties." : "";

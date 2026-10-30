@@ -7,7 +7,7 @@
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
-import { NotGrantedError, scopeMissing } from "./google.js";
+import { NotGrantedError, googleMessage, scopeMissing } from "./google.js";
 
 const ADMIN_API = "https://analyticsadmin.googleapis.com/v1beta";
 const DATA_API = "https://analyticsdata.googleapis.com/v1beta";
@@ -51,8 +51,7 @@ export class AnalyticsClient implements Analytics {
     const text = await res.text();
     if (!res.ok) {
       if (scopeMissing(res.status, text)) throw new NotGrantedError("analytics", this.grantLink(), method !== "GET" && url.startsWith(ADMIN_API));  // a report is a POST too
-      let msg = text.slice(0, 300);
-      try { msg = JSON.parse(text).error?.message ?? msg; } catch { /* not JSON */ }
+      const msg = googleMessage(text);
       throw new Error(`Google Analytics API ${res.status}: ${msg}`);
     }
     return text ? JSON.parse(text) : {};

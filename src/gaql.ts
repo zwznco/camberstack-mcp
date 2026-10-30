@@ -55,6 +55,9 @@ export async function catalog(fetchFields: () => Promise<FieldMeta[]>): Promise<
   return loading;
 }
 
+/** A quoted GAQL string. */
+const QUOTED = /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g;
+
 /**
  * A query with every value taken out, for the usage log: which fields and resources custom queries use, so the common
  * ones can become their own tools. GAQL quotes every string, so after blanking quoted strings and bare numbers what's
@@ -63,7 +66,7 @@ export async function catalog(fetchFields: () => Promise<FieldMeta[]>): Promise<
  */
 export function queryShape(query: string): string {
   return query
-    .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "?")
+    .replace(QUOTED, "?")
     .replace(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g, "?")
     .replace(/\?(?:\s*,\s*\?)+/g, "?")
     .replace(/\s+/g, " ").trim().slice(0, 1000);
@@ -80,7 +83,7 @@ const lookupQuery = (part: string) => `SELECT name, category, selectable, filter
  * takes it, or written FROM google_ads_field (the resource it describes), which is dropped. Null for an account query.
  */
 export function fieldQuery(query: string): string | null {
-  const blank = query.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "''");
+  const blank = query.replace(QUOTED, "''");
   if (!/^\s*select\b/i.test(blank)) return null;
   const from = /\bFROM\s+([a-z_]+)/i.exec(blank);
   if (!from) return query.trim();
@@ -94,7 +97,7 @@ const FIELD = /\b[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\b/g;
 /** SELECT … FROM … [WHERE …] [ORDER BY …] [LIMIT n] [PARAMETERS …]. Null for anything else (the check then stays out of the way). */
 export function parseGaql(query: string): ParsedGaql | null {
   // Literals can hold anything, including dots and keywords: blank them before looking for field names.
-  const q = query.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "''").replace(/\s+/g, " ").trim();
+  const q = query.replace(QUOTED, "''").replace(/\s+/g, " ").trim();
   const m = /^SELECT (.+?) FROM ([a-z_]+)(?: WHERE (.+?))?(?: ORDER BY (.+?))?(?: LIMIT \d+)?(?: PARAMETERS .+)?$/i.exec(q);
   if (!m) return null;
   const list = (s: string | undefined) => [...new Set((s ?? "").match(FIELD) ?? [])];

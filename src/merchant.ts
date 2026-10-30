@@ -13,7 +13,7 @@
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
-import { NotGrantedError, scopeMissing } from "./google.js";
+import { NotGrantedError, googleMessage, scopeMissing } from "./google.js";
 
 const API = "https://merchantapi.googleapis.com";
 export const DEMO_MERCHANT = "000000001";
@@ -136,8 +136,7 @@ export class MerchantClient implements Merchant {
     const text = await res.text();
     if (!res.ok) {
       if (scopeMissing(res.status, text)) throw new NotGrantedError("merchant-center", this.grantLink());
-      let msg = text.slice(0, 300);
-      try { msg = JSON.parse(text).error?.message ?? msg; } catch { /* not JSON */ }
+      const msg = googleMessage(text);
       // Registered, but with no verified API developer on the registering account: also Camberstack's side (the operator's account).
       if (res.status === 401 && (/not registered|AUTH_GCP_NOT_REGISTERED/i.test(text) || /API_DEVELOPER/.test(text))) {
         throw new Error("Camberstack's Merchant Center access isn't set up on Google's side yet (developer registration). This is Camberstack's "

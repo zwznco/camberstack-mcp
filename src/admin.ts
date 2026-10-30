@@ -159,9 +159,7 @@ const date = (t: number) => new Date(t * 1000).toISOString().slice(0, 16).replac
 const when = (t: number | null) => (t ? `<span title="${date(t)} UTC">${ago(t)}</span>` : `<span class="dim">—</span>`);
 const num = (n: number | null | undefined) => `<span class="n">${(n ?? 0).toLocaleString("en-US")}</span>`;
 const bad = (n: number) => (n ? `<span class="n bad">${n}</span>` : `<span class="n dim">0</span>`);
-const qs = (v: Pick<View, "days">, p: Partial<{ days: number }> = {}) => {
-  return `?days=${p.days ?? v.days}`;
-};
+const qs = (v: Pick<View, "days">) => `?days=${v.days}`;
 /** The window in words: "today", or "7d" counting today. `lastW` and `inW` read as a phrase ("last 7d", "in 7d"). */
 const range = (days: number) => (days === 1 ? "today" : `${days}d`);
 const lastW = (days: number) => (days === 1 ? "today" : `last ${days}d`);
@@ -287,7 +285,7 @@ table.cohorts th,table.cohorts td{padding:7px 6px}table.cohorts .ret{min-width:3
 <div class="ext"><span>Links</span>${EXTERNAL.map(([l, href]) => `<a href="${href}" target="_blank" rel="noopener">${l} <i>↗</i></a>`).join("")}</div>
 <div class="who"><span title="${esc(who)}">${esc(who)}</span><form method="post" action="/logout"><button>Sign out</button></form></div></aside>
 <main><div class="top"><h1>${heading ?? title}</h1><div class="tools"${path === "/announcements" ? ' style="display:none"' : ""}>
-<span class="seg" title="Whole days in UTC, counting today">${[1, 7, 30, 90].map((d) => `<a class="${d === v.days ? "on" : ""}" href="?${qs(v, { days: d }).slice(1)}">${d === 1 ? "Today" : `${d}d`}</a>`).join("")}</span></div></div>
+<span class="seg" title="Whole days in UTC, counting today">${[1, 7, 30, 90].map((d) => `<a class="${d === v.days ? "on" : ""}" href="?days=${d}">${d === 1 ? "Today" : `${d}d`}</a>`).join("")}</span></div></div>
 ${body}
 <footer class="mfoot">${EXTERNAL.map(([l, href]) => `<a href="${href}" target="_blank" rel="noopener">${l} ↗</a>`).join("")}
 <span>${esc(who)} · <form method="post" action="/logout" style="display:inline"><button>Sign out</button></form></span></footer>

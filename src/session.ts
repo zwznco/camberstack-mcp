@@ -975,14 +975,13 @@ export class UserSession {
     const cur = scWindow(o);
     const prev = priorWindow(cur);
     const [now_, before] = await Promise.all([this.scTotals(site, cur, o.fresh), this.scTotals(site, prev, o.fresh)]);
-    const pct = (a: number, b: number) => (b > 0 ? round(((a - b) / b) * 100) : null);
     return {
       site, ...siteNote(site),
       current: { window: cur, ...now_ }, previous: { window: prev, ...before },
       change: {
         clicks_pct: pct(now_.clicks, before.clicks), impressions_pct: pct(now_.impressions, before.impressions),
         ctr_points: round(now_.ctr_pct - before.ctr_pct),
-        position: now_.position != null && before.position != null ? Math.round((now_.position - before.position) * 10) / 10 : null,
+        position: now_.position != null && before.position != null ? round1(now_.position - before.position) : null,
       },
       note: "A lower position is better: a negative position change means the site moved up."
         + (o.fresh ? " " + FRESH_NOTE : ""),
@@ -1039,7 +1038,6 @@ export class UserSession {
     const moving = queries.filter((r) => !r.state);
     const up = (a: TrendRow, b: TrendRow) => b.impressions_change - a.impressions_change;
     const down = (a: TrendRow, b: TrendRow) => a.impressions_change - b.impressions_change;
-    const pct = (a: number, b: number) => (b > 0 ? round(((a - b) / b) * 100) : null);
     return {
       site, ...siteNote(site), current_window: cur, prior_window: prev,
       totals: { current: tCur, prior: tPrev, impressions_pct: pct(tCur.impressions, tPrev.impressions), clicks_pct: pct(tCur.clicks, tPrev.clicks) },
@@ -1141,7 +1139,7 @@ export class UserSession {
    */
   async merchantAdSpend(customerId: string, merchantId: string, o: { days: number; limit: number }) {
     const a = await this.account(customerId);
-    const ymd = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+    const ymd = (daysAgo: number) => isoDay(Date.now() - daysAgo * DAY);
     // Google requires every filtered field in SELECT (seen live): product_merchant_id is there for the WHERE.
     const q = (from: number) => `SELECT segments.product_item_id, segments.product_merchant_id, segments.product_title, metrics.cost_micros, metrics.clicks, metrics.impressions,
         metrics.conversions, metrics.conversions_value FROM shopping_performance_view
@@ -1167,20 +1165,19 @@ export class UserSession {
     const problems = oneRowPerOffer((products.rows as any[]).filter((p) => p.aggregatedReportingContextStatus !== "ELIGIBLE" || (p.itemIssues ?? []).length));
     const ranked = problems.map((p) => {
       const s = spend.get(String(p.offerId).toLowerCase());
-      const r2 = (n: number) => Math.round(n * 100) / 100;
       return { offer_id: p.offerId, title: p.title, status: p.aggregatedReportingContextStatus,
         issues: (p.itemIssues ?? []).map((i: any) => ({ code: i.type?.code, ...(i.type?.canonicalAttribute ? { attribute: i.type.canonicalAttribute } : {}),
           severity: i.severity?.aggregatedSeverity })),
-        ad_cost: r2(s?.cost ?? 0), ad_clicks: s?.clicks ?? 0, ad_conversions: r2(s?.conversions ?? 0), ad_conversion_value: r2(s?.value ?? 0),
+        ad_cost: round(s?.cost ?? 0), ad_clicks: s?.clicks ?? 0, ad_conversions: round(s?.conversions ?? 0), ad_conversion_value: round(s?.value ?? 0),
         ...(s && s.cost > 0 ? { stopped_spending: !(recentCost.get(String(p.offerId).toLowerCase()) ?? 0) } : {}) };
     }).sort((x, y) => y.ad_conversion_value - x.ad_conversion_value || y.ad_cost - x.ad_cost);
     const total = [...spend.values()].reduce((t, e) => t + e.cost, 0);
     const earning = ranked.filter((r) => r.ad_cost > 0 || r.ad_conversion_value > 0);
     return {
       ...demoNote(customerId), ads_account: a.customerId, merchant_account: merchantId, window: { start: ymd(o.days), end: ymd(1) },
-      shopping_ad_cost: Math.round(total * 100) / 100,
+      shopping_ad_cost: round(total),
       problem_products: problems.length, problem_products_that_had_ad_spend: earning.length,
-      ad_value_on_problem_products: Math.round(earning.reduce((t, r) => t + r.ad_conversion_value, 0) * 100) / 100,
+      ad_value_on_problem_products: round(earning.reduce((t, r) => t + r.ad_conversion_value, 0)),
       products: earning.slice(0, o.limit),
       ...(products.truncated ? { partial: "Only the first 20,000 Merchant Center products were checked." } : {}),
       ...(!rows.length ? { note_no_spend: "No Shopping or Performance Max spend for this Merchant Center account in the window: check the accounts are linked "
@@ -1213,7 +1210,7 @@ export class UserSession {
     const paidAndRanking = organic.flatMap((r) => {
       const p = paid.get(norm(r.keys[0] ?? ""));
       return p && r.position <= o.max_position ? [{
-        query: r.keys[0], organic_position: Math.round(r.position * 10) / 10, organic_clicks: r.clicks, organic_impressions: r.impressions,
+        query: r.keys[0], organic_position: round1(r.position), organic_clicks: r.clicks, organic_impressions: r.impressions,
         ad_cost: round(p.cost), ad_clicks: p.clicks, ad_conversions: round(p.conversions), campaigns: [...p.campaigns],
       }] : [];
     }).sort((x, y) => y.ad_cost - x.ad_cost);
@@ -1580,11 +1577,10 @@ function monthly(volumes: { year?: number | string; month?: string; monthlySearc
  * Search Console's window: its last ~2 days are still incomplete, so it ends 3 days ago. The overlap tool reads the
  * Ads side over the same dates, so the two sides compare like for like.
  */
-function searchConsoleWindow(days: number, before = 0): { start: string; end: string } {
+function searchConsoleWindow(days: number, fresh = false): { start: string; end: string } {
   const d = Math.max(1, Math.min(480, Math.floor(days)));
-  const end = new Date(Date.now() - (3 + before) * 86_400_000);
-  const start = new Date(end.getTime() - (d - 1) * 86_400_000);
-  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  const end = Date.now() - (fresh ? 1 : 3) * DAY;
+  return { start: isoDay(end - (d - 1) * DAY), end: isoDay(end) };
 }
 
 export interface ScWindowOpts { days: number; start_date?: string; end_date?: string; fresh?: boolean }
@@ -1608,10 +1604,7 @@ function scWindow(o: ScWindowOpts): { start: string; end: string } {
     if (b - a > 479 * DAY) throw new Error("A window can span at most 480 days; Search Console keeps about 16 months.");
     return { start: o.start_date, end: o.end_date };
   }
-  if (!o.fresh) return searchConsoleWindow(o.days);
-  const d = Math.max(1, Math.min(480, Math.floor(o.days)));
-  const end = Date.now() - DAY;
-  return { start: isoDay(end - (d - 1) * DAY), end: isoDay(end) };
+  return searchConsoleWindow(o.days, o.fresh);
 }
 
 /** The same number of days immediately before a window. */
@@ -1645,11 +1638,11 @@ function diffWindows(cur: SearchAnalyticsRow[], prev: SearchAnalyticsRow[], minI
     const a = c.get(key), b = p.get(key);
     const ai = a?.impressions ?? 0, bi = b?.impressions ?? 0;
     if (Math.max(ai, bi) < minImpressions) continue;
-    const pos = (r?: SearchAnalyticsRow) => (r && r.impressions ? Math.round(r.position * 10) / 10 : null);
+    const pos = (r?: SearchAnalyticsRow) => (r && r.impressions ? round1(r.position) : null);
     out.push({
       key, impressions: ai, prior_impressions: bi, impressions_change: ai - bi, impressions_pct: bi > 0 ? round(((ai - bi) / bi) * 100) : null,
       clicks: a?.clicks ?? 0, prior_clicks: b?.clicks ?? 0, position: pos(a), prior_position: pos(b),
-      position_change: ai && bi ? Math.round((a!.position - b!.position) * 10) / 10 : null,
+      position_change: ai && bi ? round1(a!.position - b!.position) : null,
       ...(bi === 0 ? { state: "new" as const } : ai === 0 ? { state: "lost" as const } : {}),
     });
   }
@@ -1683,15 +1676,13 @@ function inspectionRow(url: string, r: UrlInspection) {
 }
 
 const organicMetrics = (r: SearchAnalyticsRow) => ({
-  clicks: r.clicks, impressions: r.impressions, ctr_pct: round(r.ctr * 100), position: Math.round(r.position * 10) / 10,
+  clicks: r.clicks, impressions: r.impressions, ctr_pct: round(r.ctr * 100), position: round1(r.position),
 });
 
 function dateRange(days: number): string {
   const d = Math.max(1, Math.min(365, Math.floor(days)));
-  const end = new Date(Date.now() - 86_400_000);           // yesterday: today is partial
-  const start = new Date(end.getTime() - (d - 1) * 86_400_000);
-  const iso = (x: Date) => x.toISOString().slice(0, 10);
-  return `segments.date BETWEEN '${iso(start)}' AND '${iso(end)}'`;
+  const end = Date.now() - DAY;                            // yesterday: today is partial
+  return `segments.date BETWEEN '${isoDay(end - (d - 1) * DAY)}' AND '${isoDay(end)}'`;
 }
 
 /**
@@ -1755,6 +1746,9 @@ async function retryTransient<T>(fn: () => Promise<T>, safe: boolean): Promise<T
 
 /** Two decimals, for money and fractional conversions. */
 const round = (n: number) => Math.round(n * 100) / 100;
+const round1 = (n: number) => Math.round(n * 10) / 10;
+/** Change from b to a in percent; null with no base. */
+const pct = (a: number, b: number) => (b > 0 ? round(((a - b) / b) * 100) : null);
 
 /** Sum rows' cost, clicks and conversions per key (Google returns one row per segment); `add` sums any extra metrics. */
 function aggregate<T extends { cost: number; clicks: number; conversions: number }>(

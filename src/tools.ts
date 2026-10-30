@@ -10,7 +10,7 @@ import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./g
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice, type Service } from "./plans.js";
 import { DEMO_SITE } from "./demo.js";
 import { DEMO_PROPERTY } from "./ga4.js";
-import { isDemo, type Account, type UserSession } from "./session.js";
+import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
 
 const SERVER_NAME = "camberstack";
@@ -88,10 +88,14 @@ const siteUrl = z.string().min(1).describe("Search Console property exactly as s
 const days = z.number().int().min(1).max(365).default(30).describe("Look-back window in days, ending yesterday");
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /** Window options shared by the Search Console tools: a day count, or exact dates; optionally Google's not-yet-final recent days. */
-const scWindowShape = (defaultDays: number, maxDays: number) => ({
-  days: z.number().int().min(1).max(maxDays).default(defaultDays).describe("Look-back window in days, ending 3 days ago (yesterday with fresh)"),
+type ScArgs = { site_url: string } & ScWindowOpts;
+const exactDates = {
   start_date: ymd.optional().describe("Exact first day, YYYY-MM-DD. Pass with end_date to use exact dates instead of days"),
   end_date: ymd.optional().describe("Exact last day, YYYY-MM-DD"),
+};
+const scWindowShape = (defaultDays: number, maxDays: number) => ({
+  days: z.number().int().min(1).max(maxDays).default(defaultDays).describe("Look-back window in days, ending 3 days ago (yesterday with fresh)"),
+  ...exactDates,
   fresh: z.boolean().default(false).describe("Include the last 2-3 days, which Google is still filling in (they read low). Use to check something from the last few days"),
 });
 const merchantId = z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID, digits only (from merchant_accounts)");
@@ -99,8 +103,7 @@ const propertyId = z.string().regex(/^\d+$/, "digits only").describe("GA4 proper
 /** Window options shared by the Google Analytics tools: a day count ending yesterday, or exact dates. */
 const gaWindowShape = {
   days: z.number().int().min(1).max(540).default(28).describe("Look-back window in days, ending yesterday"),
-  start_date: ymd.optional().describe("Exact first day, YYYY-MM-DD. Pass with end_date to use exact dates instead of days"),
-  end_date: ymd.optional().describe("Exact last day, YYYY-MM-DD"),
+  ...exactDates,
 };
 type GaWindow = { days: number; start_date?: string; end_date?: string };
 const excludeQueryRegex = z.string().min(1).max(500).optional()
@@ -327,7 +330,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       + "number of days before it, with the change. Site-wide totals, more complete than adding up per-query rows. Changes nothing.",
     inputSchema: { site_url: siteUrl, ...scWindowShape(28, 240) },
     annotations: read,
-  }, ({ site_url, ...o }: { site_url: string; days: number; start_date?: string; end_date?: string; fresh: boolean }) => session().searchConsoleSummary(site_url, o));
+  }, ({ site_url, ...o }: ScArgs) => session().searchConsoleSummary(site_url, o));
 
   tool("search_console_performance", {
     title: "Search Console performance",
@@ -346,7 +349,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       limit: z.number().int().min(1).max(1000).default(50).describe("Most rows to return"),
     },
     annotations: read,
-  }, ({ site_url, ...o }: { site_url: string; days: number; start_date?: string; end_date?: string; fresh: boolean; dimensions: string[];
+  }, ({ site_url, ...o }: ScArgs & { dimensions: string[];
     query_contains?: string; page_contains?: string; query_regex?: string; exclude_query_regex?: string; page_regex?: string; limit: number }) =>
     session().searchConsolePerformance(site_url, o));
 
@@ -360,7 +363,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       limit: z.number().int().min(1).max(200).default(25).describe("Most rows in each list"),
     },
     annotations: read,
-  }, ({ site_url, ...o }: { site_url: string; days: number; start_date?: string; end_date?: string; fresh: boolean; exclude_query_regex?: string; min_impressions: number; limit: number }) =>
+  }, ({ site_url, ...o }: ScArgs & { exclude_query_regex?: string; min_impressions: number; limit: number }) =>
     session().searchConsoleTrend(site_url, o));
 
   tool("search_console_opportunities", {
@@ -372,7 +375,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       limit: z.number().int().min(1).max(200).default(25).describe("Most rows in each list"),
     },
     annotations: read,
-  }, ({ site_url, ...o }: { site_url: string; days: number; start_date?: string; end_date?: string; fresh: boolean; exclude_query_regex?: string; limit: number }) =>
+  }, ({ site_url, ...o }: ScArgs & { exclude_query_regex?: string; limit: number }) =>
     session().searchConsoleOpportunities(site_url, o));
 
   tool("search_console_inspect_urls", {
