@@ -216,11 +216,21 @@ export class DemoAds {
       case "conversion_action":
         return CONVERSION_ACTIONS.map((a) => ({ conversionAction: { ...a, resourceName: `customers/${DEMO_CID}/conversionActions/${a.id}` } }));
       case "campaign_criterion":
-        return s.negatives.map((n) => ({
+        return [...s.negatives.map((n) => ({
           campaign: camp(n.campaign),
           campaignCriterion: { resourceName: n.resourceName, criterionId: n.resourceName.split("~")[1], type: "KEYWORD", negative: true,
             keyword: { text: n.text, matchType: n.match } },
-        }));
+        })),
+        // Every campaign has these three, as on a real account.
+        ...CAMPAIGNS.flatMap((c) => (["DESKTOP", "MOBILE", "TABLET"] as const).map((type, i) => ({ campaign: camp(c.id),
+          campaignCriterion: { resourceName: `customers/${DEMO_CID}/campaignCriteria/${c.id}~${30000 + i}`, criterionId: String(30000 + i), type: "DEVICE", negative: false, device: { type } } })))];
+      // One sample responsive search ad per ad group, so ad changes can be tried; the sample reports don't change.
+      case "ad_group_ad":
+        return AD_GROUPS.map((g, i) => ({ campaign: camp(g.campaign), adGroup: group(g.id), adGroupAd: {
+          resourceName: `customers/${DEMO_CID}/adGroupAds/${g.id}~${6001 + i}`, status: "ENABLED", policySummary: { reviewStatus: "REVIEWED", approvalStatus: "APPROVED" },
+          ad: { id: String(6001 + i), type: "RESPONSIVE_SEARCH_AD", finalUrls: ["https://northwindplumbing.example/"], responsiveSearchAd: {
+            headlines: [{ text: g.name.slice(0, 30) }, { text: "Northwind Plumbing" }, { text: "Licensed Local Plumbers" }],
+            descriptions: [{ text: "Fast, upfront pricing from licensed plumbers." }, { text: "Call now or book online today." }] } } } }));
       // Sitelinks a build adds are simulated, so the sample has none to delete.
       case "campaign_asset":
       case "shared_set":
@@ -237,7 +247,7 @@ export class DemoAds {
         return Object.entries(LANGUAGES).map(([id, name]) => ({ languageConstant: { resourceName: `languageConstants/${id}`, id, name } }));
       default:
         throw new Error(`The demo account supports these GAQL resources: customer, campaign, ad_group, keyword_view, ad_group_criterion, `
-          + `search_term_view, campaign_criterion, campaign_asset, shared_set, shared_criterion, campaign_shared_set, user_list, recommendation, conversion_action, geo_target_constant, language_constant. "${resource}" isn't one of them.`);
+          + `search_term_view, campaign_criterion, ad_group_ad, campaign_asset, shared_set, shared_criterion, campaign_shared_set, user_list, recommendation, conversion_action, geo_target_constant, language_constant. "${resource}" isn't one of them.`);
     }
   }
 

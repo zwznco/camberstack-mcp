@@ -1700,6 +1700,26 @@ describe("OAuth + MCP end to end", () => {
     const end = (await call(token, "run_gaql", { customer_id: "0000000001", query: endQ })).json;
     expect(end.rows[0].campaign.endDateTime).toBe("2037-12-30 23:59:59");  // undo removed it
 
+    // Every ad and device change can be tried on the demo, which is where reviewers are sent.
+    const tryIt = async (change: object) => {
+      const r = await call(token, "propose_changes", { customer_id: "0000000001", changes: [change] });
+      expect(r.text, JSON.stringify(change)).not.toContain("supports these GAQL resources");
+      expect(r.isError, r.text).toBe(false);
+      const done = (await call(token, "apply_changes", { proposal_id: r.json.proposal_id })).json;
+      expect(done.status, JSON.stringify(done)).toBe("applied");
+      return r.json.proposal_id as string;
+    };
+    await tryIt({ type: "pause_ad", ad_group_id: "3001", ad_id: "6001" });
+    await tryIt({ type: "add_responsive_search_ad", ad_group_id: "3002", ad: { headlines: ["One", "Two", "Three"], descriptions: ["First line.", "Second line."], final_url: "https://northwindplumbing.example/" } });
+    const edited = await tryIt({ type: "edit_responsive_search_ad", ad_id: "6003", path1: "repairs" });
+    expect((await call(token, "undo_changes", { proposal_id: edited })).isError).toBe(false);
+    await tryIt({ type: "set_device_bid", campaign_id: "2002", device: "MOBILE", percent: -20 });
+    await tryIt({ type: "set_ai_max", campaign_id: "2002", ai_max: true });
+    await tryIt({ type: "set_ad_schedule", campaign_id: "2002", schedule: [{ day: "MONDAY", start_hour: 8, end_hour: 20 }] });
+    await tryIt({ type: "add_campaign_assets", campaign_id: "2002", callouts: ["Same-day service"] });
+    await tryIt({ type: "set_conversion_settings", conversion_action_id: "5002", default_value: 40 });
+    await tryIt({ type: "delete_ad", ad_group_id: "3004", ad_id: "6004" });
+
     // Deleting on the demo: permanent ones say so and have no undo; a negative comes back.
     const del = (await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "delete_campaign", campaign_id: "2003" }] })).json;
     expect(del.summary).toContain("can't be undone");
