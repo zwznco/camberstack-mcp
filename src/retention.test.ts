@@ -4,6 +4,19 @@ import { encrypt } from "./crypto.js";
 import { ACCOUNT_DAYS, GRANT_DAYS, retain } from "./retention.js";
 
 describe("retention", () => {
+  it("deletes a removed user's saved Merchant Center changes, unless someone else still uses that account", async () => {
+    const db = openDb(":memory:"), key = Buffer.alloc(32, 7), t = now(), day = 86400;
+    const add = (id: string, seenDaysAgo: number) => db.prepare("INSERT INTO users (id, google_sub, email, enc_refresh, created_at, last_seen_at) VALUES (?, ?, ?, NULL, 1, ?)")
+      .run(id, `sub-${id}`, `${id}@example.com`, t - seenDaysAgo * day);
+    const call = (id: string, account: string) => db.prepare("INSERT INTO tool_calls (at, user_id, customer_id, tool, ok, ms, bytes) VALUES (?, ?, ?, 'merchant_report', 1, 1, 1)").run(t, id, account);
+    const saved = (account: string) => db.prepare("INSERT INTO merchant_overrides (account_id, product, attrs, updated_at) VALUES (?, 'p', '{}', 1)").run(account);
+    add("gone", ACCOUNT_DAYS + 1); add("active", 1);
+    call("gone", "mc:1"); call("gone", "mc:2"); call("active", "mc:2");
+    saved("1"); saved("2"); saved("demo:gone");
+    await retain({ db, encryptionKey: key, internalEmails: new Set() });
+    expect((db.prepare("SELECT account_id FROM merchant_overrides").all() as { account_id: string }[]).map((r) => r.account_id)).toEqual(["2"]);
+  });
+
   it("drops idle grants at six months and idle accounts at two years, never paying or internal ones", async () => {
     const db = openDb(":memory:"), key = Buffer.alloc(32, 7), t = now(), day = 86400;
     const add = (id: string, seenDaysAgo: number, extra: { plan?: string; stripe_sub?: string; email?: string } = {}) => {

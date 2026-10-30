@@ -269,7 +269,17 @@ const CHANGES: [string, string][] = [
   ["Add or remove a campaign's locations and languages; in-location-only or also interested", "Restores the previous targeting"],
   ["Switch bid strategy: manual CPC, maximize clicks, maximize conversions", "Restores the previous strategy"],
   ["Set a campaign's tracking URL suffix", "Restores the previous suffix"],
-  ["Create a conversion action, or set how many conversions a click can count", "Removes it / restores the previous setting"],
+  ["Create a conversion action, or set how many conversions a click can count, or its value, window and attribution", "Removes it / restores the previous setting"],
+  ["Remove a conversion action", "None: Google can't restore it, so it warns you first (a GA4 import can be imported again)"],
+  ["Edit a responsive search ad in place: it keeps its stats", "Restores the previous text and link"],
+  ["Negative keywords on an ad group, and shared negative lists", "Removes them, or restores the list"],
+  ["Ad schedules and device bids", "Restores the previous settings"],
+  ["Add callouts, structured snippets, a business name, logos and images", "Takes them off again"],
+  ["Turn AI Max and Google-written text on or off", "Restores the previous settings"],
+  ["Create a remarketing list of site visitors and add it to a campaign in observation (no customer data)", "Removes the list / takes it off"],
+  ["Delete keywords, negatives or sitelinks", "Adds them back; a sitelink comes back as a new one, so its history restarts"],
+  ["Delete an ad, ad group, campaign or shared negative list", "None: these can't be restored, so each warns you first"],
+  ["Apply or dismiss one of Google's recommendations", "None: applying warns you first, and Google picks the details"],
 ];
 
 /** Two-part rows: the thing, then a labelled line under it ("Undo: …", "Reads: …"). */
@@ -361,10 +371,10 @@ export function homePage(baseUrl: string): string {
 
 <section class="sec" id="changes"><div class="wrap">
 <div class="sec-head"><p class="kicker">Google Ads</p><h2>What it can change</h2>
-<p class="muted">Every change is a proposal you approve, and every one has an undo. A new campaign is always created paused, so building it and letting it spend are two separate approvals.</p></div>
+<p class="muted">Every change is a proposal you approve, and all but a few have an undo: the ones Google can't reverse warn you first. A new campaign is always created paused, so building it and letting it spend are two separate approvals.</p></div>
 ${pairList(CHANGES, "Undo")}
 <p class="muted small">Besides the warnings above, a proposal also warns before removing a campaign's last location.
-It cannot delete anything you built, touch billing, or edit anything outside Google Ads and the <a href="#analytics">Google Analytics setup changes</a> below.
+It deletes only what you approve, and it cannot touch billing or edit anything outside Google Ads and the <a href="#analytics">Google Analytics setup changes</a> below.
 Any question beyond these tools is answered with read-only queries. <a href="/tools">Every tool and what it can do</a>;
 the code is <a href="${SOURCE_URL}">open source</a>.</p>
 </div></section>
@@ -981,7 +991,7 @@ Using one more account than your plan covers returns a <code>plan_limit</code> e
 a personal upgrade link valid for 7 days. Undo, change history and billing are never limited. Ask <em>"What plan am I on?"</em> to see your usage.</p>
 
 <h2 id="access">Google API access and your data</h2>
-<p>Camberstack accesses the Google Ads API under its own developer-token access, with the user's Google OAuth consent. Search Console is read
+<p>Camberstack accesses the Google Ads API under its own approved API access, with the user's Google OAuth consent. Search Console is read
 through Google's Search Console API under the same consent, with a read-only scope. Camberstack is independent and not affiliated with Google.</p>
 <p>It stores your Google email, an encrypted Google refresh token, and your proposals with their results so you can undo them. Reports and query results are not stored.
 Details in the <a href="/privacy">privacy policy</a>.</p>
@@ -1043,6 +1053,7 @@ Humans at Camberstack do not read your Google data unless you ask us to for supp
 <tr><td>A random value in a cookie while you add a Google service (Google Ads, Search Console, Google Analytics or Merchant Center) to your connection</td><td>Check that the browser finishing Google's consent is the one that opened your link</td><td>The consent finishes, or 10 minutes</td></tr>
 <tr><td>Tokens we issue to your AI app (stored as hashes)</td><td>Authenticate your AI app</td><td>Expiry (1 hour access, 90 days refresh) or disconnect</td></tr>
 <tr><td>Proposals: the changes requested, their summary and results</td><td>Show what changed and let you undo it</td><td>You ask us to delete them, or two years without use (not while on a paid plan)</td></tr>
+<tr><td>Merchant Center product changes you approve: the values you set for a product, and for products you create through Camberstack, their details (such as title, price and link)</td><td>Google can't return these, so we keep them to show what's in place and to undo a change</td><td>You remove the change or the product, ask us to delete them, or two years without use (not while on a paid plan)</td></tr>
 <tr><td>Feedback you send from camberstack.io/feedback: your message, what it's about, and the Google email you signed in with</td><td>Read it and reply to you</td><td>You ask us to delete it</td></tr>
 <tr><td>A sign-in session for the feedback page (a cookie; we store only its hash)</td><td>Know who a message is from, so we can reply and keep spam out</td><td>1 day, or until you sign out</td></tr>
 <tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
@@ -1057,7 +1068,7 @@ When the server hits a bug, the error and where in the code it happened go to an
 <ul>
 <li><strong>When you stop using Camberstack:</strong> "without use" means no tool call from your AI app and no new connection. After six months of it we revoke and delete your Google token (Google stops honoring an unused one after six months anyway); connect again to carry on. After two years we delete your account, proposals and usage log.</li>
 <li><strong>When you disconnect:</strong> the <code>disconnect</code> tool revokes our access at Google and immediately deletes your Google token and every token we issued to your AI app. If you remove Camberstack at Google instead, the token stops working at once and we delete it the next time it is tried, or after six months at the latest. Your account and change history stay until you ask us to delete them.</li>
-<li><strong>When you ask us to delete your data:</strong> email <a href="mailto:${CONTACT}">${CONTACT}</a> from your Google account's address and within 30 days we delete your Google token, account, proposals, usage log and feedback.</li>
+<li><strong>When you ask us to delete your data:</strong> email <a href="mailto:${CONTACT}">${CONTACT}</a> from your Google account's address and within 30 days we delete your Google token, account, proposals, Merchant Center product changes, usage log and feedback.</li>
 <li><strong>Backups:</strong> daily backups of our database hold the stored items above. They are used only to recover from a failure and expire after 35 days at most, so data you delete leaves them within 35 days of its deletion. A Google token in a backup stays encrypted, and stops working once revoked.</li>
 </ul>
 
@@ -1107,7 +1118,7 @@ None of your Google Ads, Search Console, Google Analytics or Merchant Center dat
 <li><strong>Access control:</strong> only Camberstack's operator can sign in to the server, the database and the backups. Each person's data is tied to their own Google account, and the service acts only on the accounts that Google account can reach.</li>
 <li><strong>Isolation:</strong> the application runs as an unprivileged user in its own container, and is not exposed to the internet directly: requests reach it only through a rate-limited HTTPS proxy.</li>
 <li><strong>Protected backups:</strong> backups are checked for integrity after every run. The encryption key is backed up separately, itself encrypted to a private key that is not on the server, and the off-site copy sits in a locked bucket that the server can't alter or delete.</li>
-<li><strong>Safeguards on changes:</strong> changes are validated with Google before you approve them, are limited to the operations listed on the homepage, and are logged so they can be undone.</li>
+<li><strong>Safeguards on changes:</strong> changes are validated with Google before you approve them, are limited to the operations listed on the homepage, and are logged so they can be undone, apart from the few Google can't reverse, which warn you first.</li>
 </ul>
 
 <h2>Children</h2>
@@ -1148,7 +1159,7 @@ ${fp.kind === "accounts" ? "" : `<h2>Plus · ${PLUS_PRICE_LABEL}</h2>
 <h2>Agency · ${AGENCY_PRICE_LABEL}</h2>
 <p>${all} <strong>up to ${AGENCY_ACCOUNTS} Google Ads accounts</strong>. Cancel any time.</p>
 <h2>On every plan</h2>
-<p>Nothing changes until you approve the proposal, every applied change can be undone, and undo and change history always
+<p>Nothing changes until you approve the proposal, applied changes can be undone apart from the few Google can't reverse, which warn you first, and undo and change history always
 work. Plans count Google Ads accounts used in the last ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) accounts and the demo account never count.</p>
 <p class="muted">Your current plan is on your account page at camberstack.io/account.</p>
 </div>`,

@@ -2505,7 +2505,7 @@ describe("OAuth + MCP end to end", () => {
     const html = await d.text();
     expect(html).toContain("<h1>Camberstack documentation</h1>");
     expect(html).toContain(`${base}/mcp`);
-    expect(html).toContain("under its own developer-token access, with the user's Google OAuth consent");
+    expect(html).toContain("under its own approved API access, with the user's Google OAuth consent");
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/docs`);
     expect(await (await fetch(`${base}/llms.txt`)).text()).toContain(`${base}/docs`);
     const prm = await (await fetch(`${base}/.well-known/oauth-protected-resource`)).json();
