@@ -98,8 +98,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };
   const mcpUrl = new URL(`${cfg.baseUrl}/mcp`);
-  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service, service_wanted)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   const analytics = new Analytics({ matomoUrl: cfg.matomo?.url ?? "", siteId: cfg.matomo?.siteId ?? "",
     token: cfg.matomo?.token ?? "", site: cfg.baseUrl, fetch: overrides.analyticsFetch });
@@ -114,7 +114,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   // Before every public route: the admin host serves only the admin site.
   const admin = mountAdmin(app, {
     db, google: cfg.google, baseUrl: cfg.baseUrl, adminUrl: cfg.adminUrl, adminEmails: cfg.adminEmails,
-    internalEmails, announcements, fetch: overrides.fetch,
+    internalEmails, announcements, freeOneServiceFrom: cfg.freeOneServiceFrom, fetch: overrides.fetch,
   });
 
   // Gemini (Spark custom apps) registers asking for client_secret_post, takes the secret, then its
@@ -255,7 +255,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     // Admins only, not PRO_EMAILS: that holds the directory reviewers' login, who mustn't meet an unverified scope.
     const merchant = merchantOn() || (!!email && cfg.adminEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
-      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null);
+      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.serviceWanted ?? null);
     }, [], { chatgpt, merchant, stuck: (tool, error) => (!userId || !stuckNow(db, userId, tool, error) ? null
       : error.startsWith(UNSUPPORTED_PREFIX)
         ? `Tell the user Camberstack can't do this yet, and that they can ask for it at ${cfg.baseUrl}/feedback: `

@@ -302,6 +302,14 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
   }
 }
 
+/**
+ * Google's Merchant API refused a call. `ours` = Camberstack's side is broken for everyone (developer registration), not the
+ * user's request: Bugsink gets that and 5xx, as with AdsApiError, and the rest stay out.
+ */
+export class MerchantApiError extends Error {
+  constructor(message: string, readonly status: number, readonly ours = false) { super(message); }
+}
+
 export class AdsApiError extends Error {
   constructor(public status: number, public body: string) {
     super(AdsApiError.summarize(status, body));

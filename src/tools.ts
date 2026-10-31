@@ -29,6 +29,10 @@ const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
   .replace("propose_changes → show", "the propose_<operation> tool for that change (propose_pause_campaign, propose_set_daily_budget, …) → show")
   .replace("reversed with undo_changes", "reversed with propose_undo (a proposal like any other: approve, then apply_changes)");
 
+/** Added where the Merchant Center tools are listed: a store owner may have no Google Ads account at all. */
+const MERCHANT_INSTRUCTIONS = `
+Camberstack also connects Google Merchant Center: for products and Shopping, start with merchant_accounts, not list_accounts. Merchant Center needs no Google Ads account.`;
+
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
 const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
   ...[...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES].map((c) => `propose_${c.shape.type.value}`)]);
@@ -132,6 +136,8 @@ interface ToolCall {
   queryShape?: string | null;
   /** servicesOf, comma-joined, on a call that ran (null when it used none, or was refused). */
   service?: string | null;
+  /** servicesOf on a call a notice stopped: what it was after, for reading the paywall by service. Never counts as use. */
+  serviceWanted?: string | null;
 }
 
 /** What the /tools page and llms.txt show about each tool; filled as buildServer registers them. */
@@ -139,7 +145,7 @@ export interface ToolDoc { name: string; title: string; description: string; inp
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
   o: { chatgpt?: boolean; merchant?: boolean; stuck?: (tool: string, error: string) => string | null } = {}): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + (o.merchant ? MERCHANT_INSTRUCTIONS : "") });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
       const t0 = Date.now();
@@ -182,6 +188,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           ms: Date.now() - t0, bytes: out.content[0]!.text.length,
           queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
           service: services.length && !("isError" in out) && !notice ? services.join(",") : null,
+          serviceWanted: services.length && notice ? services.join(",") : null,
         });
       } catch { /* logging must never break a tool */ }
       release();  // after the log: the account now counts as used from tool_calls instead
@@ -520,11 +527,12 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         limit: z.number().int().min(1).max(200).default(25).describe("Most products to return") },
       annotations: read,
     }, async ({ customer_id, account_id, ...o }: { customer_id: string; account_id: string; days: number; limit: number }) => {
-      // The Ads account is gated and logged by wrap; the Merchant Center one here, in its own row, or it would never count as used.
+      // The Ads account is gated and logged by wrap; the Merchant Center one here, or it would never count as used. Under
+      // its own name: it's a marker, not a second call, so per-tool counts stay right.
       const release = await session().checkAccount(mcTarget(account_id));
       try {
         const out = await session().merchantAdSpend(customer_id, account_id, o);
-        log({ tool: "merchant_ad_spend", customerId: mcTarget(account_id), ok: true, error: null, ms: 0, bytes: 0, queryShape: null, service: null });
+        log({ tool: "merchant_ad_spend.account", customerId: mcTarget(account_id), ok: true, error: null, ms: 0, bytes: 0, queryShape: null, service: null });
         return out;
       } finally { release(); }
     });

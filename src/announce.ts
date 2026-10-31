@@ -98,7 +98,7 @@ Camberstack can now work with your Google Merchant Center products, alongside yo
 
 The first time you ask, Camberstack gives you a link that adds Merchant Center to your connection, no reconnecting. Product changes wait for your approval, your feed is never edited, and each change can be undone.
 
-Your AI app may need to reload Camberstack's tools first. In ChatGPT: Settings → Connectors → Camberstack → Refresh. In Claude: start a new chat.
+If your AI can't see it yet, reload Camberstack's tools. In Claude: start a new chat. In ChatGPT, only if you added Camberstack as a custom connector: Settings → Connectors → Camberstack → Refresh.
 
 What each plan covers: https://camberstack.io/plans
 

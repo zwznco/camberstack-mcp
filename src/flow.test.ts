@@ -2697,6 +2697,9 @@ describe("OAuth + MCP end to end", () => {
       // Paid plans cover all three.
       db.prepare("UPDATE users SET plan = 'pro' WHERE id = ?").run(uid);
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
+      // A stop records what the call was after, and still doesn't count as use.
+      expect(db.prepare("SELECT service, service_wanted w FROM tool_calls WHERE error LIKE 'Service limit:%' ORDER BY id DESC LIMIT 1").get())
+        .toEqual({ service: null, w: expect.stringMatching(/\S/) });
     } finally {
       deps.freeOneServiceFrom = undefined;
       deps.plusAvailable = true;
@@ -3024,6 +3027,21 @@ describe("Merchant Center plan allowance", () => {
       const plan = (await call(owner, "billing")).json;
       expect(plan.merchant_center_accounts_in_use).toEqual(["111"]);
       expect(plan.accounts_in_use).not.toContain("mc:111");
+
+      // A login with more Merchant Center accounts than the plan covers: the user picks before the first call takes one.
+      const id = (db.prepare("SELECT id FROM users WHERE email = 'owner@example.com'").get() as { id: string }).id;
+      db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id LIKE 'mc:%'").run(id);
+      const factory = deps.merchantFactory!;
+      deps.merchantFactory = (u) => ({ ...factory(u), accounts: async () => [{ account_id: "111", name: "One" }, { account_id: "222", name: "Two" }] });
+      try {
+        const asked = (await report("222")).json;
+        expect(asked.notice).toContain("Account choice: this plan covers 1 Merchant Center account");
+        expect(asked.accounts.map((a: { customer_id: string }) => a.customer_id)).toEqual(["mc:111", "mc:222"]);
+        expect((await call(owner, "switch_account", { customer_id: "mc:222" })).isError).toBe(false);
+        const after = await report("222");
+        expect(after.isError).toBe(false);
+        expect(after.text).not.toContain("Account choice");
+      } finally { deps.merchantFactory = factory; }
     } finally {
       db.prepare("UPDATE users SET plan = ?, stripe_customer = ?, stripe_sub = ? WHERE email = 'owner@example.com'").run(was.plan, was.stripe_customer, was.stripe_sub);
     }
@@ -3035,7 +3053,7 @@ describe("Merchant Center issues by ad spend (demo)", () => {
     const owner = await merchantOwner();
     const r = (await call(owner, "merchant_ad_spend", { customer_id: "000-000-0001", account_id: "000000001", days: 30 })).json;
     // Both accounts log, or the Merchant Center one never counts against its allowance.
-    expect((db.prepare("SELECT customer_id c FROM tool_calls WHERE tool = 'merchant_ad_spend' ORDER BY rowid DESC LIMIT 2").all() as { c: string }[]).map((x) => x.c).sort())
+    expect((db.prepare("SELECT customer_id c FROM tool_calls WHERE tool LIKE 'merchant_ad_spend%' ORDER BY rowid DESC LIMIT 2").all() as { c: string }[]).map((x) => x.c).sort())
       .toEqual(["0000000001", "mc:000000001"]);
     expect(r.note).toMatch(/demo/i);
     expect(r.shopping_ad_cost).toBeGreaterThan(0);

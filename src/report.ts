@@ -7,7 +7,7 @@ import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
-import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
+import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
 /**
@@ -24,7 +24,12 @@ export interface ReportOptions {
   days: number;
   /** Emails left out of every number (the operator's and testers' own accounts). */
   exclude: string[];
+  /** FREE_ONE_SERVICE's start, which splits existing from new signups in the paywall read. Unset or 0: its first notice. */
+  freeOneServiceFrom?: number;
 }
+
+/** A tool_calls row on a real Google Ads account: not the demo, not the Google Analytics or Merchant Center markers. */
+const ON_ADS = `c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}') AND c.customer_id NOT LIKE 'mc:%'`;
 
 /**
  * Where a window of `days` starts: whole UTC days ending today, so 1 is today since 00:00 UTC and 7 is today plus the six
@@ -104,7 +109,7 @@ export function buildReport(db: DB, o: ReportOptions) {
          (SELECT count(*) FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied') applied,
          -- Used as the plan counts it (session.ts usage): an account a call was stopped on, like a switch notice, isn't used.
          (SELECT count(DISTINCT customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL
-            AND c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}')) used_accounts, u.ads_accounts, u.ads_managers,
+            AND ${ON_ADS}) used_accounts, u.ads_accounts, u.ads_managers,
          (SELECT ${client} FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id
             WHERE c.user_id = u.id ORDER BY c.at DESC LIMIT 1) client
        FROM {U} u ORDER BY coalesce(u.last_seen_at, u.created_at) DESC LIMIT 200`),
@@ -132,7 +137,7 @@ export function buildReport(db: DB, o: ReportOptions) {
     signupsHourly: o.days === 1 ? q<{ hour: number; n: number }>(
       `SELECT cast(strftime('%H', created_at, 'unixepoch') AS int) hour, count(*) n FROM {U} u WHERE created_at >= ? GROUP BY 1 ORDER BY 1`, since) : [],
     retention: retention(q),
-    paywall: paywall(q),
+    paywall: paywall(q, o.freeOneServiceFrom),
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
@@ -159,7 +164,7 @@ export function buildReport(db: DB, o: ReportOptions) {
     sharing: q<{ kind: "ad account" | "manager"; customer_id: string; users: string; last: number | null }>(
       `SELECT 'ad account' kind, c.customer_id, json_group_array(DISTINCT json_object('id', u.id, 'email', u.email, 'plan', u.plan)) users, max(c.at) last
          FROM tool_calls c JOIN {U} u ON u.id = c.user_id
-         WHERE c.ok = 1 AND c.customer_id IS NOT NULL AND c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}')
+         WHERE c.ok = 1 AND c.customer_id IS NOT NULL AND ${ON_ADS}
          GROUP BY c.customer_id HAVING count(DISTINCT c.user_id) > 1
        UNION ALL
        SELECT 'manager', m.value, json_group_array(DISTINCT json_object('id', u.id, 'email', u.email, 'plan', u.plan)), max(u.ads_accounts_at)
@@ -175,7 +180,7 @@ export function buildReport(db: DB, o: ReportOptions) {
         used30: number; gate_hits: number; last_hit: number | null; last_seen: number | null }>(
       `SELECT u.id, u.email, u.plan, u.ads_accounts reach, u.ads_managers managers, u.ads_active active, u.last_seen_at last_seen,
          (SELECT count(DISTINCT c.customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL
-            AND c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}') AND c.at >= ?) used30,
+            AND ${ON_ADS} AND c.at >= ?) used30,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND (c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%')) gate_hits,
          (SELECT max(c.at) FROM tool_calls c WHERE c.user_id = u.id AND (c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%')) last_hit
        FROM {U} u WHERE u.plan != 'agency'`, now() - ACCOUNT_WINDOW_DAYS * 86400)
@@ -230,25 +235,36 @@ function retention(q: <T>(sql: string, ...p: unknown[]) => T[]) {
 }
 
 /**
- * The one-service paywall (FREE_ONE_SERVICE; projects/camberstack/PRICING-TEST.md), from the first Service notice on, which is
- * when the flag went on. Users split into those who signed up before it (they lost all three) and after (Free was always one
- * service), and by whether they use ChatGPT, whose connections get /plans instead of an upgrade link. Each step counts users
- * since the switch-on: stopped by `Service limit:`, emailed about it, viewed /plans through their personal link, clicked a
- * personal upgrade link (any source), and paid. Empty until the flag has stopped someone.
+ * The one-service paywall (FREE_ONE_SERVICE; projects/camberstack/PRICING-TEST.md), from switch-on: the flag's date, or the first
+ * Service notice. Users split into those who signed up before it (they lost all three) and after (Free was always one service),
+ * by whether they use ChatGPT, whose connections get /plans instead of an upgrade link, and by whether Merchant Center was
+ * involved (used, or asked for in a stop), which brings a different audience. Each step counts users since the switch-on: stopped
+ * by `Service limit:`, emailed about it, viewed /plans through their personal link, clicked a personal upgrade link (any source),
+ * and paid. `offered` and `offered_paid` are the test's bar: stopped and reached the offer, and of those, paid. `applied` is its
+ * guardrail. Complimentary plans are left out: they can't be stopped. Empty until the flag has stopped someone.
  */
-function paywall(q: <T>(sql: string, ...p: unknown[]) => T[]) {
-  const on = q<{ at: number | null }>(
+function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
+  const first = q<{ at: number | null }>(
     `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${SERVICE_LIMIT_PREFIX}%' OR c.error LIKE '${SERVICE_CHOICE_PREFIX}%'`)[0]?.at;
-  if (!on) return { since: null, rows: [] };
+  if (!first) return { since: null, rows: [] };
+  const on = from || first;
   const chatgpt = `EXISTS (SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = u.id
     AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%'))`;
   const ev = (kind: string) => `EXISTS (SELECT 1 FROM plan_events e WHERE e.user_id = u.id AND e.kind = '${kind}' AND e.at >= ${on})`;
-  const rows = q<{ existing: number; chatgpt: number; users: number; stopped: number; emailed: number; viewed: number; clicked: number; paid: number }>(
-    `SELECT u.created_at < ${on} existing, ${chatgpt} chatgpt, count(*) users,
-       sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%')) stopped,
-       sum(EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'service_limit')) emailed,
-       sum(${ev("plans_view")}) viewed, sum(${ev("upgrade_click")}) clicked, sum(${ev("paid")}) paid
-     FROM {U} u WHERE coalesce(u.last_seen_at, u.created_at) >= ${on} GROUP BY 1, 2 ORDER BY 1 DESC, 2 DESC`);
+  const merchant = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on}
+    AND (coalesce(c.service, '') LIKE '%merchant%' OR coalesce(c.service_wanted, '') LIKE '%merchant%'))`;
+  const stopped = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%')`;
+  const emailed = `EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'service_limit')`;
+  const offered = `(${stopped} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;
+  const rows = q<{ existing: number; chatgpt: number; merchant: number; users: number; stopped: number; emailed: number; viewed: number; clicked: number; paid: number;
+      offered: number; offered_paid: number; applied: number }>(
+    `SELECT u.created_at < ${on} existing, ${chatgpt} chatgpt, ${merchant} merchant, count(*) users,
+       sum(${stopped}) stopped, sum(${emailed}) emailed,
+       sum(${ev("plans_view")}) viewed, sum(${ev("upgrade_click")}) clicked, sum(${ev("paid")}) paid,
+       sum(${offered}) offered, sum(${offered} AND ${ev("paid")}) offered_paid,
+       sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}' AND p.applied_at >= ${on})) applied
+     FROM {U} u WHERE coalesce(u.last_seen_at, u.created_at) >= ${on} AND (u.plan = 'free' OR coalesce(u.stripe_sub, '') != '')
+     GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 DESC, 3 DESC`);
   return { since: on, rows };
 }
 
@@ -258,6 +274,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   [SEARCH_CONSOLE_SCOPE]: "Search Console",
   [ANALYTICS_SCOPE]: "GA4 read",
   [ANALYTICS_EDIT_SCOPE]: "GA4 edit",
+  [MERCHANT_SCOPE]: "Merchant Center",
 };
 export const permissionLabels = (scopes: string | null | undefined): string[] | null => {
   if (scopes == null) return null;

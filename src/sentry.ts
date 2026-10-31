@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/node";
-import { AdsApiError, NotGrantedError } from "./google.js";
+import { AdsApiError, MerchantApiError, NotGrantedError } from "./google.js";
 import { PlanLimitError } from "./plans.js";
 import { NotConnectedError } from "./session.js";
 
@@ -33,6 +33,7 @@ export function initErrorReporting(release: string): void {
  */
 export function isUnexpected(e: unknown): boolean {
   if (e instanceof AdsApiError) return e.status >= 500;
+  if (e instanceof MerchantApiError) return e.ours || e.status >= 500;
   if (e instanceof PlanLimitError || e instanceof NotGrantedError || e instanceof NotConnectedError) return false;
   return !(e instanceof Error && e.constructor === Error);
 }

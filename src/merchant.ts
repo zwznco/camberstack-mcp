@@ -13,7 +13,7 @@
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
-import { NotGrantedError, googleMessage, scopeMissing } from "./google.js";
+import { MerchantApiError, NotGrantedError, googleMessage, scopeMissing } from "./google.js";
 
 const API = "https://merchantapi.googleapis.com";
 export const DEMO_MERCHANT = "000000001";
@@ -139,10 +139,10 @@ export class MerchantClient implements Merchant {
       const msg = googleMessage(text);
       // Registered, but with no verified API developer on the registering account: also Camberstack's side (the operator's account).
       if (res.status === 401 && (/not registered|AUTH_GCP_NOT_REGISTERED/i.test(text) || /API_DEVELOPER/.test(text))) {
-        throw new Error("Camberstack's Merchant Center access isn't set up on Google's side yet (developer registration). This is Camberstack's "
-          + "to fix, not the user's: nothing is wrong with their account. The Google Ads, Search Console and Analytics tools work as usual.");
+        throw new MerchantApiError("Camberstack's Merchant Center access isn't set up on Google's side yet (developer registration). This is Camberstack's "
+          + "to fix, not the user's: nothing is wrong with their account. The Google Ads, Search Console and Analytics tools work as usual.", res.status, true);
       }
-      throw new Error(`Merchant API ${res.status}: ${msg}${merchantFix(res.status, msg)}`);
+      throw new MerchantApiError(`Merchant API ${res.status}: ${msg}${merchantFix(res.status, msg)}`, res.status);
     }
     return text ? JSON.parse(text) : {};
   }

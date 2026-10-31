@@ -236,6 +236,8 @@ export function openDb(dataDir: string): DB {
   if (!tc.has("query_shape")) db.exec("ALTER TABLE tool_calls ADD COLUMN query_shape TEXT");
   // Which Google service each call used (2026-10-28), for the one-service Free plan behind FREE_ONE_SERVICE.
   if (!tc.has("service")) db.exec("ALTER TABLE tool_calls ADD COLUMN service TEXT");
+  // Which services a call stopped by a notice was after (2026-10-31): `service` stays null there, or a stop would count as use.
+  if (!tc.has("service_wanted")) db.exec("ALTER TABLE tool_calls ADD COLUMN service_wanted TEXT");
   // The admin's email on an /account session opened through "Log in as user" (account.ts); NULL = the user's own.
   const ws = new Set((db.prepare("PRAGMA table_info(web_sessions)").all() as { name: string }[]).map((c) => c.name));
   if (!ws.has("impersonator")) db.exec("ALTER TABLE web_sessions ADD COLUMN impersonator TEXT");

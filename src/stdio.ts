@@ -11,6 +11,7 @@ import { buildServer } from "./tools.js";
 const CONNECT = "This stdio mode only lists Camberstack's tools. To use them, add the hosted server "
   + "https://camberstack.io/mcp to your MCP client and connect your Google Ads account (https://camberstack.io/docs).";
 
-buildServer(() => { throw new Error(CONNECT); })
+// Every tool, Merchant Center included: this is what the directories list.
+buildServer(() => { throw new Error(CONNECT); }, undefined, undefined, { merchant: true })
   .connect(new StdioServerTransport())
   .catch((e) => { console.error(e); process.exit(1); });

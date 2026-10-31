@@ -86,9 +86,16 @@ describe("buildReport", () => {
     const p = buildReport(db, { days: 7, exclude: [] }).paywall;
     expect(p.since).toBe(on);
     expect(p.rows).toEqual([
-      { existing: 1, chatgpt: 0, users: 1, stopped: 1, emailed: 0, viewed: 0, clicked: 1, paid: 1 },
-      { existing: 0, chatgpt: 1, users: 1, stopped: 1, emailed: 1, viewed: 1, clicked: 0, paid: 0 },
+      { existing: 1, chatgpt: 0, merchant: 0, users: 1, stopped: 1, emailed: 0, viewed: 0, clicked: 1, paid: 1, offered: 1, offered_paid: 1, applied: 0 },
+      { existing: 0, chatgpt: 1, merchant: 0, users: 1, stopped: 1, emailed: 1, viewed: 1, clicked: 0, paid: 0, offered: 1, offered_paid: 0, applied: 0 },
     ]);
+    // A stop that asked for Merchant Center splits them out, a complimentary plan leaves the read, and the flag's date sets existing vs new.
+    db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, ok, error, ms, bytes, service_wanted) VALUES (?, 'gptnew', 'gpt', 'merchant_report', 1, 'Service limit: x', 1, 1, 'merchant')").run(t - 60);
+    u.run("comp", "g4", "c@x.com", t - 20 * 86400, t);
+    db.prepare("UPDATE users SET plan = 'plus' WHERE id = 'comp'").run();
+    const split = buildReport(db, { days: 7, exclude: [], freeOneServiceFrom: t - 2 * 86400 }).paywall;
+    expect(split.since).toBe(t - 2 * 86400);
+    expect(split.rows.map((r) => [r.existing, r.chatgpt, r.merchant, r.users])).toEqual([[1, 0, 0, 1], [0, 1, 1, 1]]);
   });
 
   it("counts signups by hour today and by day otherwise, and retention by weeks since each user's own signup", () => {

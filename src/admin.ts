@@ -27,6 +27,8 @@ export interface AdminDeps {
   adminEmails: Set<string>;
   /** Always left out of the numbers (operator + testers: ADMIN_EMAILS, PRO_EMAILS). */
   internalEmails: Set<string>;
+  /** FREE_ONE_SERVICE's start, for the paywall read. */
+  freeOneServiceFrom?: number;
   /** Announcement emails (announce.ts); unset = no Announcements page. */
   announcements: Announcements;
   fetch?: typeof fetch;
@@ -65,7 +67,7 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
   // (ADMIN_EMAILS, PRO_EMAILS) are always left out. ?all=1 lists every user on /users, whenever last seen.
   const view = (req: Request) => {
     const days = [1, 7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
-    const report = buildReport(d.db, { days, exclude: [...d.internalEmails] });
+    const report = buildReport(d.db, { days, exclude: [...d.internalEmails], freeOneServiceFrom: d.freeOneServiceFrom });
     return { days, all: req.query.all === "1", report, feedback: feedbackCount(d.db, windowStart(days)) };
   };
   const pages: Record<string, (v: ReturnType<typeof view>) => string> = {
@@ -172,7 +174,7 @@ function errorText(e: string | null): string {
 const userLink = (v: View, id: string, email: string) => `<a href="/users/${encodeURIComponent(id)}${qs(v)}">${esc(email)}</a>`;
 const cid = (c: string | null) => (c ? `<code>${esc(c.replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3"))}</code>` : `<span class="dim">—</span>`);
 
-const SHORT: Record<string, string> = { "Google Ads": "Ads", "Search Console": "GSC", "GA4 read": "GA4", "GA4 edit": "GA4 edit" };
+const SHORT: Record<string, string> = { "Google Ads": "Ads", "Search Console": "GSC", "GA4 read": "GA4", "GA4 edit": "GA4 edit", "Merchant Center": "MC" };
 /** Permission chips: granted ones solid; with `missing`, the rest outlined. */
 function perms(scopes: string | null, connected: number | boolean, o: { short?: boolean; missing?: boolean } = {}): string {
   if (!connected) return `<span class="dim">disconnected</span>`;
@@ -392,10 +394,10 @@ function retentionCard(v: View): string {
 function paywallCard(v: View): string {
   const p = v.report.paywall;
   if (!p.since) return "";
-  return card("Paywall · one service", table(["signed up", "app", ["users", "r"], ["stopped", "r"], ["emailed", "r"], ["viewed /plans", "r"], ["clicked upgrade", "r"], ["paid", "r"]],
-    p.rows.map((r) => [r.existing ? "before switch-on" : "after", r.chatgpt ? "ChatGPT" : "other", num(r.users), num(r.stopped), num(r.emailed),
-      r.chatgpt ? num(r.viewed) : `<span class="muted">—</span>`, num(r.clicked), num(r.paid)]), "Nobody active since switch-on."),
-    `<small title="From the first Service notice (the flag going on). Users seen since then. Stopped: got Service limit. ChatGPT gets /plans, not an upgrade link; others get the link in the stop itself. Clicked: any personal upgrade link (tool, email, account page). Paid: a checkout since switch-on.">since ${when(p.since)}</small>`);
+  return card("Paywall · one service", table(["signed up", "app", "Merchant", ["users", "r"], ["stopped", "r"], ["emailed", "r"], ["viewed /plans", "r"], ["clicked upgrade", "r"], ["paid", "r"], ["stopped + offered", "r"], ["of those, paid", "r"], ["applied", "r"]],
+    p.rows.map((r) => [r.existing ? "before switch-on" : "after", r.chatgpt ? "ChatGPT" : "other", r.merchant ? "yes" : "no", num(r.users), num(r.stopped), num(r.emailed),
+      r.chatgpt ? num(r.viewed) : `<span class="muted">—</span>`, num(r.clicked), num(r.paid), num(r.offered), num(r.offered_paid), num(r.applied)]), "Nobody active since switch-on."),
+    `<small title="From switch-on. Users seen since then, complimentary plans left out. Merchant: used it, or a stop asked for it. Stopped: got Service limit. ChatGPT gets /plans, not an upgrade link; others get the link in the stop itself. Clicked: any personal upgrade link (tool, email, account page). Paid: a checkout since switch-on.">since ${when(p.since)}</small>`);
 }
 
 function usersPage(v: View): string {
@@ -448,7 +450,7 @@ function userPage(x: UserDetail, v: View): string {
 ${stat(`Calls · ${w}`, num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
 ${stat(`Errors · ${w}`, x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
 ${stat("Proposals · all time", num(x.proposals.length), `${x.proposals.filter((p) => p.status === "applied").length} applied`)}
-${stat("Ads accounts used", num(x.accounts.filter((a) => a.ok_calls > 0 && a.customer_id !== DEMO_CID && a.customer_id !== GA_TARGET).length),
+${stat("Ads accounts used", num(x.accounts.filter((a) => a.ok_calls > 0 && a.customer_id !== DEMO_CID && a.customer_id !== GA_TARGET && !a.customer_id.startsWith("mc:")).length),
     u.ads_accounts === null ? `${w} · visible not recorded yet`
       : `${w} · of ${u.ads_accounts} visible${u.ads_managers ? ` + ${u.ads_managers} manager${u.ads_managers > 1 ? "s" : ""}` : ""} (${ago(u.ads_accounts_at!)})`)}
 </div>
@@ -465,7 +467,7 @@ ${card("Account", `<dl>
 <dt>User id</dt><dd><code>${esc(u.id)}</code></dd>
 </dl>
 <form method="post" action="/users/${encodeURIComponent(u.id)}/login-as" target="_blank"><button>Log in as user ↗</button></form>`)}
-${card("Ads accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === DEMO_CID ? ` <span class="chip">demo</span>` : "")
+${card("Accounts used", table(["account", ["calls", "r"], "first", "last"], x.accounts.map((a) => [cid(a.customer_id) + (a.customer_id === DEMO_CID ? ` <span class="chip">demo</span>` : "")
       + (a.ok_calls ? "" : ` <span class="chip">not used</span>`), num(a.calls), when(a.first), when(a.last)]),
     "No calls in this window."), `<small>${w}</small>`)}
 </div>

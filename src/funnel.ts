@@ -5,11 +5,13 @@
 import Database from "better-sqlite3";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { parseDateFlag } from "./plans.js";
 import { buildReport } from "./report.js";
 
 const { values } = parseArgs({ options: { days: { type: "string", default: "7" }, exclude: { type: "string", default: "" } } });
 const db = new Database(join(process.env.DATA_DIR ?? "/data", "camberstack.sqlite"), { readonly: true });
-const r = buildReport(db, { days: Number(values.days), exclude: values.exclude!.split(",").map((e) => e.trim()).filter(Boolean) });
+const r = buildReport(db, { days: Number(values.days), exclude: values.exclude!.split(",").map((e) => e.trim()).filter(Boolean),
+  freeOneServiceFrom: parseDateFlag(process.env.FREE_ONE_SERVICE) });
 
 console.log(`# Camberstack usage — ${new Date().toISOString().slice(0, 10)}, window ${r.days}d${r.excluded ? `, excluding ${r.excluded} account(s)` : ""}\n`);
 console.log("## Funnel (users, cohort = connected in window | all time)");

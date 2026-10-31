@@ -12,7 +12,7 @@ import {
 } from "./google.js";
 import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
-import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant } from "./merchant.js";
+import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
@@ -422,9 +422,14 @@ export class UserSession {
     let st = this.planState(new Set(), pool);
     // Nothing used yet and the login has more accounts than the plan covers: the user picks, not whichever call lands
     // first (2026-10-23: a Free user's AI overviewed 3 of 5 accounts at once and the first took the plan).
-    if (pool === "ads" && !st.used.length && !confirmSwitch) {
-      const counted = (await this.accounts().catch(() => [] as Account[])).filter((a) => !a.manager && !isDemo(a.customerId));
-      if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) this.noticeChoice(await this.withActivity(counted));
+    if (!st.used.length && !confirmSwitch) {
+      if (pool === "ads") {
+        const counted = (await this.accounts().catch(() => [] as Account[])).filter((a) => !a.manager && !isDemo(a.customerId));
+        if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) this.noticeChoice(await this.withActivity(counted));
+      } else {
+        const counted = await this.merchant.accounts().catch(() => [] as MerchantAccount[]);
+        if (counted.length > this.accountLimit && counted.some((a) => `mc:${a.account_id}` === cid)) this.noticeMerchantChoice(counted);
+      }
     }
     // A new account on a full plan is the switch: it passes only once the user has said yes to spending it.
     const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
@@ -477,6 +482,17 @@ export class UserSession {
           ...(a.spentLast30Days === undefined ? {} : { spent_last_30_days: a.spentLast30Days }) })),
         ...(accounts.some((a) => a.spentLast30Days === false) ? { note: "spent_last_30_days false: the account had no ad spend in the last 30 days, so it may be dormant. Show this to the user when they pick." } : {}),
         to_go_ahead: "once the user picks, call switch_account with that customer_id, then this tool again" });
+  }
+
+  /** noticeChoice for Merchant Center's own allowance. switch_account takes the mc:<id> form. */
+  private noticeMerchantChoice(accounts: MerchantAccount[]): never {
+    const n = this.accountLimit, one = n === 1;
+    throw new SwitchNotice(`${ACCOUNT_CHOICE_PREFIX} this plan covers ${n} Merchant Center account${one ? "" : "s"} at a time and this login has `
+      + `${accounts.length}. The first ${one ? "account" : "accounts"} used become${one ? "s" : ""} the plan's, so nothing has been used yet. `
+      + `Ask the user which to work on; then call switch_account with mc:<that account_id>, then this tool again.`,
+      { status: "account_choice_needed", plan: this.planName, accounts_included: n,
+        accounts: accounts.map((a) => ({ customer_id: `mc:${a.account_id}`, account_id: a.account_id, name: a.name })),
+        to_go_ahead: "once the user picks, call switch_account with mc:<that account_id>, then this tool again" });
   }
 
   /** False only when a complete account list says no: unsure must still stop for the notice, or a read could spend the switch unasked. */
