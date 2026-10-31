@@ -1,4 +1,4 @@
-import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, parseFreeOneService } from "./plans.js";
+import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, parseDateFlag } from "./plans.js";
 /** The environment variables the service reads; LOG_FILE (server.ts), SENTRY_* (sentry.ts) and funnel.ts's DATA_DIR are read where used. */
 
 /** A comma-separated list of emails, lowercased. */
@@ -25,7 +25,7 @@ export interface Config {
   freeAccounts: number;
   proAccounts: number;
   agencyAccounts: number;
-  /** FREE_ONE_SERVICE: when Free starts covering one Google service at a time (plans.ts parseFreeOneService). Off unless set. */
+  /** FREE_ONE_SERVICE: when Free starts covering one Google service at a time (plans.ts parseDateFlag). Off unless set. */
   freeOneServiceFrom?: number;
   /**
    * Pro subscription; unset = no upgrade links (free users stop at the limit with no way to pay).
@@ -38,8 +38,8 @@ export interface Config {
   adminUrl?: string;
   /** Google accounts allowed into the admin site. */
   adminEmails: Set<string>;
-  /** Merchant Center tools for everyone (MERCHANT_PUBLIC=1). Off: only ADMIN_EMAILS see them, until Google verifies the scope. */
-  merchantPublic: boolean;
+  /** MERCHANT_PUBLIC (plans.ts parseDateFlag): when the Merchant Center tools open to everyone. Until then only ADMIN_EMAILS see them. */
+  merchantPublicFrom?: number;
   /** Hand our own campaign's conversions to operations (adconversions.ts); unset = clicks are kept but not sent. */
   conversions?: import("./adconversions.js").ConversionConfig;
   /** Lifecycle emails via Resend (lifecycle.ts); unset = none are sent. */
@@ -83,7 +83,7 @@ export function loadConfig(): Config {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
     },
     freeAccounts: 1,
-    freeOneServiceFrom: parseFreeOneService(process.env.FREE_ONE_SERVICE),
+    freeOneServiceFrom: parseDateFlag(process.env.FREE_ONE_SERVICE),
     proAccounts: PRO_ACCOUNTS,
     agencyAccounts: AGENCY_ACCOUNTS,
     stripe: process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID
@@ -93,7 +93,7 @@ export function loadConfig(): Config {
     proEmails: emails(process.env.PRO_EMAILS),
     adminUrl: process.env.ADMIN_URL?.replace(/\/+$/, "") || undefined,
     adminEmails: emails(process.env.ADMIN_EMAILS),
-    merchantPublic: process.env.MERCHANT_PUBLIC === "1",
+    merchantPublicFrom: parseDateFlag(process.env.MERCHANT_PUBLIC),
     noindex: process.env.NOINDEX === "1",
     allowedEmails: emails(process.env.ALLOWED_EMAILS),
     glamaClaim: process.env.GLAMA_CLAIM || undefined,

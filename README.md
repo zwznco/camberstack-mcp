@@ -37,11 +37,11 @@ Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes o
 | `propose_analytics_changes` | no | like `propose_changes`, for GA4 setup: `create_ga4_property` (with a web stream; the applied result gives the tag), `mark_key_event`/`unmark_key_event`, `link_google_ads`/`unlink_google_ads`. Applied and undone with `apply_changes`/`undo_changes` |
 | `analytics_landing_pages` | no | sessions, users, engagement rate, key events and key event rate per landing page, optionally for one channel (e.g. Paid Search) |
 | `analytics_report` | no | any GA4 Data API report by dimension and metric names, with a contains filter |
-| `merchant_accounts` | no | (preview, not public yet) the Merchant Center accounts the login can read (sub-accounts included); if Merchant Center isn't granted yet, a personal link that adds it |
-| `merchant_product_issues` | no | (preview, not public yet) account issues, product status counts, and each product issue with how many products it hits and examples; or one product's issues in full |
-| `merchant_report` | no | (preview, not public yet) any read-only Merchant Center Query Language (MCQL) query, e.g. Shopping clicks per product from `product_performance_view` |
-| `merchant_ad_spend` | no | (preview, not public yet) Merchant Center problems (disapproved, limited, pending) joined with what each product earned in Shopping and Performance Max ads, most value first, and whether it stopped spending in the last 7 days |
-| `propose_merchant_changes` | no | (preview, not public yet) like `propose_changes`, for Merchant Center products: `set_product_attributes` (price, GTIN, title, …), `exclude_products`/`include_products`, `clear_product_overrides`, and `add_product`/`update_product`/`delete_product` for products in Camberstack's own "Camberstack products" source. Applied and undone with `apply_changes`/`undo_changes` |
+| `merchant_accounts` | no | the Merchant Center accounts the login can read (sub-accounts included); if Merchant Center isn't granted yet, a personal link that adds it |
+| `merchant_product_issues` | no | account issues, product status counts, and each product issue with how many products it hits and examples; or one product's issues in full |
+| `merchant_report` | no | any read-only Merchant Center Query Language (MCQL) query, e.g. Shopping clicks per product from `product_performance_view` |
+| `merchant_ad_spend` | no | Merchant Center problems (disapproved, limited, pending) joined with what each product earned in Shopping and Performance Max ads, most value first, and whether it stopped spending in the last 7 days |
+| `propose_merchant_changes` | no | like `propose_changes`, for Merchant Center products: `set_product_attributes` (price, GTIN, title, …), `exclude_products`/`include_products`, `clear_product_overrides`, and `add_product`/`update_product`/`delete_product` for products in Camberstack's own "Camberstack products" source. Applied and undone with `apply_changes`/`undo_changes` |
 | `propose_changes` | no | resolves changes against the live account, dry-runs them with Google (`validateOnly`), stores a proposal with a plain-English summary |
 | `apply_changes` | **yes** | applies a stored proposal (the user's own, un-applied, still matching the account; if the account moved, returns an updated proposal to approve instead); records each change's inverse |
 | `undo_changes` | no | builds the reversing proposal for an applied one |
@@ -64,8 +64,8 @@ Merchant Center accounts are their own plan allowance, the same size as Google A
 `mc:<id>` in `tool_calls` with their own switch (`switch_account` takes `mc:<id>`).
 
 The Merchant Center tools need `content`, which isn't part of connecting: the first call without it
-returns a personal `/connect/merchant-center` link that adds it. Until Google verifies that scope they're listed only for
-`ADMIN_EMAILS`; `MERCHANT_PUBLIC=1` lists them for everyone. Before any call works, the Cloud project needs
+returns a personal `/connect/merchant-center` link that adds it. They're listed only for `ADMIN_EMAILS` until
+`MERCHANT_PUBLIC`'s date (or `=1`). Before any call works, the Cloud project needs
 the Merchant API enabled and **registered once** with a production Merchant Center account the operator administers
 (`POST https://merchantapi.googleapis.com/accounts/v1/accounts/{ID}/developerRegistration:registerGcp`); merchants
 don't register. Unregistered, calls answer 401 "not registered", which the tools report as Camberstack's to fix.
@@ -148,7 +148,7 @@ BASE_URL=https://your.host npm run dev
 | `PRO_EMAILS` | emails treated as Pro |
 | `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console or GA4: the most recently used, over 30 days); paid plans cover all three. `YYYY-MM-DD` = announced until that day, 08:00 UTC (midnight Pacific): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
-| `MERCHANT_PUBLIC` | `1` lists the Merchant Center tools for everyone; unset = internal users only (while the scope awaits Google's verification) |
+| `MERCHANT_PUBLIC` | When the Merchant Center tools open to everyone. `YYYY-MM-DD` = from that day, 08:00 UTC (midnight Pacific): the tools, site copy, emails, changelog entry and terms date all flip then, no restart. `1` = on now. Unset = `ADMIN_EMAILS` only |
 | `STRIPE_AGENCY_PRICE_ID` | the Agency plan's price (its own product); unset = no Agency offered. Which plan a user is on follows their subscription's price, so a Pro ↔ Agency switch in Stripe's billing portal (which must list both prices) moves it within the hour |
 
 The hosted HTTP server is `npm run start:http` (the Docker image runs `node dist/server.js`).

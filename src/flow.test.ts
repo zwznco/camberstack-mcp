@@ -17,8 +17,9 @@ import { ChangeSchema, io, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES } from "./chang
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
+import { CHANGELOG } from "./changelog.js";
 import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
-import { allN, allServices, freePlan, listMerchant, oneServiceFree, parseFreeOneService, type FreePlan } from "./plans.js";
+import { allN, allServices, freePlan, listMerchant, oneServiceFree, parseDateFlag, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 
@@ -384,7 +385,7 @@ beforeAll(async () => {
   const cfg: Config = {
     baseUrl: "http://localhost", port: 0, dataDir: ":memory:", encryptionKey: key,
     google: { clientId: "gid", clientSecret: "gsecret" },
-    freeAccounts: 1, proAccounts: 5, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro", plusPriceId: "price_plus" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), merchantPublic: false, allowedEmails, gitSha: "test", gitCommitDate: "",
+    freeAccounts: 1, proAccounts: 5, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro", plusPriceId: "price_plus" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
   };
   // Bind first so baseUrl (the OAuth issuer) is the real test origin.
   server = await new Promise<Server>((resolve) => { const s = createApp(cfg, db).app.listen(0, () => resolve(s)); });
@@ -2524,9 +2525,10 @@ describe("OAuth + MCP end to end", () => {
     expect(page).toContain("https://github.com/zwznco/camberstack-mcp");
     expect(page).toContain('<span class="pill act">Needs your go-ahead</span>');
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/tools`);
-    // The changelog: every release from changelog.ts, the newest matching the version the server reports, and in the sitemap.
+    // The changelog: every release from changelog.ts, and in the sitemap.
     const cl = await (await fetch(`${base}/changelog`)).text();
-    expect(cl).toContain(`id="v${SERVER_VERSION}"`);
+    expect(cl).toContain(`id="v${CHANGELOG.find((r) => !r.merchantLaunch)!.version}"`);
+    expect(cl).not.toContain(`id="v${SERVER_VERSION}"`); // Merchant's release waits for MERCHANT_PUBLIC (merchant-launch.test.ts)
     expect(cl).toContain("<strong>Shared (portfolio) bid strategies.</strong>");
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/changelog`);
   });
@@ -2806,10 +2808,10 @@ describe("OAuth + MCP end to end", () => {
   });
 
   it("reads FREE_ONE_SERVICE as 1 (on), a date (announced until then), or off", () => {
-    expect(parseFreeOneService("1")).toBe(0);
+    expect(parseDateFlag("1")).toBe(0);
     // 08:00 UTC = midnight Pacific: it's the 16th in the Americas too when it starts.
-    expect(parseFreeOneService("2026-11-16")).toBe(Date.UTC(2026, 10, 16, 8) / 1000);
-    for (const v of [undefined, "", "0", "true", "2026-13-40", "11/16/2026"]) expect(parseFreeOneService(v)).toBeUndefined();
+    expect(parseDateFlag("2026-11-16")).toBe(Date.UTC(2026, 10, 16, 8) / 1000);
+    for (const v of [undefined, "", "0", "true", "2026-13-40", "11/16/2026"]) expect(parseDateFlag(v)).toBeUndefined();
     const from = Date.UTC(2026, 10, 16) / 1000;
     expect(freePlan(undefined, from)).toEqual({ kind: "accounts" });
     expect(freePlan(from, from - 1)).toEqual({ kind: "upcoming", from });
@@ -2898,15 +2900,15 @@ describe("OAuth + MCP end to end", () => {
 
   it("names Merchant Center in the plan copy only once it's public", () => {
     try {
-      listMerchant(false);
+      listMerchant(undefined);
       expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console or Google Analytics");
       expect(allServices()).toBe("Google Ads, Search Console and Google Analytics together");
       expect(allN()).toBe("all three");
-      listMerchant(true);
+      listMerchant(0);
       expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console, Google Analytics or Merchant Center (1 account)");
       expect(allServices()).toBe("Google Ads, Search Console, Google Analytics and Merchant Center together");
       expect(allN()).toBe("all four");
-    } finally { listMerchant(false); }
+    } finally { listMerchant(undefined); }
   });
 
 });
@@ -2938,6 +2940,14 @@ describe("Merchant Center rollout", () => {
     let outsider = "";
     try { outsider = await connect(); } finally { googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com"; }
     expect(await listTools(outsider)).toEqual([]);
+    // A MERCHANT_PUBLIC date in the future keeps them out; once it passes they're in, on a connection that's already open.
+    const t = Math.floor(Date.now() / 1000);
+    try {
+      listMerchant(t + 60);
+      expect(await listTools(outsider)).toEqual([]);
+      listMerchant(t - 60);
+      expect(await listTools(outsider)).toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report", "merchant_ad_spend"]);
+    } finally { listMerchant(undefined); }
     // Off for them means off: linking isn't offered in propose_changes either, nor taken if an AI sends it anyway.
     const linked = await call(outsider, "propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center", merchant_center_id: "000000001" }] });
     expect(linked.isError).toBe(true);

@@ -3,9 +3,24 @@
  * come from the same entry (`npx tsx src/changelog.ts <version>`). Newest first. Keep it to what users notice;
  * internal work (admin pages, deploys) stays in git.
  */
-export interface Release { version: string; date: string; summary: string; items?: string[] }
+export interface Release {
+  version: string; date: string; summary: string; items?: string[];
+  /** Shown only once MERCHANT_PUBLIC is on, dated by it (`date` is the fallback for MERCHANT_PUBLIC=1). */
+  merchantLaunch?: boolean;
+}
 
 export const CHANGELOG: Release[] = [
+  {
+    version: "0.24.0", date: "2026-10-31", merchantLaunch: true,
+    summary: "Google Merchant Center: find out why products aren't showing on Google, and fix them with your approval.",
+    items: [
+      "**Product problems** (`merchant_product_issues`): account issues, how many products are eligible, limited, pending or disapproved, and every issue with the products it affects, worst first.",
+      "**What a problem costs** (`merchant_ad_spend`): products with problems next to what each earned in Shopping and Performance Max ads, most value first. Uses Google Ads and Merchant Center together.",
+      "**Reports** (`merchant_report`): clicks and impressions per product across Shopping ads and free listings.",
+      "**Product fixes** (`propose_merchant_changes`): change a price, GTIN or title, leave a product out of Shopping ads or free listings, or add products of your own. Your feed is never edited, nothing applies until you approve it, and each change can be undone.",
+      "**Merchant Center is a service of its own on every plan.** Accounts count separately from Google Ads, and the first call gives you a link that adds Merchant Center to your connection, no reconnecting.",
+    ],
+  },
   {
     version: "0.23.0", date: "2026-10-30",
     summary: "Remarketing lists, acting on Google's recommendations, review requests, and a fix for logos on Search.",

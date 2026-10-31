@@ -560,7 +560,8 @@ function announcementPage(ann: Announcements, p: Preset, who: string, note: stri
   const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
   const label = st.sent_at ? `Sent ${date(st.sent_at)} UTC to ${people(st.sent)}` : st.running ? "Sending…"
     : st.started_at ? `Finish sending (${people(to.length)} left)` : `Send to ${people(to.length)}`;
-  const off = !!st.sent_at || st.running || !ann.canSend || !to.length;
+  const ready = ann.ready(p);
+  const off = !!st.sent_at || st.running || !ann.canSend || !to.length || !ready;
   return `${note && notes[note] ? `<p class="okmsg">${notes[note]}</p>` : ""}
 <div class="stats">
 ${stat("Status", sendStatus(st, to.length))}
@@ -574,6 +575,7 @@ ${stat("Planned", `<span style="font:13px/1.4 inherit;font-family:inherit">${esc
 <form method="post" action="/announcements/${p.id}/test"><button${ann.canSend ? "" : " disabled"}>Send a test to ${esc(who)}</button></form>
 </div>
 ${ann.canSend ? "" : `<p class="warn">Email isn't configured (RESEND_API_KEY): nothing can be sent.</p>`}
+${ready ? "" : `<p class="warn">Locked: what this describes isn't live yet. A test copy still works.</p>`}
 <div class="grid2">
 ${card("Preview", `<div class="pad"><p class="dim" style="margin:0 0 4px">Subject</p><p style="margin:0 0 16px;font-weight:600">${esc(m.subject)}</p>
 <div class="mail">${m.html}<hr><p class="dim" style="font-size:12px">You're getting this because you connected Camberstack (camberstack.io) to Google Ads. … Unsubscribe</p></div></div>`)}

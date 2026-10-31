@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { openDb, now } from "./db.js";
 import { Lifecycle } from "./lifecycle.js";
 import { Announcements, PRESETS, render } from "./announce.js";
+import { listMerchant } from "./plans.js";
 
 function setup(o: { failFor?: string } = {}) {
   const db = openDb(":memory:");
@@ -65,6 +66,23 @@ describe("announcement presets", () => {
     expect(m.html).toContain('<a href="https://x.test/a?b=1&amp;c=2">two</a>');
     expect(m.html).toContain('<a href="https://camberstack.io/changelog">https://camberstack.io/changelog</a>.');
     expect(m.text).toContain("two (https://x.test/a?b=1&c=2)");
+  });
+
+  it("a preset can't go out before what it describes is live, though a test copy can", async () => {
+    const { ann, sent, user } = setup();
+    user("a", "a@example.com");
+    const p = PRESETS.find((x) => x.id === "merchant-center-open")!;
+    try {
+      listMerchant(undefined);
+      expect(ann.ready(p)).toBe(false);
+      expect(() => ann.start(p.id)).toThrow("isn't ready");
+      expect(ann.state(p.id).started_at).toBeNull();
+      await ann.sendTest(p.id, "me@example.com");
+      expect(sent[0].subject).toContain("[TEST]");
+      listMerchant(Math.floor(Date.now() / 1000) - 1);
+      expect(ann.ready(p)).toBe(true);
+      expect(await ann.start(p.id)).toEqual({ sent: 1, left: 0 });
+    } finally { listMerchant(undefined); }
   });
 
   it("every preset is an update, not a sales pitch, and has a unique id", () => {

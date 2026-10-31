@@ -25,7 +25,7 @@ import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
 import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage, withFreePlan } from "./pages.js";
-import { freePlan, listMerchant } from "./plans.js";
+import { freePlan, listMerchant, merchantOn, withMerchantAt } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
@@ -64,7 +64,7 @@ export interface Service {
 
 export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Service {
   // Before anything renders: pages, emails and tool results name Merchant Center as a service only once it's public.
-  listMerchant(cfg.merchantPublic);
+  listMerchant(cfg.merchantPublicFrom);
   const app = express();
   app.set("trust proxy", 1); // behind Traefik: one hop
   app.disable("x-powered-by");
@@ -253,7 +253,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     let session: UserSession | undefined;
     const email = (db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string } | undefined)?.email.toLowerCase();
     // Admins only, not PRO_EMAILS: that holds the directory reviewers' login, who mustn't meet an unverified scope.
-    const merchant = cfg.merchantPublic || (!!email && cfg.adminEmails.has(email));
+    const merchant = merchantOn() || (!!email && cfg.adminEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null);
     }, [], { chatgpt, merchant, stuck: (tool, error) => (!userId || !stuckNow(db, userId, tool, error) ? null
@@ -335,10 +335,11 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.get("/mcp", noSessions);
   app.delete("/mcp", noSessions);
 
-  const tools = toolCatalog({ merchant: cfg.merchantPublic });
-  // Each page rendered once per phase of FREE_ONE_SERVICE (plans.ts FreePlan: announced, then on), and the live phase's copy
-  // served, so the pages flip with the gate at its date, no restart. Unset, there's one phase.
-  const render = (): Record<string, string> => ({
+  // Each page rendered once per phase of the date flags (FREE_ONE_SERVICE: announced, then on; MERCHANT_PUBLIC: off, then on),
+  // and the live phase's copy served, so the pages flip at each date, no restart. With no date set, there's one phase.
+  const render = (): Record<string, string> => {
+    const tools = toolCatalog({ merchant: merchantOn() });
+    return {
     "/": homePage(cfg.baseUrl),
     "/google-ads-claude": claudeGuidePage(cfg.baseUrl),
     "/google-ads-chatgpt": chatgptGuidePage(cfg.baseUrl),
@@ -353,11 +354,12 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     // Not in the sitemap: the homepage #pricing is the page for search; this one is what ChatGPT connections link to.
     "/plans": plansPage(cfg.baseUrl),
     "/llms.txt": llmsTxt(cfg.baseUrl, tools),
-  });
+    };
+  };
   const from = cfg.freeOneServiceFrom;
-  const phases = new Map((from === undefined ? [freePlan(undefined)] : [freePlan(from, from - 1), freePlan(from, from)])
-    .map((fp) => [fp.kind, withFreePlan(fp, render)]));
-  const live = () => phases.get(freePlan(from).kind)!;
+  const dates = [...new Set([from, cfg.merchantPublicFrom])].filter((t): t is number => !!t).sort((a, b) => a - b);
+  const phases = [0, ...dates].map((at) => ({ at, pages: withMerchantAt(at, () => withFreePlan(freePlan(from, at), render)) }));
+  const live = () => phases.filter((p) => p.at <= now()).at(-1)!.pages;
   const pages = live();
   const page = (path: string) => (req: express.Request, res: express.Response) => {
     res.setHeader("Cache-Control", "public, max-age=300");

@@ -14,7 +14,7 @@ import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./ses
 import { isUnexpected, reportError } from "./sentry.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.23.0";
+export const SERVER_VERSION = "0.24.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -465,7 +465,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   }, ({ property_id, ...o }: GaWindow & { property_id: string; dimensions: string[]; metrics: string[];
     filter?: { dimension: string; contains: string }; order_by?: string; limit: number }) => report(session().ga, property_id, o));
 
-  // Merchant Center: listed only where o.merchant (server.ts: MERCHANT_PUBLIC, or internal users until Google verifies the scope).
+  // Merchant Center: listed only where o.merchant (server.ts: MERCHANT_PUBLIC, or internal users before its date).
   if (o.merchant) {
     tool("merchant_accounts", {
       title: "List Merchant Center accounts",

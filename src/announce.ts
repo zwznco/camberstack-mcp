@@ -17,7 +17,7 @@ import type { DB } from "./db.js";
 import { now } from "./db.js";
 import type { Lifecycle } from "./lifecycle.js";
 import { esc } from "./pages.js";
-import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS, merchantOn } from "./plans.js";
 
 export type Audience = "all" | "free" | "pro";
 export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Paid and complimentary plans (Plus, Pro, Agency)" };
@@ -27,6 +27,8 @@ export interface Preset {
   /** When it's meant to go out, shown on its card: a note for the operator, nothing acts on it. */
   plan: string;
   audience: Audience;
+  /** What it describes must be live before it can go out: Send stays locked until this is true. A test copy can still go. */
+  ready?: () => boolean;
   subject: string;
   /** Plain text: blank lines between paragraphs, "- " bullets, **bold**, [text](https://…) links, bare https:// URLs. */
   body: string;
@@ -80,6 +82,30 @@ Questions or concerns? Just reply. I read every email.
 
 Adam`,
   },
+  {
+    id: "merchant-center-open",
+    plan: "Once MERCHANT_PUBLIC's date has passed, after the free-one-service notice: Send stays locked until the tools are live.",
+    audience: "all",
+    ready: merchantOn,
+    subject: "Google Merchant Center now works in Camberstack",
+    body: `Hi,
+
+Camberstack can now work with your Google Merchant Center products, alongside your Google Ads, Search Console and Google Analytics. In Claude or ChatGPT, ask things like:
+
+- Why did my products stop showing on Google?
+- Which disapproved products were earning the most from my Shopping ads?
+- Fix the prices Google says don't match my site.
+
+The first time you ask, Camberstack gives you a link that adds Merchant Center to your connection, no reconnecting. Product changes wait for your approval, your feed is never edited, and each change can be undone.
+
+Your AI app may need to reload Camberstack's tools first. In ChatGPT: Settings → Connectors → Camberstack → Refresh. In Claude: start a new chat.
+
+What each plan covers: https://camberstack.io/plans
+
+Everything else that changed recently: https://camberstack.io/changelog
+
+Adam`,
+  },
 ];
 
 export interface SendState { started_at: number | null; sent_at: number | null; sent: number }
@@ -102,6 +128,9 @@ export class Announcements {
   constructor(private d: AnnounceDeps) {}
 
   get canSend(): boolean { return this.d.canSend; }
+
+  /** False while what the preset describes isn't live yet. */
+  ready(p: Preset): boolean { return p.ready?.() ?? true; }
 
   preset(id: string): Preset | undefined { return PRESETS.find((x) => x.id === id); }
 
@@ -138,6 +167,7 @@ export class Announcements {
     const p = this.preset(id);
     if (!p) throw new Error("No such announcement.");
     if (!this.d.canSend) throw new Error("Email isn't configured (RESEND_API_KEY).");
+    if (!this.ready(p)) throw new Error("This announcement isn't ready: what it describes isn't live yet.");
     if (this.state(id).sent_at) throw new Error("This announcement was already sent; each one goes out once.");
     if (this.sending.has(id)) throw new Error("It's already sending.");
     this.d.db.prepare("INSERT OR IGNORE INTO announcement_sends (id, started_at) VALUES (?, ?)").run(id, now());

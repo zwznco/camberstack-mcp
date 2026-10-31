@@ -5,7 +5,7 @@
 
 import type { Release } from "./changelog.js";
 import { z } from "zod";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, listedServices, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, allN, allServices, dateLabel, freePlanChange, freeServices, oneServiceFree, servicesOr, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, listedServices, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, allN, allServices, dateLabel, freePlanChange, freeServices, merchantOn, merchantSince, oneServiceFree, servicesOr, type FreePlan } from "./plans.js";
 import type { ToolDoc } from "./tools.js";
 
 /**
@@ -18,6 +18,9 @@ export function withFreePlan<T>(plan: FreePlan, render: () => T): T {
   fp = plan;
   try { return render(); } finally { fp = prev; }
 }
+/** The terms name Merchant Center only once it's public (terms section), so their date moves with it. */
+const termsUpdated = () => isoDay(merchantSince()) ?? TERMS_UPDATED;
+const isoDay = (t: number | undefined) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : undefined);
 /** " From November 16, Free covers …" while announced; "" otherwise. Leading space, for the end of a paragraph. */
 const soon = () => (fp.kind === "upcoming" ? ` ${freePlanChange(fp)}` : "");
 /** Plus, in a sentence: from the date while announced. Empty before one-service Free is announced (Plus would equal Free). */
@@ -1167,7 +1170,7 @@ export function termsPage(baseUrl: string): string {
     description: "Terms for using Camberstack.",
     body: `<div class="legal">
 <h1>Terms of service</h1>
-<p class="muted">Last updated ${TERMS_UPDATED}</p>
+<p class="muted">Last updated ${termsUpdated()}</p>
 <h2>The service</h2>
 <p>Camberstack lets an AI assistant read your Google Ads account and, when you approve a specific proposal, change it.
 ${listedServices().includes("merchant")
@@ -1238,8 +1241,8 @@ export function changelogPage(baseUrl: string, releases: Release[]): string {
     body: `<h1>Changelog</h1>
 <p class="muted">What's new in Camberstack, newest first. Fixes and improvements apply on your next request, with nothing to install.</p>
 <p class="muted"><strong>Seeing a new tool</strong> needs your AI app to reload Camberstack's tool list. In <strong>ChatGPT</strong>: Settings → Connectors → Camberstack → Refresh. In <strong>Claude</strong>: start a new chat; if a new tool still isn't there, it should show up within a day (on Claude's phone and desktop apps, removing and re-adding the connector is quicker).</p>
-${releases.map((r) => `<section id="v${r.version}">
-<h2>${r.version} <span class="muted" style="font-size:15px;font-weight:400">${r.date}</span></h2>
+${releases.filter((r) => !r.merchantLaunch || merchantOn()).map((r) => `<section id="v${r.version}">
+<h2>${r.version} <span class="muted" style="font-size:15px;font-weight:400">${r.merchantLaunch ? isoDay(merchantSince()) ?? r.date : r.date}</span></h2>
 <p>${md(r.summary)}</p>${r.items?.length ? `<ul>${r.items.map((i) => `<li>${md(i)}</li>`).join("")}</ul>` : ""}
 </section>`).join("\n")}
 <p class="muted">Source and release notes: <a href="${SOURCE_URL}/releases">${SOURCE_URL.replace("https://", "")}/releases</a>.</p>`,
