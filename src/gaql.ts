@@ -122,6 +122,15 @@ export function checkGaql(query: string, cat: Catalog): string[] {
     for (const name of names) {
       const f = cat.get(name);
       if (!f) {
+        // A parent of real fields (campaign_criterion.proximity): the catalog lists only what's under it, and calling it
+        // nonexistent made the model drop the proximity data (prod, 2026-10-31). Shallowest first: .radius before .address.*.
+        const kids = [...cat.values()].filter((x) => x.name.startsWith(`${name}.`) && x.selectable !== false)
+          .sort((a, b) => a.name.split(".").length - b.name.split(".").length).map((x) => x.name);
+        if (kids.length) {
+          issues.push(`${name} isn't a field itself: select the fields under it, e.g. ${kids.slice(0, 8).join(", ")}${kids.length > 8 ? ", …" : ""}`
+            + `${usable(cat.get(kids[0]!)!) ? "" : whereFrom(cat.get(kids[0]!)!, cat, p.from)}.`);
+          continue;
+        }
         // Another resource's real field written under this one (campaign.conversion_goal_campaign_config.goal_config_level):
         // name the field, and where it can be queried.
         const parts = name.split(".");
@@ -295,8 +304,16 @@ export function closest(name: string, pool: string[]): string[] {
       // but not a word inside a longer name: "conversions" isn't what "all_conversions_settings" meant
       || levenshtein(leaf, cl) <= Math.max(2, Math.floor(leaf.length / 3));
   };
-  return scored.filter((x) => x.s <= best.s + 3 && plausible(x.c)).slice(0, 3).map((x) => x.c);
+  const near = scored.filter((x) => x.s <= best.s + 3 && plausible(x.c)).slice(0, 3).map((x) => x.c);
+  if (near.length) return near;
+  // The right words in the wrong order: metrics.search_lost_is_rank is search_rank_lost_impression_share, which edit
+  // distance can't see, so the model dropped impression share (prod, 2026-10-31). Two words at least: one alone is too loose.
+  const wanted = words(name);
+  return wanted.length < 2 ? [] : scored.filter((x) => wanted.every((w) => words(x.c).includes(w))).slice(0, 3).map((x) => x.c);
 }
+
+/** The words of a field's last part, without the short ones ("is", "ad") that say little. */
+const words = (name: string) => name.split(".").at(-1)!.split("_").filter((w) => w.length >= 3);
 
 /**
  * Same last part, numbering aside: dynamic_search_ad.description1 is expanded_dynamic_search_ad.description, and an

@@ -93,6 +93,20 @@ describe("checkGaql against Google's field catalog", () => {
     expect(checkGaql("SELECT ad_group.name, ad.final_urls, ad_group_ad.status FROM ad_group_ad WHERE campaign.id = 1", ads))
       .toEqual(["ad.final_urls can't be used FROM ad_group_ad: select ad_group_ad.ad.final_urls instead, its own field."]);
   });
+  it("names the fields under a parent instead of calling it nonexistent (prod, 2026-10-31)", () => {
+    // Was: "campaign_criterion.proximity doesn't exist … Drop it", and the model dropped it.
+    const live: Catalog = new Map(cat);
+    live.set("campaign_criterion", { name: "campaign_criterion", category: "RESOURCE" });
+    for (const n of ["type", "proximity.address.city_name", "proximity.address.postal_code", "proximity.radius", "proximity.radius_units"]) {
+      const name = `campaign_criterion.${n}`;
+      live.set(name, { name, category: "ATTRIBUTE", selectable: true, filterable: true });
+    }
+    expect(checkGaql("SELECT campaign_criterion.type, campaign_criterion.proximity FROM campaign_criterion", live)).toEqual([
+      "campaign_criterion.proximity isn't a field itself: select the fields under it, e.g. campaign_criterion.proximity.radius, "
+      + "campaign_criterion.proximity.radius_units, campaign_criterion.proximity.address.city_name, campaign_criterion.proximity.address.postal_code."]);
+    // From a resource that can't carry them, it says where they can be queried.
+    expect(checkGaql("SELECT ad_group.name, campaign_criterion.proximity FROM ad_group", live)[0]).toContain("; query it FROM campaign_criterion");
+  });
   it("offers no unrelated names for a field that doesn't exist, but the lookup that finds it (2026-10-15 prod errors)", () => {
     // Was: "Closest usable FROM campaign: campaign.campaign_group, campaign.campaign_budget, campaign.optimization_score".
     expect(checkGaql("SELECT campaign.name, campaign.url_expansion_opt_out FROM campaign", cat)).toEqual([
@@ -221,6 +235,16 @@ describe("gaql_fields lookup (unlisted; apps that hold it still call it)", () =>
     // …and still nothing for names nothing resembles.
     expect(top("campaign.url_expansion_opt_out")).toEqual([]);
     expect(top("conversion_action.all_conversions_settings")).toEqual([]);
+  });
+  it("finds a name from its words in another order, and needs two of them (prod, 2026-10-31)", () => {
+    // Google's real names. Both got no suggestion, only LIKE '%search%', and the model dropped impression share.
+    const names = ["budget_lost_impression_share", "rank_lost_impression_share", "budget_lost_top_impression_share", "rank_lost_top_impression_share",
+      "budget_lost_absolute_top_impression_share", "rank_lost_absolute_top_impression_share"].map((n) => `metrics.search_${n}`)
+      .concat("metrics.search_impression_share", "metrics.search_click_share", "metrics.content_rank_lost_impression_share");
+    expect(closest("metrics.search_lost_is_rank", names)[0]).toBe("metrics.search_rank_lost_impression_share");
+    expect(closest("metrics.search_lost_is_budget", names)[0]).toBe("metrics.search_budget_lost_impression_share");
+    expect(closest("metrics.search_lost_is_rank", names)).not.toContain("metrics.content_rank_lost_impression_share");
+    expect(closest("metrics.lost_is", names)).toEqual([]);
   });
   it("offers the resource's own <resource>_<leaf> before other resources' fields", () => {
     // experiment.id got only customer.id, the one .id usable FROM experiment (2026-10-23).
