@@ -862,6 +862,7 @@ export class UserSession {
       if (e instanceof AdsApiError && e.status === 400) (e as Error).message = (e as Error).message.replace(/ → .*?(?=; [A-Z_]{3,} |\n|$)/g, "")
         + `\nA query with no FROM is a field lookup, which selects from: ${FIELD_COLUMNS}. `
         + "E.g. SELECT name, category, selectable WHERE name LIKE '%search_term%', or SELECT attribute_resources, metrics, segments WHERE name = 'campaign'. "
+        + "Lookups have no OR: run one LIKE per lookup. "
         + "To read the account instead, add FROM and a resource (FROM campaign).";
       throw e;
     }

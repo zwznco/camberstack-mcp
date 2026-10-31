@@ -274,6 +274,11 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       return "this campaign is the trial arm of a Google Ads experiment, which takes its dates, budget and status from the experiment. "
         + "Camberstack can't end experiments: in Google Ads → Campaigns → Experiments, end it (the original campaign keeps running) or apply it "
         + "(the trial's changes move to the original). Other changes to the trial campaign, such as keywords or ads, can still be proposed.";
+    case "CANT_UPDATE_NEGATIVE":
+      // Google says only "not updateable"; 21 pause_keyword calls hit it in a row and the model never found the delete (prod, 2026-10-31).
+      return "this criterion is an ad group negative keyword, which blocks searches rather than running, so it can't be paused, enabled or rebid. "
+        + "To stop blocking those searches, propose delete_ad_group_negatives with its ad_group_id and criterion_id. If you meant a keyword that "
+        + "runs, this is the wrong criterion_id: list them with run_gaql WHERE ad_group_criterion.negative = FALSE AND ad_group_criterion.type = 'KEYWORD'.";
     case "POLICY_FINDING":
       return "Google's ad policy check rejected the ad text, images or video. Change what any [policy …] above flags. Common causes: repeated punctuation (\"!!\"), "
         + "ALL CAPS, symbols or emoji used for emphasis, phone numbers in headlines, or a video or landing page that breaks policy. "

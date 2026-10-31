@@ -663,6 +663,7 @@ describe("OAuth + MCP end to end", () => {
     expect(wrong.text).toContain("UNRECOGNIZED_FIELD Unrecognized field in the query: 'bogus_column'.");
     expect(wrong.text).not.toContain("prefixed with their resource");
     expect(wrong.text).toContain("A query with no FROM is a field lookup, which selects from: name, category");
+    expect(wrong.text).toContain("Lookups have no OR");
     expect(wrong.text).toContain("To read the account instead, add FROM");
     // Only a rejected lookup (400) gets that: a quota or server error isn't a syntax problem.
     const busy = await call(token, "run_gaql", { customer_id: "1112223333", query: "SELECT name WHERE name = 'quota'" });
