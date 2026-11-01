@@ -444,6 +444,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     every(10 * 60_000, "db sweep", () => sweep(db));
     void every(HOUR, "billing sweep", () => billing.sweep())();  // also at boot: a restart mustn't delay a downgrade an hour
     every(HOUR, "lifecycle", () => lifecycle.run());
+    every(HOUR, "announcements", () => announcements.resume());
     every(60_000, "transactional mail", () => lifecycle.transactional());
     every(15 * 60_000, "error alerts", () => errorAlerts.run());
     every(HOUR, "ad conversions", () => adConversions.flush());

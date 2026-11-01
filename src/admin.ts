@@ -16,7 +16,7 @@ import { esc } from "./pages.js";
 import { planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
-import { AUDIENCES, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
+import { AUDIENCES, DAILY_LIMIT, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
 
 export interface AdminDeps {
   db: DB;
@@ -541,13 +541,13 @@ ${card("Ad conversions", `<dl><dt>Recorded</dt><dd>${num(r.adConversions?.record
 function sendStatus(st: SendState & { running: boolean }, left: number): string {
   if (st.sent_at) return `<span class="chip okc">sent</span>`;
   if (st.running) return `<span class="chip pro">sending</span>`;
-  if (st.started_at) return `<span class="chip badc">interrupted · ${left} left</span>`;
+  if (st.started_at) return `<span class="chip pro">in batches · ${left} left</span>`;
   return `<span class="chip">not sent</span>`;
 }
 
 function announcementsPage(ann: Announcements): string {
   return `${ann.canSend ? "" : `<p class="warn">Email isn't configured (RESEND_API_KEY): nothing can be sent.</p>`}
-<p class="dim" style="margin:0 0 16px">Preset emails, written in <code>src/announce.ts</code>. Each goes out once, when you press Send on its page.</p>
+<p class="dim" style="margin:0 0 16px">Preset emails, written in <code>src/announce.ts</code>. Each goes out once, when you press Send on its page: up to ${DAILY_LIMIT} a day (UTC), and the rest continue by themselves.</p>
 <div class="cards">${PRESETS.map((p) => {
     const st = ann.state(p.id), left = ann.recipients(p).length;
     return `<a class="pcard" href="/announcements/${p.id}"><div class="row">${sendStatus(st, left)}<span class="dim">${AUDIENCES[p.audience]}</span></div>
@@ -558,12 +558,13 @@ ${STYLE}`;
 
 function announcementPage(ann: Announcements, p: Preset, who: string, note: string): string {
   const st = ann.state(p.id), to = ann.recipients(p), m = renderAnnouncement(p, false);
-  const notes: Record<string, string> = { test: `Test sent to ${esc(who)}.`, sending: "Sending, about one email a second. Reload to follow along." };
+  const notes: Record<string, string> = { test: `Test sent to ${esc(who)}.`, sending: `Sending up to ${DAILY_LIMIT} today, about one email a second, and the rest by themselves after midnight UTC. Reload to follow along.` };
   const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
+  const batch = ann.batchLeft();
   const label = st.sent_at ? `Sent ${date(st.sent_at)} UTC to ${people(st.sent)}` : st.running ? "Sending…"
-    : st.started_at ? `Finish sending (${people(to.length)} left)` : `Send to ${people(to.length)}`;
+    : st.started_at ? (batch ? `Finish sending (${people(to.length)} left)` : `${people(to.length)} left: continues after midnight UTC`) : `Send to ${people(to.length)}`;
   const ready = ann.ready(p);
-  const off = !!st.sent_at || st.running || !ann.canSend || !to.length || !ready;
+  const off = !!st.sent_at || st.running || !ann.canSend || !to.length || !ready || (!!st.started_at && !batch);
   return `${note && notes[note] ? `<p class="okmsg">${notes[note]}</p>` : ""}
 <div class="stats">
 ${stat("Status", sendStatus(st, to.length))}
@@ -572,7 +573,7 @@ ${stat(st.sent_at ? "Sent to" : st.started_at ? "Still to send" : "Would go to",
 ${stat("Planned", `<span style="font:13px/1.4 inherit;font-family:inherit">${esc(p.plan)}</span>`)}
 </div>
 <div class="actions">
-<form method="post" action="/announcements/${p.id}/send" data-confirm="${esc(`Send “${p.subject}” to ${people(to.length)}? It goes out once and can't be undone.`)}" onsubmit="return confirm(this.dataset.confirm)">
+<form method="post" action="/announcements/${p.id}/send" data-confirm="${esc(`Send “${p.subject}” to ${people(to.length)}? It goes out once and can't be undone. Up to ${batch} go today; the rest continue by themselves, ${DAILY_LIMIT} a day.`)}" onsubmit="return confirm(this.dataset.confirm)">
 <input type="hidden" name="count" value="${to.length}"><button class="primary"${off ? " disabled" : ""}>${label}</button></form>
 <form method="post" action="/announcements/${p.id}/test"><button${ann.canSend ? "" : " disabled"}>Send a test to ${esc(who)}</button></form>
 </div>

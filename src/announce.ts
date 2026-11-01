@@ -1,7 +1,12 @@
 /**
  * Announcements: preset emails, written here and reviewed in a commit, each sent ONCE, when the operator clicks
- * Send on its page in the admin (admin.ts → Announcements → the preset's card). Nothing sends one on its own: no
- * job, no trigger (operator's rule, 2026-10-14). The admin can't write or edit one either: new text means a commit.
+ * Send on its page in the admin (admin.ts → Announcements → the preset's card). Nothing STARTS one on its own: no
+ * job, no trigger (operator's rule, 2026-10-14; narrowed 2026-11-01, see batches below). The admin can't write or
+ * edit one either: new text means a commit.
+ *
+ * Batches: at most DAILY_LIMIT a UTC day across all announcements, so one send leaves room in Resend's 100-a-day quota
+ * for welcome and lifecycle mail. Once the operator has started a send, the hourly job (resume) carries on the next day
+ * until everyone has it (operator, 2026-11-01). Only a started send continues: the recipient list stays fixed by started_at.
  *
  * They're account and feature updates, not promotions: under CAN-SPAM that makes them relationship messages
  * ("a change in the terms or features of" an account), which need an unsubscribe link but no postal address.
@@ -10,8 +15,8 @@
  * Recipients: the users table is the list, so there's one opt-out. Never anyone who unsubscribed (email_opt_out), never
  * an internal account (ADMIN_EMAILS, PRO_EMAILS), and only people who had signed up when the send started: someone who
  * joins later doesn't get old news. Each recipient is claimed in email_log (kind "announce:<id>") before the send, with
- * Resend's idempotency key too, so finishing an interrupted send (its page then offers "Finish sending") never sends
- * anyone twice. Once every recipient has it, the preset is marked sent and can't send again.
+ * Resend's idempotency key too, so continuing a send, by the job or by "Finish sending" on its page, never sends anyone
+ * twice. Once every recipient has it, the preset is marked sent and can't send again.
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
@@ -112,6 +117,9 @@ export interface SendState { started_at: number | null; sent_at: number | null; 
 
 /** Resend allows 2 requests a second by default; stay under it. */
 const GAP_MS = 600;
+/** Announcement emails a UTC day. */
+export const DAILY_LIMIT = 50;
+const DAY = 86_400;
 
 export interface AnnounceDeps {
   db: DB;
@@ -119,6 +127,7 @@ export interface AnnounceDeps {
   internalEmails: Set<string>;
   /** False when Resend isn't configured: nothing can be sent. */
   canSend: boolean;
+  dailyLimit?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -138,6 +147,13 @@ export class Announcements {
     const r = this.d.db.prepare("SELECT started_at, sent_at FROM announcement_sends WHERE id = ?").get(id) as { started_at: number; sent_at: number | null } | undefined;
     const sent = (this.d.db.prepare("SELECT count(*) n FROM email_log WHERE kind = ?").get(`announce:${id}`) as { n: number }).n;
     return { started_at: r?.started_at ?? null, sent_at: r?.sent_at ?? null, sent, running: this.sending.has(id) };
+  }
+
+  /** How many more can go out today (UTC). */
+  batchLeft(): number {
+    const today = Math.floor(now() / DAY) * DAY;
+    const n = (this.d.db.prepare("SELECT count(*) n FROM email_log WHERE kind LIKE 'announce:%' AND sent_at >= ?").get(today) as { n: number }).n;
+    return Math.max(0, (this.d.dailyLimit ?? DAILY_LIMIT) - n);
   }
 
   /** Who it would go to now, or still will if a send was interrupted. Empty once it has been sent. */
@@ -160,8 +176,8 @@ export class Announcements {
   }
 
   /**
-   * The Send button: starts the send (fixing who's eligible) or finishes an interrupted one; refuses one that already
-   * went out. Runs to the end in the background; stops at a failed send, which is unclaimed so "Finish sending" retries it.
+   * The Send button: starts the send (fixing who's eligible) or continues one; refuses one that already went out. Sends
+   * today's batch in the background; resume takes it from there.
    */
   start(id: string): Promise<{ sent: number; left: number }> {
     const p = this.preset(id);
@@ -175,12 +191,27 @@ export class Announcements {
     return this.run(p).finally(() => this.sending.delete(id));
   }
 
+  /** The hourly job: the next batch of any send the operator started. Never starts one. */
+  async resume(): Promise<void> {
+    if (!this.d.canSend) return;
+    for (const p of PRESETS) {
+      const s = this.state(p.id);
+      if (!s.started_at || s.sent_at || s.running || !this.ready(p) || !this.batchLeft()) continue;
+      this.sending.add(p.id);
+      await this.run(p).finally(() => this.sending.delete(p.id));
+    }
+  }
+
+  /**
+   * One batch. A failed send is unclaimed, so it's tried again. A 4xx is about that address: skip it, so it can't hold up
+   * everyone else. Anything else (429 quota, 5xx, network) is about Resend: stop until the next run.
+   */
   private async run(p: Preset): Promise<{ sent: number; left: number }> {
     const m = render(p, false);
     const sleep = this.d.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
     const kind = `announce:${p.id}`;
     let sent = 0;
-    for (const u of this.recipients(p)) {
+    for (const u of this.recipients(p).slice(0, this.batchLeft())) {
       if (!this.d.db.prepare("INSERT OR IGNORE INTO email_log (user_id, kind, sent_at) VALUES (?, ?, ?)").run(u.id, kind, now()).changes) continue;
       try {
         await this.d.lifecycle.sendAnnouncement(u.email, m, u.id, `${u.id}:${kind}`);
@@ -188,7 +219,7 @@ export class Announcements {
       } catch (e) {
         this.d.db.prepare("DELETE FROM email_log WHERE user_id = ? AND kind = ?").run(u.id, kind);
         console.error(`announcement ${p.id}: ${u.email}: ${(e as Error).message}`);
-        break;
+        if (!/^Resend 4(?!29)/.test((e as Error).message)) break;
       }
       await sleep(GAP_MS);
     }
