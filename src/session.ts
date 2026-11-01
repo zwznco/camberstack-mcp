@@ -1457,8 +1457,9 @@ export class UserSession {
    * Ads, and report that case: the account state that triggers it isn't known yet.
    */
   private async explainEuBlock(e: unknown, customerId: string, login: string | null): Promise<never> {
-    if (!(e instanceof AdsApiError) || !e.body.includes("EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED")) throw e;
-    const head = "Google Ads API 400: EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED Google refuses every change to this account until it has "
+    const code = e instanceof AdsApiError ? /EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED|MISSING_EU_POLITICAL_ADVERTISING_SELF_DECLARATION/.exec(e.body)?.[0] : undefined;
+    if (!(e instanceof AdsApiError) || !code) throw e;
+    const head = `Google Ads API 400: ${code} Google refuses every change to this account until it has `
       + "the EU political advertising declaration. ";
     const missing = await this.ads.search(customerId, "SELECT campaign.id, campaign.name FROM campaign "
       + "WHERE campaign.missing_eu_political_advertising_declaration = TRUE AND campaign.status != 'REMOVED'", login).catch(() => null);

@@ -268,6 +268,7 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       return "two texts in one ad or asset group are the same to Google, which ignores spacing but not capitals. Make every headline and "
         + "description different, and propose again.";
     case "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED":
+    case "MISSING_EU_POLITICAL_ADVERTISING_SELF_DECLARATION":  // the same wall, worded per campaign (prod, 2026-10-31)
       return "Google refuses every change to this account until each of its campaigns declares whether it contains EU political advertising. "
         + "Find them: SELECT campaign.id, campaign.name FROM campaign WHERE campaign.missing_eu_political_advertising_declaration = TRUE "
         + "AND campaign.status != 'REMOVED'. Ask the user whether any of them run EU political ads (it is their legal declaration; most "

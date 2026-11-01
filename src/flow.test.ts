@@ -189,9 +189,10 @@ class FakeAds {
   removed: string[] = [];
   /** A test can make Google refuse operations mentioning `text`: at validation too, or only on the real write. */
   failOn: { text: string; writesOnly?: boolean } | undefined;
+  euCode = "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED";
   async mutate(_cid: string, service: string, operations: any[], opts: { validateOnly?: boolean } = {}) {
     if (this.euBlock) {
-      throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { euPoliticalAdvertisingError: "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED" },
+      throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { euPoliticalAdvertisingError: this.euCode },
         message: "Mutates are generally not allowed if the customer contains non-exempt campaigns without the EU political advertising declaration." }] }] } }));
     }
     if (this.failOn && JSON.stringify(operations).includes(this.failOn.text) && !(this.failOn.writesOnly && opts.validateOnly)) {
@@ -2492,6 +2493,12 @@ describe("OAuth + MCP end to end", () => {
     const named = (await call(token, "propose_changes", neg)).text;
     expect(named).toContain('Not declared yet: "Search" (id 10)');
     expect(named).toContain("propose set_eu_political_advertising");
+    // Google's other code for the same wall came through bare, and a model took three tries to find its way (prod, 2026-10-31).
+    ads.euCode = "MISSING_EU_POLITICAL_ADVERTISING_SELF_DECLARATION";
+    const other = (await call(token, "propose_changes", neg)).text;
+    ads.euCode = "EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED";
+    expect(other).toContain("MISSING_EU_POLITICAL_ADVERTISING_SELF_DECLARATION");
+    expect(other).toContain('Not declared yet: "Search" (id 10)');
     // None reads as missing, yet Google still refuses (prod, 2026-10-22): the AI was left with nothing to propose and stopped.
     // Now it's told the user must answer in Google Ads, and the account state goes to Bugsink.
     ads.euBlock = [];
