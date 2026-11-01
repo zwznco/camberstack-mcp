@@ -31,6 +31,7 @@ Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes o
 | `search_console_opportunities` | no | queries on positions 4-20 with projected click gain, top-5 queries with weak CTR, question-shaped queries |
 | `search_console_inspect_urls` | no | URL Inspection for up to 20 pages: indexed or why not, last crawl, canonical chosen vs declared, structured-data errors |
 | `search_console_sitemaps` | no | submitted sitemaps: last downloaded, URL count, errors and warnings |
+| `send_feedback` | no | sends the user's approved message to the maintainer; no account data or conversation |
 | `propose_search_console_changes` | no | checks sitemap and property changes against the live property and stores a proposal |
 | `paid_organic_overlap` | no | joins an Ads account's search terms with a site's organic queries: searches paid for that already rank near the top, and page-2+ searches with no ad |
 | `analytics_properties` | no | the Google Analytics 4 properties the login can read; if Analytics isn't granted yet, a personal link that adds it |

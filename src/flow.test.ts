@@ -641,8 +641,8 @@ describe("OAuth + MCP end to end", () => {
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
     // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29); +3.5K for the delete_ changes (2026-10-30).
-    // Search Console changes (2026-10-31): +1K for propose_search_console_changes.
-    expectToolBudget(tools, { total: 107_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000 } });
+    // Search Console changes (2026-10-31): +1K for propose_search_console_changes; +1K for send_feedback.
+    expectToolBudget(tools, { total: 108_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -695,11 +695,11 @@ describe("OAuth + MCP end to end", () => {
     expect(bad.text).toContain("Google's field catalog: campaign.maximize_clicks.cpc_bid_ceiling_micros doesn't exist");
     expect(bad.text).toContain("campaign.target_spend.cpc_bid_ceiling_micros");
     // The same error a third time in a row (the quota error above broke the run): the model gets the feedback link to pass on, once.
-    expect(bad.text).not.toContain("/feedback");
+    expect(bad.text).not.toContain("send_feedback");
     const again = () => call(token, "run_gaql", { customer_id: "1112223333", query: "SELECT campaign.id, campaign.maximize_clicks.cpc_bid_ceiling_micros FROM campaign" });
-    expect((await again()).text).not.toContain("/feedback");
-    expect((await again()).text).toContain("/feedback, saying what they were trying to get");
-    expect((await again()).text).not.toContain("/feedback");
+    expect((await again()).text).not.toContain("send_feedback");
+    expect((await again()).text).toContain("send_feedback passes on what they were trying to get");
+    expect((await again()).text).not.toContain("send_feedback");
   });
 
   it("reads an account overview", async () => {
@@ -1161,8 +1161,8 @@ describe("OAuth + MCP end to end", () => {
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
       // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29); +7K for the propose_delete_ tools (2026-10-30).
-      // Search Console changes (2026-10-31): +3K for its four propose tools.
-      expectToolBudget(tools, { total: 143_000, perTool: 6_000 });
+      // Search Console changes (2026-10-31): +3K for its four propose tools; +1K for send_feedback.
+      expectToolBudget(tools, { total: 144_000, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
@@ -2069,6 +2069,21 @@ describe("OAuth + MCP end to end", () => {
     const stale = new URL((await loginAs()).headers.get("location")!);
     db.prepare("UPDATE pending_auth SET created_at = created_at - 61 WHERE client_id = '__lau'").run();
     expect((await fetch(stale, { redirect: "manual" })).status).toBe(400);
+  });
+
+  it("takes feedback in the AI app with send_feedback, up to the daily limit, and doesn't log the message", async () => {
+    db.exec("DELETE FROM feedback");
+    const r = await call(token, "send_feedback", { kind: "idea", message: "  Please add Tag Manager  " });
+    expect(r.json).toEqual({ sent: true, note: "Sent. Any reply goes to owner@example.com." });
+    expect(db.prepare("SELECT email, kind, message, user_id FROM feedback").get()).toEqual({ email: "owner@example.com", kind: "idea", message: "Please add Tag Manager", user_id: ownerId() });
+    expect(JSON.stringify(db.prepare("SELECT * FROM tool_calls WHERE tool = 'send_feedback'").all())).not.toContain("Tag Manager");
+    expect((await call(token, "send_feedback", { message: "x" })).isError).toBe(true);
+    for (let i = 0; i < 4; i++) await call(token, "send_feedback", { message: `note ${i}` });
+    const over = await call(token, "send_feedback", { message: "one too many" });
+    expect(over.isError).toBe(true);
+    expect(over.text).toContain("wasn't sent");
+    expect((db.prepare("SELECT count(*) n FROM feedback").get() as { n: number }).n).toBe(5);
+    db.exec("DELETE FROM feedback");
   });
 
   it("takes feedback at /feedback from a signed-in Google account, and lists it on the admin site", async () => {

@@ -8,6 +8,7 @@ import { PUBLIC_MC_CHANGES, PublicMcChangeSchema, mcTarget } from "./merchant-ch
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
 import { PUBLIC_SC_CHANGES, SC_TARGET, ScChangeSchema } from "./search-console-changes.js";
+import { FEEDBACK_KINDS, type FeedbackKind } from "./feedback.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice, type Service } from "./plans.js";
 import { DEMO_SITE } from "./demo.js";
 import { DEMO_PROPERTY } from "./ga4.js";
@@ -147,7 +148,8 @@ interface ToolCall {
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { chatgpt?: boolean; merchant?: boolean; stuck?: (tool: string, error: string) => string | null } = {}): McpServer {
+  o: { chatgpt?: boolean; merchant?: boolean; stuck?: (tool: string, error: string) => string | null;
+    feedback?: (kind: FeedbackKind, message: string) => Promise<{ sent: boolean; email: string }> } = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + (o.merchant ? MERCHANT_INSTRUCTIONS : "") });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
@@ -691,6 +693,25 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       : `Shows the user's Camberstack plan: the Google Ads accounts used in the last 30 days against the number the plan covers (Free 1, Plus 1, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}), and on Free which Google service it covers. Returns personal links to upgrade (Free to Plus or Pro, Plus to Pro, Pro to Agency) or to change card and cancel (paid plans). This is the Camberstack subscription only, not a Google Ads account's own billing, invoices or ad spend.`,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, () => session().plan());
+
+  // Only when the user wants it: ChatGPT's guidelines bar descriptions that trigger beyond the user's intent, and any
+  // message past what they read and agreed to, so no conversation context goes in (OpenAI plugin guidelines, 2026-10-31).
+  tool("send_feedback", {
+    title: "Send feedback to Camberstack",
+    description: "Sends the user's message to Camberstack's maintainer, who reads every one and can reply to the user's Google email. Use it when the user "
+      + "wants to report a bug or ask for something Camberstack doesn't do. Show them the exact message first and send it only after they agree. "
+      + "Put in only what they want said: no account IDs, campaign data or conversation history.",
+    inputSchema: {
+      kind: z.enum(Object.keys(FEEDBACK_KINDS) as [FeedbackKind, ...FeedbackKind[]]).default("idea").describe("bug, idea (a request), or other"),
+      message: z.string().trim().min(3).max(2000).describe("The message, as the user approved it"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ kind, message }: { kind: FeedbackKind; message: string }) => {
+    if (!o.feedback) throw new Error("Feedback isn't available here.");
+    const { sent, email } = await o.feedback(kind, message);
+    if (!sent) throw new Error("That's the daily limit for feedback. It wasn't sent: the user can email adam@camberstack.io instead.");
+    return { sent: true, note: `Sent. Any reply goes to ${email}.` };
+  });
 
   tool("disconnect", {
     title: "Disconnect Google Ads",

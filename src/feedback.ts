@@ -1,5 +1,7 @@
 /**
- * /feedback: a public page anyone can read; sending needs a Google sign-in (signin.ts, identity only).
+ * /feedback: a public page anyone can read; sending needs a Google sign-in (signin.ts, identity only). The send_feedback
+ * tool (tools.ts) takes the same message from a connected user in their AI app, where they already are: the page got
+ * no messages in its first month.
  * The sign-in is the spam filter and gives the operator an address to answer. Unlike /account it takes
  * ANY Google account, connected or not: someone who gave up before connecting is exactly who to hear from.
  * Each message is stored (feedback table, listed on the admin site) and mailed to the operator with
@@ -15,6 +17,7 @@ import { appPage, esc, infoPage } from "./pages.js";
 
 export const FEEDBACK_KINDS = { bug: "Something's broken", idea: "An idea or request", other: "Something else" } as const;
 type Kind = keyof typeof FEEDBACK_KINDS;
+export type FeedbackKind = Kind;
 export const FEEDBACK_MAX = 5000;
 /** Per sender, per day. Generous for a person, a wall for a script with one Google account. */
 const DAILY_LIMIT = 5;
@@ -99,24 +102,32 @@ export function mountFeedback(app: Express, d: FeedbackDeps): SignIn {
       res.status(400).type("html").send(shell(`<div class="card"><p>That didn't go through: pick what it's about and write a message (up to ${FEEDBACK_MAX} characters). <a href="/feedback">Back</a></p></div>`));
       return;
     }
-    const recent = (d.db.prepare("SELECT count(*) n FROM feedback WHERE email = ? AND at > ?").get(email, now() - 86400) as { n: number }).n;
-    if (recent >= DAILY_LIMIT) {
+    if (!(await submitFeedback(d, email, kind, message))) {
       res.status(429).type("html").send(shell(`<div class="card"><p>That's ${DAILY_LIMIT} messages today, the daily limit. For anything urgent, email <a href="mailto:${esc(d.operator)}">${esc(d.operator)}</a>.</p></div>`));
       return;
     }
-    const user = d.db.prepare("SELECT id FROM users WHERE lower(email) = lower(?)").get(email) as { id: string } | undefined;
-    d.db.prepare("INSERT INTO feedback (at, email, user_id, kind, message) VALUES (?, ?, ?, ?, ?)").run(now(), email, user?.id ?? null, kind, message);
-    // Stored first: a mail outage loses the notification, never the message (the admin page lists them all).
-    await notify(d, email, kind, message, !!user).catch((e) => console.error(`feedback mail: ${(e as Error).message}`));
     res.redirect(303, "/feedback?sent=1");
   });
 
   return auth;
 }
 
-async function notify(d: FeedbackDeps, email: string, kind: Kind, message: string, connected: boolean): Promise<void> {
+type FeedbackStore = Pick<FeedbackDeps, "db" | "mailFetch" | "mail" | "operator">;
+
+/** Store a message and mail the operator; false at the sender's daily limit. Shared by the page and send_feedback. */
+export async function submitFeedback(d: FeedbackStore, email: string, kind: Kind, message: string, via?: string): Promise<boolean> {
+  const recent = (d.db.prepare("SELECT count(*) n FROM feedback WHERE email = ? AND at > ?").get(email, now() - 86400) as { n: number }).n;
+  if (recent >= DAILY_LIMIT) return false;
+  const user = d.db.prepare("SELECT id FROM users WHERE lower(email) = lower(?)").get(email) as { id: string } | undefined;
+  d.db.prepare("INSERT INTO feedback (at, email, user_id, kind, message) VALUES (?, ?, ?, ?, ?)").run(now(), email, user?.id ?? null, kind, message);
+  // Stored first: a mail outage loses the notification, never the message (the admin page lists them all).
+  await notify(d, email, kind, message, !!user, via).catch((e) => console.error(`feedback mail: ${(e as Error).message}`));
+  return true;
+}
+
+async function notify(d: FeedbackStore, email: string, kind: Kind, message: string, connected: boolean, via?: string): Promise<void> {
   if (!d.mail) return;
-  const who = `${email} (${connected ? "connected user" : "not connected"})`;
+  const who = `${email} (${connected ? "connected user" : "not connected"}${via ? `, ${via}` : ""})`;
   await sendMail(d.mail.apiKey, {
     from: d.mail.from, to: [d.operator], reply_to: email,
     subject: `Feedback: ${FEEDBACK_KINDS[kind]} from ${email}`,

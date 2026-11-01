@@ -17,7 +17,7 @@ import { buildServer, SERVER_VERSION, toolCatalog } from "./tools.js";
 import { Analytics, BEACON_JS, gtagJs, parseBeacon } from "./analytics.js";
 import { mountAdmin } from "./admin.js";
 import { mountAccount } from "./account.js";
-import { mountFeedback } from "./feedback.js";
+import { mountFeedback, submitFeedback } from "./feedback.js";
 import { Billing } from "./billing.js";
 import { AdConversions } from "./adconversions.js";
 import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
@@ -182,10 +182,11 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     session: (userId, o) => UserSession.load(deps, userId, o),
     adminUrl: cfg.adminUrl,
   });
-  const feedback = mountFeedback(app, {
+  const feedbackDeps = {
     db, google: cfg.google, baseUrl: cfg.baseUrl, fetch: overrides.fetch, mailFetch: overrides.mailFetch,
     mail: cfg.mail && { apiKey: cfg.mail.apiKey, from: cfg.mail.from, replyTo: cfg.mail.replyTo }, operator: cfg.feedbackTo ?? cfg.mail?.replyTo ?? "adam@camberstack.io",
-  });
+  };
+  const feedback = mountFeedback(app, feedbackDeps);
 
   // The consent page's answer (provider.authorize renders it). Same-origin form POST; the cookie the page set
   // is what proves this browser saw it, so a cross-site auto-submit or a forwarded link gets nowhere.
@@ -256,12 +257,17 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const merchant = merchantOn() || (!!email && cfg.adminEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.serviceWanted ?? null);
-    }, [], { chatgpt, merchant, stuck: (tool, error) => (!userId || !stuckNow(db, userId, tool, error) ? null
-      : error.startsWith(UNSUPPORTED_PREFIX)
-        ? `Tell the user Camberstack can't do this yet, and that they can ask for it at ${cfg.baseUrl}/feedback: `
-          + `the maintainer reads every request.`
-        : `This is the same error a third time. If you can't get the user what they asked for, tell them they can report it `
-          + `to Camberstack's maintainer at ${cfg.baseUrl}/feedback, saying what they were trying to get.`) });
+    }, [], { chatgpt, merchant,
+      feedback: async (kind, message) => {
+        if (!email) throw new Error("Feedback needs a connected account.");
+        return { sent: await submitFeedback(feedbackDeps, email, kind, message, "sent from their AI app"), email };
+      },
+      stuck: (tool, error) => (!userId || !stuckNow(db, userId, tool, error) ? null
+        : error.startsWith(UNSUPPORTED_PREFIX)
+          ? "Tell the user Camberstack can't do this yet, and that they can ask for it: with their OK, send_feedback passes "
+            + "their request to the maintainer, who reads every one."
+          : "This is the same error a third time. If you can't get the user what they asked for, tell them they can report it "
+            + "to Camberstack's maintainer: with their OK, send_feedback passes on what they were trying to get.") });
   };
   // 2026-07-28 traffic (server/discover, per-request _meta envelope). The SDK's own legacy leg would
   // answer 2025-era requests over SSE, so it is off and those keep the JSON-response wiring below.

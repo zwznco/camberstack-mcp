@@ -16,6 +16,7 @@ export const CHANGELOG: Release[] = [
     items: [
       "**Sitemaps** (`submit_sitemap`, `delete_sitemap`): submit a new one, resubmit one so Google reads it again, or remove one. Undo reverses a new submission and a removal.",
       "**Properties** (`add_site`, `remove_site`): a new property stays unverified until you verify it in Search Console, unless you already own its domain there. Removing a verified one can't be undone, and the summary warns you first.",
+      "**Send feedback from your AI app** (`send_feedback`): report a bug or ask for something Camberstack can't do, without leaving the chat. You see the message first, and it goes straight to the person who builds Camberstack.",
       "**Search Console access now includes editing**, and every change still needs your approval. If you connected before this, your first change gives you a link that adds it, with no reconnecting.",
     ],
   },
