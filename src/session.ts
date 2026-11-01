@@ -17,6 +17,7 @@ import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, ty
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { SC_TARGET, ScChangeSchema, resolveScChange, scNoteAfterApply, writeSc, type ScChange, type ScOp, type ScResolved } from "./search-console-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
+import { writeFileSync } from "node:fs";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields, queryShape } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 import {
@@ -883,7 +884,12 @@ export class UserSession {
   }
 
   private fieldCatalog() {
-    return catalog(() => this.ads.searchFields(CATALOG_QUERY));
+    return catalog(async () => {
+      const rows = await this.ads.searchFields(CATALOG_QUERY);
+      // Dev only: the replay (scripts/gaql-reliability) needs the whole catalog, and it's public schema, no account data.
+      if (process.env.GAQL_CATALOG_SNAPSHOT) writeFileSync(process.env.GAQL_CATALOG_SNAPSHOT, JSON.stringify(rows));
+      return rows;
+    });
   }
 
   async gaqlFields(o: { resource?: string; search?: string }) {
