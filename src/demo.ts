@@ -447,8 +447,23 @@ const ORGANIC: [string, string, number, number, number][] = [
   ["why is my water heater making noise", "/blog/noisy-water-heater", 340, 7900, 4.4],
 ];
 
-/** The demo website's Search Console, answering the calls the tools make. */
+/** The demo website's Search Console, answering the calls the tools make. Sitemap changes stick, per user, like the demo Ads account's. */
 export class DemoSearchConsole {
+  /** Without a db (tests), changes last as long as this object. */
+  private mem?: string[];
+  constructor(private db?: DB, private userId?: string) {}
+
+  private load(): string[] {
+    if (!this.db || !this.userId) return (this.mem ??= [SITE_HOME + "/sitemap.xml"]);
+    const row = this.db.prepare("SELECT state FROM demo_sc_state WHERE user_id = ?").get(this.userId) as { state: string } | undefined;
+    return row ? JSON.parse(row.state) as string[] : [SITE_HOME + "/sitemap.xml"];
+  }
+  private save(s: string[]): void {
+    if (!this.db || !this.userId) { this.mem = s; return; }
+    this.db.prepare(`INSERT INTO demo_sc_state (user_id, state, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`).run(this.userId, JSON.stringify(s), now());
+  }
+
   async sites() { return [{ siteUrl: DEMO_SITE, permissionLevel: "siteOwner" }]; }
 
   async searchAnalytics(_site: string, req: SearchAnalyticsRequest) {
@@ -484,8 +499,17 @@ export class DemoSearchConsole {
 
   async sitemaps(): Promise<Sitemap[]> {
     const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
-    return [{ path: SITE_HOME + "/sitemap.xml", lastSubmitted: day(40), lastDownloaded: day(2), isPending: false, isSitemapsIndex: false,
-      errors: "0", warnings: "0", contents: [{ type: "web", submitted: String(new Set(ORGANIC.map((r) => r[1])).size + 1) }] }];
+    return this.load().map((path) => (path === SITE_HOME + "/sitemap.xml"
+      ? { path, lastSubmitted: day(40), lastDownloaded: day(2), isPending: false, isSitemapsIndex: false,
+        errors: "0", warnings: "0", contents: [{ type: "web", submitted: String(new Set(ORGANIC.map((r) => r[1])).size + 1) }] }
+      : { path, lastSubmitted: day(0), isPending: true, isSitemapsIndex: false, errors: "0", warnings: "0" }));
+  }
+
+  /** Only sitemaps: the demo site itself can't be added or removed (search-console-changes.ts). */
+  async change(method: "PUT" | "DELETE", _site: string, sitemap?: string): Promise<void> {
+    if (!sitemap) throw new Error("The demo site can't be added or removed.");
+    const rest = this.load().filter((p) => p !== sitemap);
+    this.save(method === "PUT" ? [...rest, sitemap] : rest);
   }
 
   /** Every page with organic traffic is indexed; /blog/winterize-pipes is waiting in the queue; anything else is unknown. */

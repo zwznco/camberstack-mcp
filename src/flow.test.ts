@@ -3,7 +3,7 @@
  * bounce through "Google", get tokens, then drive the tools through MCP, including the
  * propose → apply → undo cycle and the guards around apply.
  */
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
@@ -15,6 +15,7 @@ import { decrypt, encrypt } from "./crypto.js";
 import { AdsApiError, NotGrantedError } from "./google.js";
 import { ChangeSchema, io, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
+import { PUBLIC_SC_CHANGES } from "./search-console-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
@@ -260,9 +261,23 @@ class FakeSearchConsole {
   /** Overrides the rows for a request (per window, per page of results); undefined falls through to the defaults. */
   rowsFor?: (req: any) => any[] | undefined;
   inspected: string[] = [];
+  /** Sitemaps added since the start, and writes in the order they ran. */
+  extraSitemaps: string[] = [];
+  extraSites: { siteUrl: string; permissionLevel: string }[] = [];
+  writes: string[] = [];
   async sites() {
     if (this.notGranted) throw new NotGrantedError("search-console", this.notGranted);
-    return [{ siteUrl: "sc-domain:acme.test", permissionLevel: "siteOwner" }, { siteUrl: "https://other.test/", permissionLevel: "siteUnverifiedUser" }];
+    return [{ siteUrl: "sc-domain:acme.test", permissionLevel: "siteOwner" }, { siteUrl: "https://other.test/", permissionLevel: "siteUnverifiedUser" }, ...this.extraSites];
+  }
+  async change(method: "PUT" | "DELETE", site: string, sitemap?: string) {
+    this.writes.push(`${method} ${site}${sitemap ? ` ${sitemap}` : ""}`);
+    if (sitemap) {
+      this.extraSitemaps = this.extraSitemaps.filter((p) => p !== sitemap);
+      if (method === "PUT") this.extraSitemaps.push(sitemap);
+    } else {
+      this.extraSites = this.extraSites.filter((x) => x.siteUrl !== site);
+      if (method === "PUT") this.extraSites.push({ siteUrl: site, permissionLevel: "siteUnverifiedUser" });
+    }
   }
   async searchAnalytics(site: string, req: any) {
     if (this.notGranted) throw new NotGrantedError("search-console", this.notGranted);
@@ -280,7 +295,8 @@ class FakeSearchConsole {
   }
   async sitemaps(_site: string) {
     return [{ path: "https://acme.test/sitemap.xml", lastSubmitted: "2026-09-01T00:00:00Z", lastDownloaded: "2026-10-01T00:00:00Z",
-      isPending: false, isSitemapsIndex: false, errors: "0", warnings: "2", contents: [{ type: "web", submitted: "36" }] }];
+      isPending: false, isSitemapsIndex: false, errors: "0", warnings: "2", contents: [{ type: "web", submitted: "36" }] },
+      ...this.extraSitemaps.map((path) => ({ path }))];
   }
   async inspect(_site: string, url: string) {
     this.inspected.push(url);
@@ -419,7 +435,8 @@ async function connect(cookie?: string, state = "xyz"): Promise<string> {
   const { g, consent } = await approve(auth);
   expect(g.host).toBe("accounts.google.com");
   expect(g.searchParams.get("scope")).toContain("adwords");
-  expect(g.searchParams.get("scope")).toContain("webmasters.readonly");
+  expect(g.searchParams.get("scope")!.split(" ")).toContain("https://www.googleapis.com/auth/webmasters");
+  expect(g.searchParams.get("scope")).not.toContain("webmasters.readonly");
 
   const back = await fetch(`${base}/oauth/google/callback?code=gcode&state=${g.searchParams.get("state")}`,
     { redirect: "manual", headers: { cookie: [cookie, consent].filter(Boolean).join("; ") } });
@@ -623,7 +640,8 @@ describe("OAuth + MCP end to end", () => {
     expect(tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["list_accounts", "account_overview", "keyword_ideas", "keyword_metrics", "propose_changes", "apply_changes", "undo_changes"]));
     // The AI sees what each change field means, and never the undo-only change type.
     // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29); +3.5K for the delete_ changes (2026-10-30).
-    expectToolBudget(tools, { total: 106_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000 } });
+    // Search Console changes (2026-10-31): +1K for propose_search_console_changes.
+    expectToolBudget(tools, { total: 107_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1142,13 +1160,14 @@ describe("OAuth + MCP end to end", () => {
       const tools = (await listed.json()).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }[];
       const names = tools.map((t) => t.name);
       // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29); +7K for the propose_delete_ tools (2026-10-30).
-      expectToolBudget(tools, { total: 140_000, perTool: 6_000 });
+      // Search Console changes (2026-10-31): +3K for its four propose tools.
+      expectToolBudget(tools, { total: 143_000, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
       for (const n of ["propose_pause_campaign", "propose_create_performance_max_campaign", "propose_set_conversion_counting",
         "propose_link_google_ads", "propose_create_ga4_property", "propose_undo", "apply_changes"]) expect(names).toContain(n);
-      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + MERCHANT_LINK_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_MC_CHANGES.length + 1);  // this user is internal, so Merchant Center's too
+      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + MERCHANT_LINK_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_SC_CHANGES.length + PUBLIC_MC_CHANGES.length + 1);  // this user is internal, so Merchant Center's too
       for (const t of tools.filter((t) => t.name.startsWith("propose_"))) {
         expect(t.description, t.name).not.toMatch(/undefined|propose_changes|undo_changes/);
         expect(t.inputSchema.properties, t.name).not.toHaveProperty("type");
@@ -1604,13 +1623,114 @@ describe("OAuth + MCP end to end", () => {
       expect(r.isError).toBe(true);
       expect(r.text).toContain("/connect/search-console?t=");
       const go = await fetch(s.grant_url, { redirect: "manual" });
-      expect(new URL(go.headers.get("location")!).searchParams.get("scope")).toBe("openid email https://www.googleapis.com/auth/webmasters.readonly");
+      expect(new URL(go.headers.get("location")!).searchParams.get("scope")).toBe("openid email https://www.googleapis.com/auth/webmasters");
     } finally { sc.notGranted = ""; }
+  });
+
+  describe("Search Console changes", () => {
+    const EDIT = "https://www.googleapis.com/auth/webmasters";
+    const SITE = "sc-domain:acme.test";
+    const DS = "sc-domain:northwind-plumbing.example";
+    const propose = (...changes: object[]) => call(token, "propose_search_console_changes", { changes });
+    const scopes = (s: string | null) => db.prepare("UPDATE users SET google_scopes = ? WHERE id = ?").run(s, ownerId());
+    let before: string | null;
+    beforeAll(() => {
+      before = (db.prepare("SELECT google_scopes s FROM users WHERE id = ?").get(ownerId()) as { s: string | null }).s;
+      scopes(`openid ${EDIT}`);
+    });
+    afterAll(() => { scopes(before); });
+    beforeEach(() => { sc.writes = []; sc.extraSitemaps = []; sc.extraSites = []; });
+
+    it("gives a read-only connection from before 0.25.0 a link before anything is proposed", async () => {
+      scopes("openid https://www.googleapis.com/auth/webmasters.readonly");
+      try {
+        const r = await propose({ type: "submit_sitemap", site_url: SITE, sitemap_url: "https://acme.test/new.xml" });
+        expect(r.isError).toBe(true);
+        expect(r.text).toContain("Changing Search Console needs its edit access");
+        const link = r.text.match(/https?:\/\/\S+\/connect\/search-console\?t=\S+/)![0];
+        const go = await fetch(link, { redirect: "manual" });
+        expect(new URL(go.headers.get("location")!).searchParams.get("scope")).toBe(`openid email ${EDIT}`);
+        expect(sc.writes).toEqual([]);
+      } finally { scopes(`openid ${EDIT}`); }
+    });
+
+    it("submits a new sitemap only on apply, and undo deletes it", async () => {
+      const url = "https://blog.acme.test/new.xml";
+      const p = (await propose({ type: "submit_sitemap", site_url: SITE, sitemap_url: url })).json;
+      expect(p.summary).toBe(`1. Submit sitemap ${url} to Search Console for ${SITE}`);
+      expect(sc.writes).toEqual([]);
+      const a = (await call(token, "apply_changes", { proposal_id: p.proposal_id })).json;
+      expect(a.status).toBe("applied");
+      expect(a.results[0].note).toContain("search_console_sitemaps");
+      expect(sc.writes).toEqual([`PUT ${SITE} ${url}`]);
+      const u = (await call(token, "undo_changes", { proposal_id: p.proposal_id })).json;
+      expect(u.summary).toContain(`Remove sitemap ${url}`);
+      await call(token, "apply_changes", { proposal_id: u.proposal_id });
+      expect(sc.writes).toEqual([`PUT ${SITE} ${url}`, `DELETE ${SITE} ${url}`]);
+      const h = (await call(token, "change_history", {})).json;
+      expect(h.find((x: any) => x.proposal_id === p.proposal_id).customer_id).toBe("search_console");
+    });
+
+    it("resubmits a known sitemap with no undo, and restores a deleted one", async () => {
+      const url = "https://acme.test/sitemap.xml";
+      const p = (await propose({ type: "submit_sitemap", site_url: SITE, sitemap_url: url })).json;
+      expect(p.summary).toContain("Resubmit sitemap");
+      expect((await call(token, "apply_changes", { proposal_id: p.proposal_id })).json.undo).toBeUndefined();
+      const d = (await propose({ type: "delete_sitemap", site_url: SITE, sitemap_url: url })).json;
+      await call(token, "apply_changes", { proposal_id: d.proposal_id });
+      const u = (await call(token, "undo_changes", { proposal_id: d.proposal_id })).json;
+      expect(u.summary).toContain("Resubmit sitemap");  // the fake keeps listing it, as Google's list can lag a delete
+      const none = (await propose({ type: "delete_sitemap", site_url: SITE, sitemap_url: "https://acme.test/gone.xml" })).json;
+      expect(none.status).toBe("already in place");
+    });
+
+    it("refuses a sitemap outside the property, an unknown site, and an unverified one", async () => {
+      expect((await propose({ type: "submit_sitemap", site_url: SITE, sitemap_url: "https://notacme.test/s.xml" })).text).toContain("isn't inside property");
+      expect((await propose({ type: "submit_sitemap", site_url: "sc-domain:nope.test", sitemap_url: "https://nope.test/s.xml" })).text).toContain("isn't a Search Console property");
+      expect((await propose({ type: "submit_sitemap", site_url: "https://other.test/", sitemap_url: "https://elsewhere.test/s.xml" })).text).toContain("isn't inside property");
+      expect((await propose({ type: "submit_sitemap", site_url: "https://other.test/", sitemap_url: "https://other.test/s.xml" })).text).toContain("Owner or Full access");
+      expect((await propose({ type: "add_site", site_url: "https://no-slash.test" })).isError).toBe(true);
+      expect(sc.writes).toEqual([]);
+    });
+
+    it("adds a property with a verify note and undoes it; removing a verified one warns and has no undo", async () => {
+      const p = (await propose({ type: "add_site", site_url: "https://new.test/" })).json;
+      expect(p.summary).toContain("stays unverified");
+      const a = (await call(token, "apply_changes", { proposal_id: p.proposal_id })).json;
+      expect(a.results[0].note).toContain("already owns the domain");
+      const u = (await call(token, "undo_changes", { proposal_id: p.proposal_id })).json;
+      expect(u.summary).toContain("unverified, so nothing is lost");
+      expect(u.summary).not.toContain("⚠");
+      await call(token, "apply_changes", { proposal_id: u.proposal_id });
+      expect(sc.writes).toEqual(["PUT https://new.test/", "DELETE https://new.test/"]);
+
+      const r = (await propose({ type: "remove_site", site_url: SITE })).json;
+      expect(r.summary).toContain("⚠");
+      const done = (await call(token, "apply_changes", { proposal_id: r.proposal_id })).json;
+      expect(done.undo).toBeUndefined();
+      expect(sc.writes.at(-1)).toBe(`DELETE ${SITE}`);
+    });
+
+    it("lets the demo site's sitemaps change without any grant, per user, and never touches Google", async () => {
+      scopes("openid");
+      try {
+        const url = "https://northwind-plumbing.example/blog.xml";
+        const p = (await propose({ type: "submit_sitemap", site_url: DS, sitemap_url: url })).json;
+        await call(token, "apply_changes", { proposal_id: p.proposal_id });
+        const paths = (await call(token, "search_console_sitemaps", { site_url: DS })).json.sitemaps.map((m: any) => m.path);
+        expect(paths).toContain(url);
+        const u = (await call(token, "undo_changes", { proposal_id: p.proposal_id })).json;
+        await call(token, "apply_changes", { proposal_id: u.proposal_id });
+        expect((await call(token, "search_console_sitemaps", { site_url: DS })).json.sitemaps.map((m: any) => m.path)).not.toContain(url);
+        expect((await propose({ type: "remove_site", site_url: DS })).text).toContain("demo site");
+        expect(sc.writes).toEqual([]);
+      } finally { scopes(`openid ${EDIT}`); }
+    });
   });
 
   it("connects with Search Console only, then adds Google Ads with one link", async () => {
     const saved = { ...googleGrant };
-    googleGrant.scope = "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/webmasters.readonly";
+    googleGrant.scope = "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/webmasters";
     const realList = ads.listAccessibleCustomers.bind(ads);
     try {
       const scOnly = await connect();  // Google Ads unticked: still connects
@@ -2529,7 +2649,7 @@ describe("OAuth + MCP end to end", () => {
     // The changelog: every release from changelog.ts, and in the sitemap.
     const cl = await (await fetch(`${base}/changelog`)).text();
     expect(cl).toContain(`id="v${CHANGELOG.find((r) => !r.merchantLaunch)!.version}"`);
-    expect(cl).not.toContain(`id="v${SERVER_VERSION}"`); // Merchant's release waits for MERCHANT_PUBLIC (merchant-launch.test.ts)
+    expect(cl).not.toContain(`id="v${CHANGELOG.find((r) => r.merchantLaunch)!.version}"`); // Merchant's release waits for MERCHANT_PUBLIC (merchant-launch.test.ts)
     expect(cl).toContain("<strong>Shared (portfolio) bid strategies.</strong>");
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/changelog`);
   });

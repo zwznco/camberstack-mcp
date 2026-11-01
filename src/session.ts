@@ -7,7 +7,7 @@ import type { DB, ProposalRow, UserRow } from "./db.js";
 import { now } from "./db.js";
 import { decrypt } from "./crypto.js";
 import {
-  AdsApiError, AdsClient, NotGrantedError, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
+  AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
 import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
@@ -15,6 +15,7 @@ import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from 
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
+import { SC_TARGET, ScChangeSchema, resolveScChange, scNoteAfterApply, writeSc, type ScChange, type ScOp, type ScResolved } from "./search-console-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields, queryShape } from "./gaql.js";
 import { reportBug } from "./sentry.js";
@@ -137,7 +138,7 @@ function routed(google: Ads, demo: DemoAds): Ads {
 }
 
 /** The Search Console calls the tools make; the demo site answers the same ones. */
-type SearchConsole = Pick<SearchConsoleClient, "sites" | "searchAnalytics" | "sitemaps" | "inspect">;
+type SearchConsole = Pick<SearchConsoleClient, "sites" | "searchAnalytics" | "sitemaps" | "inspect" | "change">;
 
 function routedSc(google: SearchConsole, demo: DemoSearchConsole): SearchConsole {
   return {
@@ -145,6 +146,7 @@ function routedSc(google: SearchConsole, demo: DemoSearchConsole): SearchConsole
     searchAnalytics: (site, req) => (site === DEMO_SITE ? demo.searchAnalytics(site, req) : google.searchAnalytics(site, req)),
     sitemaps: (site) => (site === DEMO_SITE ? demo.sitemaps() : google.sitemaps(site)),
     inspect: (site, url) => (site === DEMO_SITE ? demo.inspect(site, url) : google.inspect(site, url)),
+    change: (method, site, sitemap) => (site === DEMO_SITE ? demo.change(method, site, sitemap) : google.change(method, site, sitemap)),
   };
 }
 const DEMO_SITE_NOTE = "Sample data from Camberstack's demo website (a fictional plumbing business), not a real Search Console property.";
@@ -159,8 +161,8 @@ export const isDemo = (customerId: string | null | undefined) => bareCid(custome
 /** Spread into any result about an account, so the AI can't mistake demo data for the user's. */
 const demoNote = (customerId: string) => (isDemo(customerId) ? { note: DEMO_NOTE } : {});
 
-type AnyChange = Change | GaChange | McChange;
-type AnyResolved = ResolvedChange | GaResolved | McResolved;
+type AnyChange = Change | GaChange | McChange | ScChange;
+type AnyResolved = ResolvedChange | GaResolved | McResolved | ScResolved;
 /** `note`: something the user must do next, e.g. a new GA4 property's tag. */
 type Outcome = { describe: string; ok: boolean; error?: string; note?: string; inverse?: AnyChange };
 type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[] };
@@ -188,7 +190,7 @@ export class UserSession {
     const link = (kind: GrantKind) => () => deps.grantLink?.(kind, user.id) ?? null;
     const google = deps.adsFactory?.(user) ?? new AdsClient(() => this.googleAccessToken(), fetch, link("google-ads"));
     this.ads = routed(google, new DemoAds(deps.db, user.id));
-    this.sc = routedSc(deps.scFactory?.(user) ?? new SearchConsoleClient(() => this.googleAccessToken(), link("search-console")), new DemoSearchConsole());
+    this.sc = routedSc(deps.scFactory?.(user) ?? new SearchConsoleClient(() => this.googleAccessToken(), link("search-console")), new DemoSearchConsole(deps.db, user.id));
     this.ga = routedAnalytics(deps.gaFactory?.(user)
       ?? new AnalyticsClient(() => this.googleAccessToken(), link("analytics")), new DemoAnalytics(deps.db, user.id));
     this.merchant = routedMerchant(deps.merchantFactory?.(user)
@@ -967,7 +969,7 @@ export class UserSession {
     return m;
   }
 
-  // ---------------------------------------------------------------- Search Console (read-only)
+  // ---------------------------------------------------------------- Search Console (reads; its changes are proposals)
 
   /** Search Console properties this login can read; the demo site only when there are none. */
   async searchConsoleSites() {
@@ -1143,8 +1145,7 @@ export class UserSession {
         index: m.isSitemapsIndex ?? false, errors: Number(m.errors ?? 0), warnings: Number(m.warnings ?? 0),
         urls_submitted: (m.contents ?? []).reduce((n, c) => n + Number(c.submitted ?? 0), 0),
       })),
-      note: list.length ? "Submitting or resubmitting a sitemap can only be done in Search Console itself."
-        : "No sitemap is submitted for this property. The user can submit one in Search Console (Indexing > Sitemaps).",
+      ...(list.length ? {} : { note: `No sitemap is submitted for this property. ${this.chatgpt ? "propose_submit_sitemap" : "propose_search_console_changes"} can submit one.` }),
     };
   }
 
@@ -1255,9 +1256,15 @@ export class UserSession {
   // ---------------------------------------------------------------- write
 
   async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<Proposed | AlreadyInPlace> {
-    const ga = customerId === GA_TARGET, mc = isMcTarget(customerId);
-    const a = ga || mc ? { customerId, loginCustomerId: null } : await this.account(customerId);
-    const changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : ChangeSchema).parse(c));
+    const ga = customerId === GA_TARGET, mc = isMcTarget(customerId), sc = customerId === SC_TARGET;
+    const a = ga || mc || sc ? { customerId, loginCustomerId: null } : await this.account(customerId);
+    const changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : sc ? ScChangeSchema : ChangeSchema).parse(c));
+    // Connections from before 0.25.0 can only read, and Search Console has no dry run: ask for the scope now, not after the
+    // user approved something that can't run. Scopes not on record yet (null) go through: the write itself returns the same link.
+    if (sc && (changes as ScChange[]).some((c) => c.site_url !== DEMO_SITE)
+      && this.user.google_scopes != null && !this.user.google_scopes.split(" ").includes(SEARCH_CONSOLE_SCOPE)) {
+      throw new NotGrantedError("search-console", this.deps.grantLink?.("search-console", this.user.id) ?? null, true);
+    }
     // Linking has no dry run either: a Merchant Center account this login can't reach, or a test account (Google won't
     // link those), would only fail at apply. The demo Ads account links only the demo Merchant Center account.
     for (const c of changes) {
@@ -1475,10 +1482,11 @@ export class UserSession {
     throw e;
   }
 
-  /** Read what a change would do against the live account (Google Ads, Merchant Center) or property (Google Analytics). */
+  /** Read what a change would do against the live account (Google Ads, Merchant Center) or property (Google Analytics, Search Console). */
   private resolve(target: string, login: string | null, c: AnyChange, pending: ReturnType<typeof pendingOf>): Promise<AnyResolved> {
     // Only reads, so a brief Google outage is retried once.
     return retryTransient<AnyResolved>(() => (target === GA_TARGET ? resolveGaChange(this.ga, c as GaChange)
+      : target === SC_TARGET ? resolveScChange(this.sc, c as ScChange)
       : isMcTarget(target) ? resolveMcChange(this.merchant, target.slice(3), c as McChange)
       : resolveChange(this.ads, target, login, c as Change, pending)), true);
   }
@@ -1493,6 +1501,12 @@ export class UserSession {
       if (validateOnly) return {};
       await retryTransient(() => writeMc(this.merchant, target.slice(3), r.operations as McOp[]), true);
       return { inverse: r.inverse };
+    }
+    if (r.service === "search_console") {
+      // No dry run: re-resolving at apply is the check. Every write is a PUT or DELETE of one resource, so repeating is safe.
+      if (validateOnly) return {};
+      await retryTransient(() => writeSc(this.sc, r.operations as ScOp[]), true);
+      return { inverse: r.inverse, note: scNoteAfterApply(r) };
     }
     if (r.service === "ga4") {
       if (validateOnly) return {};

@@ -31,8 +31,8 @@ const paidCovers = () => (fp.kind === "accounts" ? "Everything in Free, on" : `$
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
-const PRIVACY_UPDATED = "2026-10-30";
-const TERMS_UPDATED = "2026-10-28";
+const PRIVACY_UPDATED = "2026-10-31";
+const TERMS_UPDATED = "2026-10-31";
 
 const CSS = `
 .linkish{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
@@ -362,7 +362,7 @@ export function homePage(baseUrl: string): string {
 <ul class="also">
 <li>Negative keywords and budgets up to whole new Search, Performance Max, Display and YouTube campaigns</li>
 <li>One URL and a Google sign-in for Claude, ChatGPT, Cursor or any MCP app. Works with manager (MCC) accounts</li>
-<li>Optional, read-only <a href="#search-console">Search Console</a>: where you already rank, and which searches you may be paying for twice</li>
+<li>Optional <a href="#search-console">Search Console</a>: where you already rank, which searches you may be paying for twice, and sitemaps you approve</li>
 <li>Optional <a href="#analytics">Google Analytics 4</a>: which landing pages turn ad clicks into conversions</li>
 </ul>
 </div></section>
@@ -372,13 +372,13 @@ export function homePage(baseUrl: string): string {
 <p class="muted">Every change is a proposal you approve, and all but a few have an undo: the ones Google can't reverse warn you first. A new campaign is always created paused, so building it and letting it spend are two separate approvals.</p></div>
 ${pairList(CHANGES, "Undo")}
 <p class="muted small">Besides the warnings above, a proposal also warns before removing a campaign's last location.
-It deletes only what you approve, and it cannot touch billing or edit anything outside Google Ads and the <a href="#analytics">Google Analytics setup changes</a> below.
+It deletes only what you approve, and it cannot touch billing or edit anything outside Google Ads, the <a href="#analytics">Google Analytics setup changes</a> and the <a href="#search-console">Search Console sitemaps and properties</a> below.
 Any question beyond these tools is answered with read-only queries. <a href="/tools">Every tool and what it can do</a>;
 the code is <a href="${SOURCE_URL}">open source</a>.</p>
 </div></section>
 
 <section class="sec sec-tint"><div class="wrap duo">
-<div id="search-console"><p class="kicker">Optional · read-only</p><h2>Search Console</h2>
+<div id="search-console"><p class="kicker">Optional</p><h2>Search Console</h2>
 <p>Leave the Search Console box ticked when you connect, and your AI can read your site's Google Search clicks, impressions,
 queries and positions, and line them up against your ads:</p>
 <dl class="defs">
@@ -388,8 +388,9 @@ queries and positions, and line them up against your ads:</p>
 <dt>Trends</dt><dd>Which searches and pages are rising, falling, new or gone since the period before.</dd>
 <dt>Opportunities</dt><dd>Searches just off page 1, and top results with a click-through rate low enough to point at the title.</dd>
 <dt>Indexing</dt><dd>Whether Google has indexed a page and why not, when it last crawled it, and when it last read your sitemap.</dd>
+<dt>Sitemaps and properties</dt><dd>Submit, resubmit or remove a sitemap, and add or remove a property, once you approve the proposal.</dd>
 </dl>
-<p class="muted small">Camberstack can't change anything in Search Console. The Search Console tools work without a Google Ads account too: <a href="/google-search-console-mcp">Search Console MCP</a>.</p>
+<p class="muted small">Nothing changes in Search Console until you approve a proposal. The Search Console tools work without a Google Ads account too: <a href="/google-search-console-mcp">Search Console MCP</a>.</p>
 </div>
 <div id="analytics"><p class="kicker">Optional</p><h2>Google Analytics 4</h2>
 <p>Leave the Google Analytics box ticked when you connect, and your AI can read your GA4 properties next to your ads:</p>
@@ -425,7 +426,7 @@ ${cmd(`claude mcp add --transport http camberstack ${mcpUrl}`)}</div>
 <div class="app"><h3>Cursor, VS Code, others</h3>
 ${cmd(`{ "mcpServers": { "camberstack": { "url": "${mcpUrl}" } } }`)}</div>
 </div>
-<p class="muted small">Your AI app handles sign-in. Google shows exactly what Camberstack asks for before anything is shared: your Google Ads, and (optional) read-only Search Console and Google Analytics, which changes nothing without your approval.</p>
+<p class="muted small">Your AI app handles sign-in. Google shows exactly what Camberstack asks for before anything is shared: your Google Ads, and (optional) Search Console and Google Analytics. Camberstack changes nothing without your approval.</p>
 <div class="demo" id="demo"><h3>Want to look first?</h3>
 <p>Connect, then ask <em>"Show me Camberstack's demo account"</em>. It's a sample plumbing business with six months of
 campaigns and search terms, so you can try questions, proposals, applying and undo without touching a real account.
@@ -553,7 +554,7 @@ expired proposal, are covered in <a href="/docs#troubleshooting">the documentati
 const commonQuestions = (app: string) => `<h3>Do I need a Google Ads developer token?</h3>
 <p>No. Camberstack has its own Google Ads API access. You sign in with Google and choose what to share.</p>
 <h3>Does ${app} see my whole Google account?</h3>
-<p>No. It gets Google Ads access, your email address and, if you leave them ticked, read-only Search Console and Google Analytics (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
+<p>No. It gets Google Ads access, your email address and, if you leave them ticked, Search Console and Google Analytics (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
 <h3>What does it cost?</h3>
 <p>${fp.kind === "one_service" ? `Free on ${oneServiceFree()}, with every tool and unlimited changes. <a href="/#pricing">Plus</a> covers ${allN()} together on one account for ${PLUS_PRICE_LABEL}, Pro on up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.`
   : `Free on one Google Ads account, with every tool and unlimited changes. <a href="/#pricing">Pro</a> covers up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.${soon()}`}</p>`;
@@ -699,7 +700,7 @@ ${guideTroubleshooting("ChatGPT",
 <strong>Disconnect Google Ads</strong>, or remove Camberstack at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
 <h3>Does ChatGPT see my whole Google account?</h3>
 <p>No. The Google sign-in is Camberstack's, not ChatGPT's, and it shares only Google Ads, your email address and, if you leave them
-ticked, read-only Search Console and Google Analytics (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
+ticked, Search Console and Google Analytics (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
 <h3>Does it need a paid Camberstack plan?</h3>
 <p>${fp.kind === "one_service" ? `No. Free covers ${oneServiceFree()}, with every tool; <a href="/#pricing">Plus</a> covers ${allN()} together on one account, Pro on up to ${PRO_ACCOUNTS} accounts, and Agency up to ${AGENCY_ACCOUNTS}.`
   : `No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to ${PRO_ACCOUNTS}, and Agency up to ${AGENCY_ACCOUNTS}.${soon()}`}</p>
@@ -721,8 +722,8 @@ export function searchConsolePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
   return layout({
     baseUrl, path: "/google-search-console-mcp", wide: true,
-    title: "Google Search Console MCP server, hosted and read-only | Camberstack",
-    description: "A hosted Google Search Console MCP server for Claude, ChatGPT and Cursor. Sign in with Google: no Cloud project, service account or API key. Queries, trends, indexing and sitemaps, read-only.",
+    title: "Google Search Console MCP server, hosted | Camberstack",
+    description: "A hosted Google Search Console MCP server for Claude, ChatGPT and Cursor. Sign in with Google: no Cloud project, service account or API key. Queries, trends, indexing, and sitemaps you can submit with your approval.",
     jsonLd: {
       "@context": "https://schema.org", "@type": "TechArticle",
       headline: "Google Search Console MCP server", url: `${baseUrl}/google-search-console-mcp`, dateModified: "2026-10-13",
@@ -731,11 +732,11 @@ export function searchConsolePage(baseUrl: string): string {
     },
     body: `
 ${guideHero({
-  kicker: "Free, read-only, no Google Ads account needed",
+  kicker: "Free, no Google Ads account needed",
   title: "Google Search Console MCP server",
   lede: `Ask your AI assistant how your site is doing in Google Search, and it reads your Search Console data to answer:
 clicks, queries, pages, what's rising or falling, and why a page isn't indexed. Camberstack is hosted, so setup is a Google
-sign-in. It can't change anything in Search Console.`,
+sign-in. It reads by default, and submits sitemaps or changes properties only when you approve a proposal.`,
   ctas: `<a class="btn btn-lg" href="#setup">Connect Search Console</a><a class="btn btn-lg btn-ghost" href="/tools#search_console_sites">See the tools</a>`,
   aside: `<figure class="window" aria-label="An example answer, from the demo website">
 <div class="window-bar"><i></i><i></i><i></i><span>Demo website · northwind-plumbing.example</span></div>
@@ -768,7 +769,7 @@ are the complete numbers, so your AI leads with those.</p>
 <h2 id="setup">Set it up</h2>
 <p>Connect Camberstack in your AI app (<a href="/google-ads-claude">Claude</a>, <a href="/google-ads-chatgpt">ChatGPT</a>, or any MCP
 client with <code>${mcpUrl}</code>). On Google's sign-in screen, leave the <strong>Search Console</strong> box ticked: it grants
-read-only access (<code>webmasters.readonly</code>), nothing more. Then ask <em>"List my Search Console sites"</em> and use a site
+access to your sites' Search Console (<code>webmasters</code>), nothing else. Then ask <em>"List my Search Console sites"</em> and use a site
 from that list.</p>
 <p>Google's screen also asks for Google Ads access, because Camberstack is a Google Ads tool too. You don't need a Google Ads account
 to use the Search Console tools. Without one, Camberstack offers its demo Ads account and every Search Console tool works on your real sites.</p>
@@ -779,10 +780,14 @@ protocol) and <code>https://www.example.com/</code> (a URL-prefix property) as d
 says it has no access to a site you can see in Search Console, it's usually using the other form. The site list shows the exact
 names your login can read.</p>
 
+<h2>Changing sitemaps and properties</h2>
+<p>Ask your AI to submit a sitemap, and it shows you a proposal first. Nothing changes until you approve it, and undo reverses it, except removing a verified
+property, which warns you first. If you connected before Camberstack could make changes, your first one gives you a link that adds them, with no reconnecting.</p>
+
 <h2>What it can't do</h2>
 <ul>
-<li>Change anything in Search Console. The access is read-only.</li>
-<li>Request indexing or submit a sitemap. Google offers no API for requesting indexing of ordinary pages, so you still do that in Search Console.</li>
+<li>Request indexing. Google offers no API for requesting indexing of ordinary pages, so you still do that in Search Console. Submitting or resubmitting a sitemap is the closest thing Camberstack can do.</li>
+<li>Verify ownership of a property. It can add a property, but unless you already own its domain in Search Console, you prove ownership there.</li>
 <li>Read the Enhancements reports (rich results, Core Web Vitals) as Search Console's UI shows them. URL inspection includes each page's
 structured-data items and their errors, which covers the same ground one page at a time.</li>
 </ul>
@@ -802,7 +807,7 @@ runs that part for you: one Google sign-in, and it works the same in Claude on t
 <h3>Do you store my search data?</h3>
 <p>No. Camberstack fetches it when your AI asks and passes it on; reports and query results aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
 `)}
-${closer("Ask your AI how your site is doing in Google Search.", fp.kind === "accounts" ? "Free and read-only. It doesn't count toward a plan." : "Free and read-only.",
+${closer("Ask your AI how your site is doing in Google Search.", fp.kind === "accounts" ? "Free. It doesn't count toward a plan." : "Free.",
   `<a class="btn btn-lg" href="/#setup">Connect Search Console</a><a class="btn btn-lg btn-ghost" href="/tools#search_console_sites">See the tools</a>`)}
 `,
   });
@@ -905,7 +910,7 @@ export function docsPage(baseUrl: string): string {
     body: `
 <h1>Camberstack documentation</h1>
 <p class="lede">Camberstack is a hosted MCP server that gives your AI assistant access to your Google Ads account and, optionally,
-read-only Search Console. The AI reads the account and proposes changes. Nothing changes until you approve a specific proposal, and applied changes can be undone, apart from deletions Google can't reverse, which are flagged first.</p>
+Search Console. The AI reads the account and proposes changes. Nothing changes until you approve a specific proposal, and applied changes can be undone, apart from deletions Google can't reverse, which are flagged first.</p>
 <ul>
 <li><a href="#connect">Connect</a></li>
 <li><a href="#how-it-works">How it works: read, propose, approve, apply, undo</a></li>
@@ -966,9 +971,11 @@ which Camberstack downloads and uploads to your account. Shapes: landscape 1.91:
 and logos square 1:1 or landscape 4:1. Google reviews every new ad against its policies; if it rejects one, your AI gets the reason and can reword it.</p>
 
 <h2 id="search-console">Search Console</h2>
-<p>If you leave the Search Console box ticked when you sign in, your AI can read (never change) your sites' search data: totals against the previous
+<p>If you leave the Search Console box ticked when you sign in, your AI can read your sites' search data: totals against the previous
 period, queries and pages, rising and falling queries, near-page-1 opportunities, index status for given URLs, sitemap status, and
-searches you pay for that already rank organically. Camberstack can't request indexing or submit sitemaps; you do that in Search Console.
+searches you pay for that already rank organically. It can also submit, resubmit or remove sitemaps and add or remove properties, through
+proposals you approve (<code>propose_search_console_changes</code>). If you connected before this existed, your first change gives you a link that adds it.
+Camberstack can't request indexing or verify a property; you do those in Search Console.
 <a href="/google-search-console-mcp">More on the Search Console tools</a>.</p>
 
 <h2 id="demo">Demo account</h2>
@@ -989,7 +996,7 @@ a personal upgrade link valid for 7 days. Undo, change history and billing are n
 
 <h2 id="access">Google API access and your data</h2>
 <p>Camberstack accesses the Google Ads API under its own approved API access, with the user's Google OAuth consent. Search Console is read
-through Google's Search Console API under the same consent, with a read-only scope. Camberstack is independent and not affiliated with Google.</p>
+through Google's Search Console API under the same consent, with its <code>webmasters</code> scope. Camberstack is independent and not affiliated with Google.</p>
 <p>It stores your Google email, an encrypted Google refresh token, and your proposals with their results so you can undo them. Reports and query results are not stored.
 Details in the <a href="/privacy">privacy policy</a>.</p>
 
@@ -1021,7 +1028,7 @@ change your Google Ads account. This policy explains what we access, why, and wh
 <ul>
 <li><strong>Your Google account email and a stable Google account ID</strong> (the <code>openid</code> and <code>email</code> scopes), so the same person gets the same account and change history each time.</li>
 <li><strong>Your Google Ads data, optional</strong> (the <code>https://www.googleapis.com/auth/adwords</code> scope): account and campaign structure, performance metrics, search terms, keywords and conversion settings, read when your AI assistant calls a Camberstack tool.</li>
-<li><strong>Your Search Console data, read-only and optional</strong> (the <code>https://www.googleapis.com/auth/webmasters.readonly</code> scope): the websites you have verified, their Google Search clicks, impressions, queries and positions, Google's index status for pages you ask about, and the sitemaps you have submitted, read when your AI assistant calls a Search Console tool, for example to compare what you pay for with where you already rank. Google Ads and Search Console are each optional: you can untick either on Google's consent screen and add it later through a link Camberstack gives you. Camberstack cannot change anything in Search Console.</li>
+<li><strong>Your Search Console data and sitemaps, optional</strong> (the <code>https://www.googleapis.com/auth/webmasters</code> scope; a connection made before 2026-10-31 may hold <code>https://www.googleapis.com/auth/webmasters.readonly</code> instead): the websites you have verified, their Google Search clicks, impressions, queries and positions, Google's index status for pages you ask about, and the sitemaps you have submitted, read when your AI assistant calls a Search Console tool, for example to compare what you pay for with where you already rank. Google Ads and Search Console are each optional: you can untick either on Google's consent screen and add it later through a link Camberstack gives you. With the same scope, Camberstack submits, resubmits and removes sitemaps and adds and removes properties, each only when you approve a specific proposal. We keep what we need to show and reverse each change (the sitemap or property, and the proposal), as for any other change.</li>
 <li><strong>Your Google Analytics data and setup, optional</strong> (the <code>https://www.googleapis.com/auth/analytics.readonly</code> and <code>https://www.googleapis.com/auth/analytics.edit</code> scopes): the names of the Google Analytics accounts and properties you can access; reports on your properties' traffic, such as sessions, users, engagement, key events (conversions), landing pages and traffic sources; and each property's setup (web streams and their measurement IDs, key events, Google Ads links), read when your AI assistant calls a Google Analytics tool, for example to see whether visitors from your ads convert. With edit access Camberstack can set up tracking for you, <strong>only</strong> when you approve a specific proposal: create a property with a web stream, mark or unmark an event as a key event, and link or unlink a Google Ads account. Every such change is logged and can be undone. Google Analytics is optional: both scopes come as one box on Google's consent screen, which you can untick and add later through a link Camberstack gives you.</li>
 <li><strong>Your Google Merchant Center data and products, optional</strong> (the <code>https://www.googleapis.com/auth/content</code> scope): the names of the Merchant Center accounts you can access; account-level issues; your products' status (eligible, limited, pending or disapproved) and the issues Google reports for each, with product IDs, titles, brands and prices; and reports on your products' Google Shopping and free-listing clicks and impressions, read when your AI assistant calls a Merchant Center tool, for example to find why products stopped showing. Camberstack can also change products for you, <strong>only</strong> when you approve a specific proposal: override a product's attributes (such as its price, GTIN or title), exclude it from Shopping ads or free listings, or create, change and delete products of its own. Overrides go through Camberstack's own supplemental data source in your account, which it creates and, the first time, places ahead of the product's feed in that feed's rules; products it creates live in its own data source, "Camberstack products". Your feed and its products are never edited, added or deleted. Every change is logged and can be undone: undoing an override lets your feed's values apply again, and undoing a deletion re-creates the product. It is not part of connecting Camberstack: we ask for it separately, only if you use a Merchant Center tool, through a link that adds it to the Google account you already connected.</li>
 </ul>
@@ -1030,7 +1037,7 @@ change your Google Ads account. This policy explains what we access, why, and wh
 <h2>How we use it</h2>
 <ul>
 <li>To answer the requests your AI assistant makes on your behalf (reports and read-only queries).</li>
-<li>To apply changes to your Google Ads account, your Google Analytics setup or your Merchant Center products, <strong>only</strong> when you approve a specific proposal, and to reverse them if you ask.</li>
+<li>To apply changes to your Google Ads account, your Search Console sitemaps and properties, your Google Analytics setup or your Merchant Center products, <strong>only</strong> when you approve a specific proposal, and to reverse them if you ask.</li>
 </ul>
 <p>We do not sell your data, use it for advertising, share it with data brokers, or use it to train AI or machine-learning models.
 Humans at Camberstack do not read your Google data unless you ask us to for support, it is needed for security or abuse investigation, or the law requires it.</p>
@@ -1174,9 +1181,9 @@ export function termsPage(baseUrl: string): string {
 <h2>The service</h2>
 <p>Camberstack lets an AI assistant read your Google Ads account and, when you approve a specific proposal, change it.
 ${listedServices().includes("merchant")
-    ? `If you add them to your connection, it can also read your Search Console data (read-only), your Merchant Center data
-and your Google Analytics data, and change your Google Analytics setup and your Merchant Center products when you approve a specific proposal.`
-    : `If you add them to your connection, it can also read your Search Console data (read-only) and your Google Analytics data, and change your Google Analytics setup when you approve a specific proposal.`}
+    ? `If you add them to your connection, it can also read your Search Console data, your Merchant Center data
+and your Google Analytics data, and change your Search Console sitemaps and properties, your Google Analytics setup and your Merchant Center products when you approve a specific proposal.`
+    : `If you add them to your connection, it can also read your Search Console data and your Google Analytics data, and change your Search Console sitemaps and properties and your Google Analytics setup when you approve a specific proposal.`}
 There is a free plan and paid plans, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
 <h2>Paid subscriptions</h2>
 <p>Paid plans are billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; your plan continues until the end of the period you paid for, and we don't refund partial months. Switching between Pro and Agency takes effect right away, and Stripe prorates the difference. If we change the price we will email you at least 30 days before it applies to you.</p>
@@ -1358,7 +1365,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - MCP endpoint (Streamable HTTP, OAuth 2.1 with dynamic client registration): ${baseUrl}/mcp
 - Tools: ${tools.map((t) => t.name).join(", ")}
 - Writes (each one proposed, approved, then applied; almost all can be undone, and the few Google can't reverse warn first): negative keywords on campaigns and ad groups, and shared negative lists; pause/enable campaign, ad group, keyword or ad; daily budget; end date; build a Search, Display, Demand Gen (YouTube video) or Performance Max campaign (created paused); add ad groups, keywords, ads; edit a responsive search ad in place; delete keywords, ads, ad groups, campaigns, negatives and sitelinks; sitelinks, callouts, structured snippets, business name, logos and images; bids; bid strategy; ad schedules and device bids; location/language targeting; URL suffix; AI Max and Google-written text; conversion actions, goals, value, window and attribution; remarketing lists; apply or dismiss Google's recommendations.
-- Search Console (optional, read-only scope): site totals, query/page performance, period-over-period trends, ranking opportunities, URL Inspection (index status), sitemap status, and paid vs organic overlap with the Ads account.
+- Search Console (optional): site totals, query/page performance, period-over-period trends, ranking opportunities, URL Inspection (index status), sitemap status, and paid vs organic overlap with the Ads account; approved changes submit or remove sitemaps and add or remove properties.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
 - Pricing: ${fp.kind === "one_service" ? `Free plan covers ${oneServiceFree()} (every tool, unlimited applied changes); Plus ${PLUS_PRICE_LABEL} covers ${allN()} together on 1 Google Ads account; Pro and Agency cover ${allN()} on more accounts.`
   : `Free plan covers 1 Google Ads account (every tool, unlimited applied changes).${soon()}`} Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) and demo accounts don't count. Undo is always free.
@@ -1367,7 +1374,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - [Pricing](${baseUrl}/#pricing)
 - [Connect Google Ads to Claude (guide with a worked example)](${baseUrl}/google-ads-claude)
 - [Connect Google Ads to ChatGPT (step-by-step guide)](${baseUrl}/google-ads-chatgpt)
-- [Google Search Console MCP (read-only; works without a Google Ads account)](${baseUrl}/google-search-console-mcp)
+- [Google Search Console MCP (works without a Google Ads account)](${baseUrl}/google-search-console-mcp)
 - [Every tool, with its parameters](${baseUrl}/tools)
 - [Source (MIT)](${SOURCE_URL})
 - [Privacy](${baseUrl}/privacy)

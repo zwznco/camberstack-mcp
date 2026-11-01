@@ -174,7 +174,7 @@ function errorText(e: string | null): string {
 const userLink = (v: View, id: string, email: string) => `<a href="/users/${encodeURIComponent(id)}${qs(v)}">${esc(email)}</a>`;
 const cid = (c: string | null) => (c ? `<code>${esc(c.replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3"))}</code>` : `<span class="dim">—</span>`);
 
-const SHORT: Record<string, string> = { "Google Ads": "Ads", "Search Console": "GSC", "GA4 read": "GA4", "GA4 edit": "GA4 edit", "Merchant Center": "MC" };
+const SHORT: Record<string, string> = { "Google Ads": "Ads", "Search Console": "GSC", "Search Console read-only": "GSC read", "GA4 read": "GA4", "GA4 edit": "GA4 edit", "Merchant Center": "MC" };
 /** Permission chips: granted ones solid; with `missing`, the rest outlined. */
 function perms(scopes: string | null, connected: number | boolean, o: { short?: boolean; missing?: boolean } = {}): string {
   if (!connected) return `<span class="dim">disconnected</span>`;

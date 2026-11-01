@@ -5,7 +5,7 @@ import type { Server } from "node:http";
 import { openDb } from "./db.js";
 import { listMerchant, parseDateFlag } from "./plans.js";
 import { createApp } from "./server.js";
-import { SERVER_VERSION } from "./tools.js";
+import { CHANGELOG } from "./changelog.js";
 
 const launch = parseDateFlag("2031-03-10")!;
 const freeFrom = parseDateFlag("2031-02-01")!;
@@ -35,7 +35,7 @@ describe("MERCHANT_PUBLIC on a date", () => {
     expect(await get("/tools")).not.toContain('id="merchant_accounts"');
     expect(await get("/llms.txt")).not.toContain("merchant_accounts");
     expect(await get("/plans")).not.toContain("Merchant Center");
-    expect(await get("/changelog")).not.toContain(`id="v${SERVER_VERSION}"`);
+    expect(await get("/changelog")).not.toContain(`id="v${CHANGELOG.find((r) => r.merchantLaunch)!.version}"`);
     expect(await get("/terms")).not.toContain("Merchant Center");
   });
 
@@ -47,7 +47,7 @@ describe("MERCHANT_PUBLIC on a date", () => {
     expect(plans).toContain("Merchant Center together");
     expect(plans).toContain("one Google service at a time"); // one-service Free's phase, already on
     const log = await get("/changelog");
-    expect(log).toContain(`id="v${SERVER_VERSION}"`);
+    expect(log).toContain(`id="v${CHANGELOG.find((r) => r.merchantLaunch)!.version}"`);
     expect(log).toContain("2031-03-10");
     const terms = await get("/terms");
     expect(terms).toContain("Merchant Center");

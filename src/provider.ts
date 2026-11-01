@@ -23,7 +23,7 @@ import { encrypt, randomToken, safeEqual, sha256 } from "./crypto.js";
 import { consentPage } from "./pages.js";
 import { clearGoogleCache } from "./session.js";
 import {
-  ADS_SCOPE, GRANTS, SEARCH_CONSOLE_SCOPE, exchangeGoogleCode, googleAuthUrl, idTokenClaims, type GoogleCreds,
+  ADS_SCOPE, GRANTS, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, exchangeGoogleCode, googleAuthUrl, idTokenClaims, type GoogleCreds,
 } from "./google.js";
 
 export const MCP_SCOPE = "ads";
@@ -175,7 +175,8 @@ export class CamberstackProvider implements OAuthServerProvider {
     const g = await exchangeGoogleCode(this.opts.google, q.code, this.googleRedirectUri, this.opts.fetch);
     // À la carte: any one service is enough to connect; a tool that needs another returns a link that adds it (grant.ts).
     const granted = g.scope.split(" ");
-    const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, GRANTS.analytics.scopes[0]];
+    // The read-only scope counts too: include_granted_scopes brings it back on a reconnect with the boxes unticked.
+    const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, GRANTS.analytics.scopes[0]];
     if (!enough.some((s) => granted.includes(s))) {
       return { to: denied(back, "No Google service was granted (every box was unticked).") };
     }

@@ -7,7 +7,7 @@ import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
-import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
+import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
 /**
@@ -272,6 +272,7 @@ function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
 export const SCOPE_LABELS: Record<string, string> = {
   [ADS_SCOPE]: "Google Ads",
   [SEARCH_CONSOLE_SCOPE]: "Search Console",
+  [SEARCH_CONSOLE_READONLY_SCOPE]: "Search Console read-only",
   [ANALYTICS_SCOPE]: "GA4 read",
   [ANALYTICS_EDIT_SCOPE]: "GA4 edit",
   [MERCHANT_SCOPE]: "Merchant Center",

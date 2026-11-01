@@ -31,6 +31,7 @@ Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes o
 | `search_console_opportunities` | no | queries on positions 4-20 with projected click gain, top-5 queries with weak CTR, question-shaped queries |
 | `search_console_inspect_urls` | no | URL Inspection for up to 20 pages: indexed or why not, last crawl, canonical chosen vs declared, structured-data errors |
 | `search_console_sitemaps` | no | submitted sitemaps: last downloaded, URL count, errors and warnings |
+| `propose_search_console_changes` | no | checks sitemap and property changes against the live property and stores a proposal |
 | `paid_organic_overlap` | no | joins an Ads account's search terms with a site's organic queries: searches paid for that already rank near the top, and page-2+ searches with no ad |
 | `analytics_properties` | no | the Google Analytics 4 properties the login can read; if Analytics isn't granted yet, a personal link that adds it |
 | `analytics_setup` | no | a property's web streams (measurement IDs), key events and Google Ads links |
@@ -113,14 +114,14 @@ bid, switching bid strategy, removing the last location, a new primary conversio
 action, deleting an ad, ad group or campaign. Undo removes only what Camberstack itself created. Google can't restore a removed
 ad, ad group, campaign or conversion action, so those carry a ⚠ and no undo (a GA4 import is the exception: undo imports it
 again). Undo adds a deleted keyword back with its id and stats, and a negative or sitelink as a new one; a paused keyword has no undo. (Undoing a GA4 import removes the action, since Google can't hide it again; importing again
-restores it.) Search Console is read-only.
+restores it.) Removing a verified Search Console property carries a ⚠ and no undo: it has to be added and verified again.
 
 ## How auth works
 
 Camberstack is an OAuth 2.1 authorization server for MCP clients (dynamic client registration,
-PKCE). Its `/authorize` sends the user to Google for `openid email` plus `adwords` (Google Ads), `webmasters.readonly`
+PKCE). Its `/authorize` sends the user to Google for `openid email` plus `adwords` (Google Ads), `webmasters`
 (Search Console) and `analytics.readonly` + `analytics.edit` (Google Analytics). Any one is enough to connect ("à la carte"), Google Ads included: a tool that needs a missing one returns a personal
-`/connect/<google-ads|search-console|analytics>` link that adds just that service to the same Google account. The Google refresh
+`/connect/<google-ads|search-console|analytics>` link that adds just that service to the same Google account. Connections from before 0.25.0 hold `webmasters.readonly`, which still reads: their first Search Console proposal returns the `/connect/search-console` link. The Google refresh
 token is stored AES-256-GCM encrypted and never leaves the server. The MCP client gets
 Camberstack's own tokens, which are stored only as SHA-256 hashes.
 

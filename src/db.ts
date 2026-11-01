@@ -160,6 +160,13 @@ CREATE TABLE IF NOT EXISTS demo_ga_state (
   updated_at  INTEGER NOT NULL
 );
 
+-- The same for the demo website's Search Console (demo.ts DemoSearchConsole): its submitted sitemaps.
+CREATE TABLE IF NOT EXISTS demo_sc_state (
+  user_id     TEXT PRIMARY KEY,
+  state       TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
 -- What Camberstack's supplemental Merchant Center source holds per product (merchant.ts OverrideStore): Google applies
 -- overrides but can't return them, and undo restores exactly these. Keyed by account; demo:<user id> for the demo's.
 CREATE TABLE IF NOT EXISTS merchant_overrides (

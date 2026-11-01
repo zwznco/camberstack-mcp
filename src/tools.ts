@@ -7,6 +7,7 @@ import { DEMO_MERCHANT, listMerchantAccounts, merchantReport, productIssues } fr
 import { PUBLIC_MC_CHANGES, PublicMcChangeSchema, mcTarget } from "./merchant-changes.js";
 import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
+import { PUBLIC_SC_CHANGES, SC_TARGET, ScChangeSchema } from "./search-console-changes.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice, type Service } from "./plans.js";
 import { DEMO_SITE } from "./demo.js";
 import { DEMO_PROPERTY } from "./ga4.js";
@@ -14,14 +15,14 @@ import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./ses
 import { isUnexpected, reportError } from "./sentry.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.24.0";
+export const SERVER_VERSION = "0.25.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
 Never call apply_changes unless the user has explicitly approved that specific proposal in this conversation. Applied proposals can be reversed with undo_changes, except deletions Google can't reverse: their summary says so with a ⚠, so tell the user before they approve.
 Each Google service is added separately: when a result says one isn't part of the connection, give the user its grant_url (one click adds it); never tell them to reconnect.
 For keyword_ideas and keyword_metrics, pass the account's own market: location_ids default to the United States.
-Search Console is read-only: lead with search_console_summary (per-query rows leave out rare queries). Camberstack can't request indexing or submit sitemaps: the user does that in Search Console.
+For Search Console, lead with search_console_summary (per-query rows leave out rare queries). Camberstack can submit and remove sitemaps and add or remove properties, as proposals like any other change. It can't request indexing, and verifying a property's ownership is done in Search Console.
 Account 000-000-0001 is a demo with sample data: anyone can try every tool on it, and changes there never touch Google. Always say when you are using it.`;
 
 /** ChatGPT's connections have no propose_changes or undo_changes: one propose_<operation> tool per change, and propose_undo. */
@@ -43,13 +44,14 @@ const LINK_TOOLS = new Set([...LINK_CHANGES].map((c) => `propose_${c}`));
 const MC_GATED = new Set(["merchant_product_issues", "merchant_report", "propose_merchant_changes", ...PUBLIC_MC_CHANGES.map((c) => `propose_${c.shape.type.value}`)]);
 
 const GA_PROPOSES = new Set(PUBLIC_GA_CHANGES.map((c) => `propose_${c.shape.type.value}`));
+const SC_PROPOSES = new Set(PUBLIC_SC_CHANGES.map((c) => `propose_${c.shape.type.value}`));
 /**
  * The Google services a call uses on real data, for the one-service Free plan (session.ts checkService). Listing what a
  * login can reach (list_accounts, search_console_sites, analytics_properties, merchant_accounts) and the demo account, site, property and store
  * use none; nor do apply/undo/history, which act on a proposal the gate already let through.
  */
 export function servicesOf(name: string, a: unknown): Service[] {
-  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; changes?: { property_id?: unknown; type?: unknown }[] };
+  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; changes?: { property_id?: unknown; site_url?: unknown; type?: unknown }[] };
   const realGa = (p: unknown) => p !== DEMO_PROPERTY;
   const realMc = typeof x.account_id === "string" && x.account_id !== DEMO_MERCHANT;
   // Reads Ads and Merchant Center together, so like paid_organic_overlap it needs a paid plan on one-service Free.
@@ -62,7 +64,8 @@ export function servicesOf(name: string, a: unknown): Service[] {
   if (name === "paid_organic_overlap")
     return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(x.site_url !== DEMO_SITE ? ["search_console" as const] : [])];
   if (GATED.has(name) && name !== "switch_account") return typeof x.customer_id === "string" && !isDemo(x.customer_id) && !isLookup(name, a) ? ["ads"] : [];
-  if (name.startsWith("search_console_") && name !== "search_console_sites") return x.site_url !== DEMO_SITE ? ["search_console"] : [];
+  if ((name.startsWith("search_console_") && name !== "search_console_sites") || SC_PROPOSES.has(name)) return x.site_url !== DEMO_SITE ? ["search_console"] : [];
+  if (name === "propose_search_console_changes") return (x.changes ?? []).some((c) => c?.site_url !== DEMO_SITE) ? ["search_console"] : [];
   if (["analytics_report", "analytics_landing_pages", "analytics_setup"].includes(name) || GA_PROPOSES.has(name)) return realGa(x.property_id) ? ["analytics"] : [];
   // create_ga4_property has no property_id: a new property is real.
   if (name === "propose_analytics_changes") return (x.changes ?? []).some((c) => realGa(c?.property_id)) ? ["analytics"] : [];
@@ -400,10 +403,20 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   tool("search_console_sitemaps", {
     title: "Search Console sitemaps",
     description: "The sitemaps submitted for a website: when Google last downloaded each one, how many URLs it lists, and its error and "
-      + "warning counts. Changes nothing: submitting a sitemap is done in Search Console.",
+      + `warning counts. Changes nothing: ${o.chatgpt ? "propose_submit_sitemap" : "propose_search_console_changes"} submits one.`,
     inputSchema: { site_url: siteUrl },
     annotations: read,
   }, ({ site_url }: { site_url: string }) => session().searchConsoleSitemaps(site_url));
+
+  if (!o.chatgpt) tool("propose_search_console_changes", {
+    title: "Propose Search Console changes (applies nothing)",
+    description: "Checks Search Console changes against the live property and stores them as a proposal with a plain-English summary; nothing is changed. "
+      + "Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it, except where a ⚠ line says it can't). "
+      + "Supported: submit_sitemap (also resubmits, so Google reads it again), delete_sitemap, add_site (unless the login already owns the domain, it stays unverified until the user verifies ownership in Search Console), "
+      + "remove_site. Requesting indexing isn't possible through Google's API. A connection made before editing existed answers with a link that adds it. Point out any ⚠ line before they approve.",
+    inputSchema: { changes: z.array(ScChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, ({ changes }: { changes: unknown[] }) => session().propose(SC_TARGET, changes));
 
   tool("paid_organic_overlap", {
     title: "Paid vs organic overlap",
@@ -586,6 +599,16 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         annotations: proposes,
       }, ({ ads_customer_id, ...rest }: { ads_customer_id?: string } & Record<string, unknown>) =>
         session().propose(GA_TARGET, [{ type: op, ...rest, ...(ads_customer_id ? { customer_id: ads_customer_id } : {}) }]));
+    }
+    for (const c of PUBLIC_SC_CHANGES) {
+      const { type, ...shape } = c.shape;
+      const op = type.value;
+      tool(`propose_${op}`, {
+        title: `Propose: ${op.replace(/_/g, " ")}`,
+        description: `${c.description}. Search Console. ${proposeNote}`,
+        inputSchema: shape,
+        annotations: proposes,
+      }, (rest: Record<string, unknown>) => session().propose(SC_TARGET, [{ type: op, ...rest }]));
     }
     if (o.merchant) for (const c of PUBLIC_MC_CHANGES) {
       const { type, ...shape } = c.shape;

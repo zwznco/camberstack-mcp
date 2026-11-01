@@ -1,14 +1,17 @@
 /**
  * Google OAuth (the user's consent to Google access) and a thin Google Ads REST client.
  *
- * Scopes requested at sign-in: `adwords` (the Ads API), `webmasters.readonly` (Search Console, read-only), the Google
+ * Scopes requested at sign-in: `adwords` (the Ads API), `webmasters` (Search Console: reads, and approved changes), the Google
  * Analytics pair (provider.ts) and `openid email` (to know who the user is, so a reconnect finds the same
  * account and change log). Each service is an untickable box and any one is enough to connect (provider.ts callback);
- * a missing one is added later by link (grant.ts). Nothing else from the Google account is touched.
+ * a missing one is added later by link (grant.ts), as is `content` (Merchant Center), which sign-in doesn't ask for.
+ * Nothing else from the Google account is touched.
  */
 
 export const ADS_SCOPE = "https://www.googleapis.com/auth/adwords";
-export const SEARCH_CONSOLE_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
+export const SEARCH_CONSOLE_SCOPE = "https://www.googleapis.com/auth/webmasters";
+/** What sign-in asked for until 0.25.0. Those connections keep reading with it; their first change gets a link to SEARCH_CONSOLE_SCOPE. */
+export const SEARCH_CONSOLE_READONLY_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 /** Google Analytics (GA4): reports, and setup changes (properties, key events, Google Ads links). Asked for together at
  *  sign-in (provider.ts), and by link when a connection lacks them (ga4.ts). */
 export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
@@ -83,7 +86,7 @@ export const scopeMissing = (status: number, body: string) =>
 export class NotGrantedError extends Error {
   constructor(readonly kind: GrantKind, readonly link: string | null, edit = false) {
     const { label } = GRANTS[kind];
-    super(`${edit ? `Changing ${label} needs its edit access, which this connection doesn't have (the box was unticked on Google's consent screen).`
+    super(`${edit ? `Changing ${label} needs its edit access, which this connection doesn't have.`
       : `${label} access isn't part of this Google connection yet.`} `
       + (link ? `The user adds it here (a personal link, valid 7 days): ${link} . ` : "")
       + "The other Google tools keep working either way.");
@@ -459,7 +462,7 @@ export class AdsClient {
 }
 
 const SEARCH_CONSOLE_API = "https://www.googleapis.com/webmasters/v3";
-/** URL Inspection lives on the newer host; webmasters.readonly is enough for it. */
+/** URL Inspection lives on the newer host; either Search Console scope is enough for it. */
 const URL_INSPECTION_API = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect";
 
 export interface SearchAnalyticsRow { keys: string[]; clicks: number; impressions: number; ctr: number; position: number }
@@ -486,7 +489,7 @@ export interface UrlInspection {
   richResultsResult?: { verdict?: string; detectedItems?: { richResultType: string; items?: { name?: string; issues?: { issueMessage: string; severity: string }[] }[] }[] };
 }
 
-/** One user's view of the Search Console API (read-only). */
+/** One user's view of the Search Console API. Only change() writes; older connections hold just the read-only scope. */
 export class SearchConsoleClient {
   constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null = () => null, private f: FetchLike = fetch) {}
 
@@ -497,7 +500,7 @@ export class SearchConsoleClient {
     });
     const body = await res.text();
     if (!res.ok) {
-      if (scopeMissing(res.status, body)) throw new NotGrantedError("search-console", this.grantLink());
+      if (scopeMissing(res.status, body)) throw new NotGrantedError("search-console", this.grantLink(), init.method === "PUT" || init.method === "DELETE");
       const msg = googleMessage(body);
       // AIs guess sc-domain:example.com when the user's property is https://www.example.com/ (or the reverse).
       const fix = res.status === 403 && /permission/i.test(msg)
@@ -519,6 +522,11 @@ export class SearchConsoleClient {
   /** Sitemaps submitted for the property, with Google's last fetch and its error/warning counts. Read-only. */
   async sitemaps(siteUrl: string): Promise<Sitemap[]> {
     return (await this.get(`/sites/${encodeURIComponent(siteUrl)}/sitemaps`)).sitemap ?? [];
+  }
+
+  /** Submit (PUT) or delete a sitemap, or with no sitemap add or remove the property itself. Google answers 204 either way. */
+  async change(method: "PUT" | "DELETE", siteUrl: string, sitemap?: string): Promise<void> {
+    await this.get(`/sites/${encodeURIComponent(siteUrl)}${sitemap ? `/sitemaps/${encodeURIComponent(sitemap)}` : ""}`, { method });
   }
 
   /** Google's index record for one URL in the property, as of its last crawl. */
