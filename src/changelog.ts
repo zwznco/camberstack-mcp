@@ -11,17 +11,7 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
-    version: "0.25.0", date: "2026-10-31",
-    summary: "Search Console changes: submit and remove sitemaps, and add or remove properties, with your approval.",
-    items: [
-      "**Sitemaps** (`submit_sitemap`, `delete_sitemap`): submit a new one, resubmit one so Google reads it again, or remove one. Undo reverses a new submission and a removal.",
-      "**Properties** (`add_site`, `remove_site`): a new property stays unverified until you verify it in Search Console, unless you already own its domain there. Removing a verified one can't be undone, and the summary warns you first.",
-      "**Send feedback from your AI app** (`send_feedback`): report a bug or ask for something Camberstack can't do, without leaving the chat. You see the message first, and it goes straight to the person who builds Camberstack.",
-      "**Search Console access now includes editing**, and every change still needs your approval. If you connected before this, your first change gives you a link that adds it, with no reconnecting.",
-    ],
-  },
-  {
-    version: "0.24.0", date: "2026-10-31", merchantLaunch: true,
+    version: "0.26.0", date: "2026-11-04", merchantLaunch: true,
     summary: "Google Merchant Center: find out why products aren't showing on Google, and fix them with your approval.",
     items: [
       "**Product problems** (`merchant_product_issues`): account issues, how many products are eligible, limited, pending or disapproved, and every issue with the products it affects, worst first.",
@@ -29,6 +19,16 @@ export const CHANGELOG: Release[] = [
       "**Reports** (`merchant_report`): clicks and impressions per product across Shopping ads and free listings.",
       "**Product fixes** (`propose_merchant_changes`): change a price, GTIN or title, leave a product out of Shopping ads or free listings, or add products of your own. Your feed is never edited, nothing applies until you approve it, and each change can be undone.",
       "**Merchant Center is a service of its own on every plan.** Accounts count separately from Google Ads, and the first call gives you a link that adds Merchant Center to your connection, no reconnecting.",
+    ],
+  },
+  {
+    version: "0.25.0", date: "2026-10-31",
+    summary: "Search Console changes: submit and remove sitemaps, and add or remove properties, with your approval.",
+    items: [
+      "**Sitemaps** (`submit_sitemap`, `delete_sitemap`): submit a new one, resubmit one so Google reads it again, or remove one. Undo reverses a new submission and a removal.",
+      "**Properties** (`add_site`, `remove_site`): a new property stays unverified until you verify it in Search Console, unless you already own its domain there. Removing a verified one can't be undone, and the summary warns you first.",
+      "**Send feedback from your AI app** (`send_feedback`): report a bug or ask for something Camberstack can't do, without leaving the chat. You see the message first, and it goes straight to the person who builds Camberstack.",
+      "**Search Console access now includes editing**, and every change still needs your approval. If you connected before this, your first change gives you a link that adds it, with no reconnecting.",
     ],
   },
   {

@@ -317,7 +317,7 @@ const closer = (title: string, sub: string, ctas: string) =>
 
 /** The homepage's "What does Free cover?" once one-service Free is announced; nothing before. */
 const freeFaq = () => fp.kind === "accounts" ? "" : `<div><h3>What does Free cover?</h3>
-<p>${fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, every tool on 1 Google Ads account, with Search Console and Google Analytics included. From then, one` : "One"} Google service at a time: ${freeServices()}, with every tool and unlimited
+<p>${fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, every tool on 1 Google Ads account, with Search Console${merchantOn() ? ", Google Analytics and Merchant Center (1 account)" : " and Google Analytics"} included. From then, one` : "One"} Google service at a time: ${freeServices()}, with every tool and unlimited
 changes. The first time, your AI asks which one; another opens ${ACCOUNT_WINDOW_DAYS} days after the current one was last used.${plusLine()} Pro and Agency cover ${allN()} on more accounts.</p></div>`;
 
 export function homePage(baseUrl: string): string {
@@ -442,7 +442,7 @@ Changes there never reach Google, and the demo doesn't count as one of your plan
   : `Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong>. No card.`}</p>${fp.kind === "upcoming"
   ? `<p class="muted small">From ${dateLabel(fp.from)}: one Google service at a time (${servicesOr()}).</p>` : ""}
 <p class="plan-cta"><a class="btn btn-ghost" href="#setup">Connect for free</a></p></div>${fp.kind === "accounts" ? "" : `
-<div class="plan${fp.kind === "one_service" ? " plan-pro" : ""}"><h3>Plus</h3><p class="price">${PLUS_PRICE_LABEL}</p><p>Google Ads, Search Console and Google Analytics <strong>together, on 1 Google Ads account</strong>, for anyone who wants one connection for all of it. Cancel any time.</p>
+<div class="plan${fp.kind === "one_service" ? " plan-pro" : ""}"><h3>Plus</h3><p class="price">${PLUS_PRICE_LABEL}</p><p>${allServices()}, on <strong>1 Google Ads account</strong>, for anyone who wants one connection for all of it. Cancel any time.</p>
 ${fp.kind === "upcoming" ? `<p class="muted small">Available from ${dateLabel(fp.from)}.</p>`
   // Once sold, Plus is the highlighted plan: most users have one Google Ads account (69% on 2026-10-28).
   : `<p class="plan-cta"><a class="btn" href="/account?upgrade=plus">Get Plus</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p>`}</div>`}
@@ -1146,7 +1146,7 @@ export function plansPage(baseUrl: string): string {
 ${freeServices()}. Your AI asks which one before the first is used; another opens
 ${ACCOUNT_WINDOW_DAYS} days after the current one was last used.</p>`
     : `<p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong> at a time, with one switch
-to another account every ${ACCOUNT_WINDOW_DAYS} days. Search Console and Google Analytics are included and don't count.${soon()}</p>`;
+to another account every ${ACCOUNT_WINDOW_DAYS} days. Search Console and Google Analytics are included and don't count.${merchantOn() ? " Merchant Center is included too, on 1 Merchant Center account." : ""}${soon()}</p>`;
   const all = paidCovers();
   return layout({
     baseUrl, path: "/plans",

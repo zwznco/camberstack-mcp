@@ -14,7 +14,7 @@ import { appPage, cmd, COPY_JS, esc, infoPage } from "./pages.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { SC_TARGET } from "./search-console-changes.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LABELS, allN, listedServices, planLabel } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LABELS, allN, allServices, listedServices, planLabel } from "./plans.js";
 
 interface AccountDeps {
   db: DB;
@@ -200,7 +200,7 @@ Your AI app can no longer use Camberstack until you connect again.</p>
 
     const planCard = plan.plan !== "free"
       ? `<div class="card"><p class="label">Plan</p><p class="big">${planLabel(plan.plan)}${"complimentary" in plan ? ` <span class="chip">complimentary</span>` : ""}</p>
-<p class="muted">${plan.plan === "plus" ? "Google Ads, Search Console and Google Analytics together. " : ""}${plan.accounts_in_use.length} of ${plan.accounts_included} Google Ads account${plan.accounts_included === 1 ? "" : "s"} in use (last ${ACCOUNT_WINDOW_DAYS} days).${"complimentary" in plan ? " No subscription on this account, so nothing to manage or cancel." : ""}</p>
+<p class="muted">${plan.plan === "plus" ? `${allServices()}. ` : ""}${plan.accounts_in_use.length} of ${plan.accounts_included} Google Ads account${plan.accounts_included === 1 ? "" : "s"} in use (last ${ACCOUNT_WINDOW_DAYS} days).${"complimentary" in plan ? " No subscription on this account, so nothing to manage or cancel." : ""}</p>
 ${!by && "manage_billing" in plan && plan.manage_billing ? `<a class="btn" href="${esc(plan.manage_billing)}">Manage billing</a>` : ""}
 ${!by && "pro_upgrade_url" in plan && plan.pro_upgrade_url ? `<a class="btn" href="${esc(plan.pro_upgrade_url)}">Switch to Pro · ${PRO_PRICE_LABEL}</a>` : ""}
 ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="btn" href="${esc(plan.agency_upgrade_url)}">Switch to Agency · ${AGENCY_PRICE_LABEL}</a>` : ""}</div>`

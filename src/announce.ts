@@ -105,7 +105,7 @@ The first time you ask, Camberstack gives you a link that adds Merchant Center t
 
 If your AI can't see it yet, reload Camberstack's tools. In Claude: start a new chat. In ChatGPT, only if you added Camberstack as a custom connector: Settings → Connectors → Camberstack → Refresh.
 
-What each plan covers: https://camberstack.io/plans
+From November 15, Merchant Center is one of the services Free can cover, and Plus includes it. What each plan covers: https://camberstack.io/plans
 
 Everything else that changed recently: https://camberstack.io/changelog
 

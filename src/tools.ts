@@ -16,7 +16,7 @@ import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./ses
 import { isUnexpected, reportError } from "./sentry.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.25.0";
+export const SERVER_VERSION = "0.26.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
