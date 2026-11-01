@@ -108,6 +108,9 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     analytics.aiFetch(req, res);
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    // Here, not a traefik middleware: changing a router's labels makes blue and green disagree mid-deploy,
+    // and traefik drops a router defined two ways. No includeSubDomains: browsers remember it for a year.
+    if (cfg.baseUrl.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000");
     next();
   });
 
