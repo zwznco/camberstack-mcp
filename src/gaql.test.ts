@@ -7,6 +7,16 @@ import { checkGaql, closest, fieldQuery, lookupFields, parseGaql, queryShape, ty
 const rows = JSON.parse(readFileSync(new URL("./fixtures/gaql-catalog.json", import.meta.url), "utf8")) as FieldMeta[];
 const cat: Catalog = new Map(rows.map((f) => [f.name, f]));
 
+/** The fixture trims conversion_action to two fields; the real one is too long to list in an error. */
+function longConversionAction(): Catalog {
+  const live: Catalog = new Map(cat);
+  for (let i = 0; i < 40; i++) {
+    const name = `conversion_action.padding_for_length_${i}`;
+    live.set(name, { name, category: "ATTRIBUTE", dataType: "STRING", selectable: true, filterable: true });
+  }
+  return live;
+}
+
 describe("queryShape, for the usage log", () => {
   it("keeps fields, keywords and Google's constants, and takes out every value", () => {
     expect(queryShape(`SELECT campaign.name, metrics.clicks FROM campaign
@@ -113,16 +123,16 @@ describe("checkGaql against Google's field catalog", () => {
       "campaign.url_expansion_opt_out doesn't exist, and nothing else in this query is flagged: without it, the rest runs. "
       + "Drop it, or find the name with run_gaql: SELECT name, category, selectable, filterable WHERE name LIKE '%expansion%'"]);
     // Was: "conversion_action.status, conversion_action.name".
-    const [i] = checkGaql("SELECT conversion_action.name, conversion_action.all_conversions_settings FROM conversion_action", cat);
+    const [i] = checkGaql("SELECT conversion_action.name, conversion_action.all_conversions_settings FROM conversion_action", longConversionAction());
     expect(i).not.toMatch(/conversion_action\.(status|name)\b/);
     expect(i).toContain("find the name with run_gaql: ");
     // Real near misses still come through.
     expect(checkGaql("SELECT campaign.id, campaign.target_spend.cpc_bid_ceiling_micro FROM campaign", cat)[0])
-      .toContain("Closest usable FROM campaign: campaign.target_spend.cpc_bid_ceiling_micros");
+      .toContain("Fields under campaign.target_spend: campaign.target_spend.cpc_bid_ceiling_micros");
   });
   it("names another resource's field only when it's the same field, and says the rest of the query stands (prod, 2026-10-26)", () => {
     // Was: "Closest: segments.webpage (not usable FROM conversion_action)", and the model dropped the whole query.
-    const live: Catalog = new Map(cat);
+    const live = longConversionAction();
     live.set("segments.webpage", { name: "segments.webpage", category: "SEGMENT", dataType: "RESOURCE_NAME", selectable: true, filterable: true });
     const [i] = checkGaql("SELECT conversion_action.name, conversion_action.status, conversion_action.webpage_code FROM conversion_action", live);
     expect(i).not.toContain("segments.webpage");
@@ -192,6 +202,53 @@ describe("checkGaql against Google's field catalog", () => {
   });
   it("names an unknown FROM", () => {
     expect(checkGaql("SELECT campaign.id FROM campaigns", cat)[0]).toContain("Closest: campaign");
+  });
+  describe("what's really there, instead of a guess (prod, 2026-11-01)", () => {
+    const attr = (name: string, dataType = "STRING"): FieldMeta => ({ name, category: "ATTRIBUTE", dataType, selectable: true, filterable: true });
+    const live: Catalog = new Map(cat);
+    const add = (...fs: FieldMeta[]) => { for (const f of fs) live.set(f.name, f); };
+    add({ name: "customer_user_access", category: "RESOURCE", selectable: false, attributeResources: ["customer"] },
+      attr("customer_user_access.access_role"), attr("customer_user_access.email_address"), attr("customer_user_access.inviter_user_email_address"),
+      { name: "product_link", category: "RESOURCE", selectable: false, attributeResources: ["customer"] },
+      attr("product_link.merchant_center.merchant_center_id"), attr("product_link.type"),
+      { name: "metrics.auction_insight_search_overlap_rate", category: "METRIC", dataType: "DOUBLE", selectable: true },
+      { name: "conversion_goal_campaign_config", category: "RESOURCE", selectable: false, attributeResources: ["campaign"] },
+      attr("conversion_goal_campaign_config.goal_config_level"),
+      attr("recommendation.campaign_budget_recommendation", "MESSAGE"));
+
+    it("lists a resource's real fields, once, rather than a near miss on the wrong one", () => {
+      const i = checkGaql("SELECT customer_user_access.user_email, customer_user_access.access_role, customer_user_access.status FROM customer_user_access", live);
+      expect(i).toEqual(["customer_user_access.user_email doesn't exist. Fields under customer_user_access: customer_user_access.access_role, "
+        + "customer_user_access.email_address, customer_user_access.inviter_user_email_address.",
+      "customer_user_access.status doesn't exist either."]);
+    });
+    it("prefers the same distinctive name on another path to a list that lacks it", () => {
+      add({ name: "asset", category: "RESOURCE", selectable: false, attributeResources: ["customer"] }, attr("asset.final_urls"), attr("asset.sitelink_asset.link_text"));
+      expect(checkGaql("SELECT asset.sitelink_asset.link_text, asset.sitelink_asset.final_urls FROM asset", live)[0]).toContain("Closest usable FROM asset: asset.final_urls");
+    });
+    it("says the rest runs when the listed field is the only problem", () => {
+      expect(checkGaql("SELECT customer_user_access.access_role, customer_user_access.user_email FROM customer_user_access", live)[0])
+        .toContain("without it, the rest runs. Fields under customer_user_access: ");
+    });
+    it("points at a message field that's selected whole", () => {
+      expect(checkGaql("SELECT recommendation.type, recommendation.campaign_budget_recommendation.current_budget_micros FROM recommendation", live)[0])
+        .toContain("Select recommendation.campaign_budget_recommendation whole");
+    });
+    it("lists a resource named inside the path, and where to query it", () => {
+      expect(checkGaql("SELECT campaign.conversion_goal_campaign_config.biddable_conversion_actions FROM campaign", live)[0])
+        .toMatch(/doesn't exist\. Fields under conversion_goal_campaign_config, its own resource: .*conversion_goal_campaign_config\.goal_config_level.*; query them FROM conversion_goal_campaign_config\.$/);
+    });
+    it("keeps the near-miss path for a resource too long to list", () => {
+      expect(checkGaql("SELECT campaign.id, campaign.target_spend.cpc_bid_ceiling_micro FROM campaign", live)[0]).toContain("Fields under campaign.target_spend: ");
+      expect(checkGaql("SELECT campaign.name, campaign.url_expansion_opt_out FROM campaign", live)[0]).toContain("find the name with run_gaql");
+    });
+    it("finds an unknown FROM's data by its words", () => {
+      expect(checkGaql("SELECT merchant_center_link.status FROM merchant_center_link", live)).toEqual([
+        "FROM merchant_center_link: there is no such resource. Fields with those words: product_link.merchant_center.merchant_center_id (FROM product_link)."]);
+      expect(checkGaql("SELECT auction_insight.impression_share FROM auction_insight", live)[0]).toContain("metrics.auction_insight_search_overlap_rate");
+      // One word says too little.
+      expect(checkGaql("SELECT invoice.id FROM invoice", live)).toEqual(["FROM invoice: there is no such resource."]);
+    });
   });
 });
 

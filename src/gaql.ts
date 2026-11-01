@@ -6,7 +6,7 @@
  *   fieldQuery   run_gaql's field lookup: a SELECT with no FROM (or FROM google_ads_field) goes to the catalog itself,
  *                so every client can look names up through the tool it already has. (gaql_fields did this as its own
  *                tool, which most apps never listed or called; it stays callable, unlisted, for apps that hold it.)
- *   checkGaql    finds unknown fields (with the closest real ones), fields that can't be selected or filtered,
+ *   checkGaql    finds unknown fields (with the real fields around them, or the closest), fields that can't be selected or filtered,
  *                and fields that can't be used FROM the query's resource. It never blocks a query on its own:
  *                run_gaql still sends it to Google, and attaches these findings only when Google rejects it.
  *                A finding on a query Google accepts is a checker bug, and is logged as one. Findings never send the AI
@@ -114,10 +114,13 @@ export function checkGaql(query: string, cat: Catalog): string[] {
   const from = cat.get(p.from);
   if (!from || from.category !== "RESOURCE") {
     const near = closest(p.from, [...cat.values()].filter((f) => f.category === "RESOURCE").map((f) => f.name));
-    return [`FROM ${p.from}: there is no such resource${near.length ? `. Closest: ${near.join(", ")}` : ""}.`];
+    if (near.length) return [`FROM ${p.from}: there is no such resource. Closest: ${near.join(", ")}.`];
+    const named = fieldsNamed(p.from, cat);
+    return [`FROM ${p.from}: there is no such resource${named.length ? `. Fields with those words: ${named.join(", ")}` : ""}.`];
   }
   const usable = (f: FieldMeta) => fromAllows(from, f);
   const unknown = new Set<string>();
+  const listed = new Set<string>();
   for (const [clause, names] of [["SELECT", p.select], ["WHERE", p.where], ["ORDER BY", p.orderBy]] as const) {
     for (const name of names) {
       const f = cat.get(name);
@@ -140,9 +143,19 @@ export function checkGaql(query: string, cat: Catalog): string[] {
             + `${usable(real) ? `, which can be selected FROM ${p.from}` : ` (its own resource, not part of ${p.from})${whereFrom(real, cat, p.from)}`}.`);
           continue;
         }
-        // Prefer suggestions this FROM can use; fall back to any field; with none close, the lookup that finds it.
+        // A short list of what's really there beats a guess: the model reads names better than edit distance does.
+        // Was: customer_user_access.user_email offered inviter_user_email_address, .status offered customer.status (prod, 2026-11-01).
+        // Except the same distinctive name on another path, which is the answer: asset.sitelink_asset.final_urls is asset.final_urls.
         const pool = [...cat.values()].filter((x) => x.category !== "RESOURCE");
         const near = closest(name, pool.filter(usable).map((x) => x.name));
+        const around = name.split(".").at(-1)!.includes("_") && near.some((c) => sameLeaf(c, name)) ? null : fieldsAround(name, cat, usable);
+        if (around) {
+          issues.push(listed.has(around) ? `${name} doesn't exist either.` : `${name} doesn't exist. ${around}`);
+          listed.add(around);
+          unknown.add(issues.at(-1)!);
+          continue;
+        }
+        // Prefer suggestions this FROM can use; fall back to any field; with none close, the lookup that finds it.
         // Another resource's field only when it's the same field under another path (performance_label): a looser match
         // offered segments.webpage for conversion_action.webpage_code, and the model dropped the whole query (prod, 2026-10-26).
         const anywhere = near.length ? [] : closest(name, pool.map((x) => x.name)).filter((c) => sameLeaf(c, name));
@@ -182,7 +195,7 @@ export function checkGaql(query: string, cat: Catalog): string[] {
   const all = [...new Set([...issues, ...enumIssues(query, cat)])];
   // One unknown field and nothing else: say the rest stands. The model dropped a valid query over one bad field (prod, 2026-10-26).
   if (all.length === 1 && unknown.has(all[0]!) && p.select.length > 1) {
-    all[0] = all[0]!.replace(/\. (Drop it|Closest)/, (_, w: string) => `, and nothing else in this query is flagged: without it, the rest runs. ${w}`);
+    all[0] = all[0]!.replace(/\. (Drop it|Closest|Fields under|Select)/, (_, w: string) => `, and nothing else in this query is flagged: without it, the rest runs. ${w}`);
   }
   return all;
 }
@@ -218,6 +231,51 @@ function ownDates(cat: Catalog, from: string): string[] {
   return [...cat.values()].filter((x) => x.category === "ATTRIBUTE" && x.dataType === "DATE" && x.filterable !== false
     && x.name.split(".").length === 2 && x.name.startsWith(`${from}.`)).map((x) => x.name)
     .sort((a, b) => Number(b.includes("start")) - Number(a.includes("start")));
+}
+
+/** Longest list of field names worth putting in an error: past this, run_gaql's usage log cuts it off and the reader skims it. */
+const LIST_CHARS = 700;
+
+/**
+ * What's really around an unknown name, from its deepest path that exists: every field under it, or that path itself when
+ * it's selected whole (recommendation.campaign_budget_recommendation has no fields of its own in the catalog). Null when
+ * nothing short and certain can be said. A resource named inside the path counts too: campaign.conversion_goal_campaign_config.x.
+ */
+function fieldsAround(name: string, cat: Catalog, usable: (f: FieldMeta) => boolean): string | null {
+  const parts = name.split(".");
+  const under = (path: string, ok: (f: FieldMeta) => boolean) => [...cat.values()]
+    .filter((x) => x.name.startsWith(`${path}.`) && x.selectable !== false && ok(x))
+    .sort((a, b) => a.name.split(".").length - b.name.split(".").length).map((x) => x.name);
+  const short = (names: string[]) => names.join(", ").length <= LIST_CHARS;
+  for (let i = parts.length - 1; i >= 1; i--) {
+    const path = parts.slice(0, i).join(".");
+    const own = under(path, usable);
+    if (own.length) {
+      if (short(own)) return `Fields under ${path}: ${own.join(", ")}.`;
+      break;
+    }
+    const f = cat.get(path);
+    if (f?.dataType === "MESSAGE" && f.selectable !== false && usable(f)) return `Select ${path} whole: its fields aren't listed separately.`;
+  }
+  const inner = parts.slice(1, -1).find((x) => cat.get(x)?.category === "RESOURCE");
+  const its = inner ? under(inner, () => true) : [];
+  return its.length && short(its) ? `Fields under ${inner}, its own resource: ${its.join(", ")}; query them FROM ${inner}.` : null;
+}
+
+/**
+ * Fields holding the words of a resource that doesn't exist: merchant_center_link is gone, and product_link.merchant_center
+ * .merchant_center_id is what replaced it, which no resource name would show (prod, 2026-11-01). Two words at least.
+ */
+function fieldsNamed(from: string, cat: Catalog): string[] {
+  const wanted = from.split("_").filter((w) => w.length >= 3);
+  if (wanted.length < 2) return [];
+  const hits = [...cat.values()].filter((f) => f.category !== "RESOURCE" && f.selectable !== false).map((f) => {
+    const have = f.name.split(/[._]/);
+    return { f, score: wanted.filter((w) => have.includes(w)).length };
+  }).filter((x) => x.score >= 2);
+  const best = Math.max(0, ...hits.map((x) => x.score));
+  return hits.filter((x) => x.score === best).sort((a, b) => a.f.name.length - b.f.name.length).slice(0, 3)
+    .map(({ f }) => (f.category === "ATTRIBUTE" ? `${f.name} (FROM ${f.name.split(".")[0]})` : f.name));
 }
 
 /** The most telling word of a field's last part (url_expansion_opt_out → expansion), to look it up by. */
