@@ -80,7 +80,8 @@ describe("AdsApiError fix hints", () => {
       location: { fieldPathElements: [{ fieldName: "keyword" }, { fieldName: "text" }] },
       details: { policyViolationDetails: { externalPolicyName: "Alcohol", key: { policyName: "ALCOHOL", violatingText: "borrel" }, isExemptible: true } },
     }] }] } }));
-    expect(e.message).toContain('[policy Alcohol flagged "borrel", exemptible]');
+    // The key, which request_review needs, before the display name.
+    expect(e.message).toContain('[policy ALCOHOL (Alcohol) flagged "borrel", exemptible]');
     expect(e.message).toContain("→ ");
   });
 

@@ -291,7 +291,7 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
     case "POLICY_ERROR":
       return /keyword\.text$/.test(field)
         ? "Google's policy check refused a keyword (the policy and the words it flagged are above). Drop or reword that keyword "
-          + "and propose again. If it's marked exemptible and the user says it complies, propose it again with request_review set to that policy and text."
+          + "and propose again. If it's marked exemptible and the user says it complies, propose it again with request_review set to that policy (its capitalised name, e.g. ALCOHOL) and text."
         : null;
     case "IMMUTABLE_FIELD":
       return /counting_type$/.test(field)
@@ -335,7 +335,11 @@ export class AdsApiError extends Error {
         const fix = adsErrorFix(String(code), String(d.message ?? ""), field ?? "");
         // POLICY_ERROR's message only says "see PolicyViolationDetails"; the policy and flagged text are in there.
         const pv = d.details?.policyViolationDetails;
-        const policy = pv ? `[policy ${pv.externalPolicyName ?? pv.key?.policyName}` + (pv.key?.violatingText ? ` flagged "${pv.key.violatingText}"` : "")
+        // request_review needs key.policyName, not the display name: with only "Moderately Restricted" shown, the AI sent that
+        // back and Google refused the review twice (2026-11-02).
+        const shown = pv?.key?.policyName && pv.externalPolicyName && pv.externalPolicyName !== pv.key.policyName
+          ? `${pv.key.policyName} (${pv.externalPolicyName})` : pv?.key?.policyName ?? pv?.externalPolicyName;
+        const policy = pv ? `[policy ${shown}` + (pv.key?.violatingText ? ` flagged "${pv.key.violatingText}"` : "")
           + (pv.isExemptible ? ", exemptible" : "") + "]" : "";
         // POLICY_FINDING's topics and the text Google flagged are in PolicyFindingDetails. Without them the AI reworded
         // blind and got the same refusal twice (2026-10-22).
