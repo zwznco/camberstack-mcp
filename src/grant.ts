@@ -13,7 +13,7 @@ import type { DB, UserRow } from "./db.js";
 import { now } from "./db.js";
 import { encrypt, randomToken, safeEqual, sign } from "./crypto.js";
 import { readCookie } from "./http.js";
-import { GRANTS, exchangeGoogleCode, googleGrantUrl, idTokenClaims, type GoogleCreds, type GrantKind } from "./google.js";
+import { GRANTS, exchangeGoogleCode, googleGrantUrl, grantName, idTokenClaims, isEditUpgrade, type GoogleCreds, type GrantKind } from "./google.js";
 import { esc } from "./pages.js";
 
 const LINK_TTL = 7 * 86400;
@@ -30,6 +30,9 @@ export interface GrantDeps {
   signingKey: Buffer;
   /** Drops the user's cached Google token and account list, so the next call uses the new token (session.ts). */
   forgetToken: (userId: string) => void;
+  /** Matomo event (analytics.ts): grant_opened when a valid link is followed, grant_added when the grant lands. The name
+   *  is grantName(), so search-console-edit tells an upgrade from webmasters.readonly apart from a first-time add. */
+  track?: (req: Request, action: string, name: string) => void;
   fetch?: typeof fetch;
 }
 
@@ -59,6 +62,7 @@ export class Grants {
         res.status(400).type("html").send(page("Link expired", "<p>This link has expired or is not valid. Ask your AI assistant to run the tool again for a fresh one.</p>"));
         return;
       }
+      this.d.track?.(req, "grant_opened", grantName(kind, isEditUpgrade(kind, u.google_scopes)));
       const id = PREFIX + randomToken(24), nonce = randomToken(16);
       this.d.db.prepare("INSERT INTO pending_auth (id, client_id, params, created_at) VALUES (?, '__grant', ?, ?)")
         .run(id, JSON.stringify({ userId: u.id, kind, nonce }), now());
@@ -87,11 +91,13 @@ export class Grants {
     if (!who || who.sub !== u.google_sub) return fail(`That was a different Google account. Add ${label} with the account Camberstack is connected to (${u.email}).`);
     if (!g.scope.split(" ").includes(GRANTS[p.kind].scopes[0])) return fail(`The ${label} box was unticked. Nothing changed.`);
     if (!g.refresh_token) return fail("Google didn't return a new token. Try the link again.");
+    const name = grantName(p.kind, isEditUpgrade(p.kind, u.google_scopes));  // from the scopes held before this grant
     this.d.db.prepare("UPDATE users SET enc_refresh = ?, google_scopes = ? WHERE id = ?").run(encrypt(this.d.encryptionKey, g.refresh_token), g.scope, u.id);
     this.d.forgetToken(u.id);
     res.append("Set-Cookie", `${STATE_COOKIE}=; Path=/oauth/; Max-Age=0; SameSite=Lax`);
     res.status(200).type("html").send(page(`${label} added`, `<p><strong>${label} is now part of your Camberstack connection.</strong></p>`
       + "<p>Go back to your AI assistant and ask again.</p>"));
+    this.d.track?.(req, "grant_added", name);
     return p.kind;
   }
 

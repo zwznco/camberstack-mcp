@@ -61,6 +61,19 @@ export const GRANTS = {
 } as const;
 export type GrantKind = keyof typeof GRANTS;
 
+/** The scope that lets a connection read a service without changing it: holding it alone, a grant link adds edit access. */
+const READ_ONLY: Partial<Record<GrantKind, string>> = { "search-console": SEARCH_CONSOLE_READONLY_SCOPE, analytics: ANALYTICS_SCOPE };
+
+/** The connection can read this service but lacks the scope to change it (search-console: webmasters.readonly only). */
+export function isEditUpgrade(kind: GrantKind, scopes: string | null | undefined): boolean {
+  const have = new Set((scopes ?? "").split(" "));
+  const read = READ_ONLY[kind];
+  return !!read && have.has(read) && !GRANTS[kind].scopes.every((s) => have.has(s));
+}
+
+/** How tracking names a grant (tool_calls.grant_offered, the Matomo grant_* events): `<kind>-edit` for an upgrade to edit. */
+export const grantName = (kind: GrantKind, edit: boolean): string => (edit ? `${kind}-edit` : kind);
+
 /**
  * Add one service to an existing connection (incremental authorization): Google returns a refresh token covering
  * everything granted before plus this. openid email so the callback can check it's the same Google account.
@@ -84,7 +97,7 @@ export const scopeMissing = (status: number, body: string) =>
 
 /** A tool needs a Google service this connection doesn't have yet; `link` adds it (personal, 7 days). */
 export class NotGrantedError extends Error {
-  constructor(readonly kind: GrantKind, readonly link: string | null, edit = false) {
+  constructor(readonly kind: GrantKind, readonly link: string | null, readonly edit = false) {
     const { label } = GRANTS[kind];
     super(`${edit ? `Changing ${label} needs its edit access, which this connection doesn't have.`
       : `${label} access isn't part of this Google connection yet.`} `

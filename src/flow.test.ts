@@ -34,6 +34,15 @@ const idToken = (sub: string, email: string) =>
 const googleUser = { sub: "google-sub-1", email: "Owner@Example.com" };
 
 /** What Google's token endpoint grants; the Analytics test widens it. */
+/** Matomo events sent (analytics.ts), as [action, name]. */
+const events: [string, string | undefined][] = [];
+const analyticsFetch = (async (_u: string, init: RequestInit) => {
+  const b = init.body as URLSearchParams;
+  if (b.get("e_a")) events.push([b.get("e_a")!, b.get("e_n") ?? undefined]);
+  return new Response(null, { status: 204 });
+}) as unknown as typeof fetch;
+const grantEvents = () => events.filter(([a]) => a.startsWith("grant_"));
+const lastOffered = () => (db.prepare("SELECT grant_offered g FROM tool_calls ORDER BY id DESC LIMIT 1").get() as { g: string | null }).g;
 const googleGrant = { scope: "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/adwords", refresh: "g-refresh" };
 
 /** Google's token endpoint. */
@@ -403,6 +412,7 @@ beforeAll(async () => {
     baseUrl: "http://localhost", port: 0, dataDir: ":memory:", encryptionKey: key,
     google: { clientId: "gid", clientSecret: "gsecret" },
     freeAccounts: 1, proAccounts: 5, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro", plusPriceId: "price_plus" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
+    matomo: { url: "http://matomo.test", siteId: "1", token: "" },
   };
   // Bind first so baseUrl (the OAuth issuer) is the real test origin.
   server = await new Promise<Server>((resolve) => { const s = createApp(cfg, db).app.listen(0, () => resolve(s)); });
@@ -410,7 +420,7 @@ beforeAll(async () => {
   server.close();
   server = await new Promise<Server>((resolve) => {
     ({ app, billing, grants, deps } = createApp({ ...cfg, baseUrl: base, adminUrl: base.replace("localhost", "127.0.0.1"), openaiAppsChallenge: "tok_test_123",
-      conversions: { opsUrl: "http://operations.test/v1/conversions", opsKey: "crk_ours", actionId: "555" } }, db, { fetch: googleFetch, stripeFetch, adsConversionFetch, adsFactory: () => ads as any, scFactory: () => sc, gaFactory: (u) => ({ summaries: () => ga.summaries(u.id), runReport: () => ga.runReport(), admin: (m, p, b) => ga.admin(m, p, b) }),
+      conversions: { opsUrl: "http://operations.test/v1/conversions", opsKey: "crk_ours", actionId: "555" } }, db, { fetch: googleFetch, analyticsFetch, stripeFetch, adsConversionFetch, adsFactory: () => ads as any, scFactory: () => sc, gaFactory: (u) => ({ summaries: () => ga.summaries(u.id), runReport: () => ga.runReport(), admin: (m, p, b) => ga.admin(m, p, b) }),
         merchantFactory: (u) => ({ accounts: async () => { throw new NotGrantedError("merchant-center", grants.link("merchant-center", u.id)); },
           accountIssues: async () => [], search: async () => ({ rows: [], truncated: false }) }) }));
     const s = app.listen(Number(new URL(base).port), () => resolve(s));
@@ -1044,6 +1054,8 @@ describe("OAuth + MCP end to end", () => {
     expect(before.not_granted).toContain("isn't part of this Google connection");
     const link: string = before.grant_url;
     expect(link).toContain("/connect/analytics?t=");
+    expect(lastOffered()).toBe("analytics");
+    events.length = 0;
     expect((await fetch(link.replace(/.$/, (c) => (c === "A" ? "B" : "A")), { redirect: "manual" })).status).toBe(400);
 
     const start = async () => {
@@ -1077,6 +1089,8 @@ describe("OAuth + MCP end to end", () => {
       const done = await back(ok, ok.cookie);
       expect(done.status).toBe(200);
       expect(await done.text()).toContain("Google Analytics is now part of your Camberstack connection");
+      // Every valid link followed is an open (the bad-signature one isn't); only the one that landed is an add.
+      expect(grantEvents()).toEqual([["grant_opened", "analytics"], ["grant_opened", "analytics"], ["grant_opened", "analytics"], ["grant_added", "analytics"]]);
       expect((await call(token, "analytics_properties")).json.properties).toEqual([{ property_id: "321", name: "Example", account: "Example Inc", account_id: "77" }]);
     } finally {
       googleGrant.scope = googleGrant.scope.replace(" https://www.googleapis.com/auth/analytics.readonly", "");
@@ -1620,6 +1634,7 @@ describe("OAuth + MCP end to end", () => {
       const s = (await call(token, "search_console_sites")).json;
       expect(s.sites).toEqual([{ site_url: "sc-domain:northwind-plumbing.example", permission: "demo" }]);
       expect(s.grant_url).toBe(sc.notGranted);
+      expect(lastOffered()).toBe("search-console");  // from the result's grant_url, not an error
       const r = await call(token, "search_console_performance", { site_url: "sc-domain:acme.test" });
       expect(r.isError).toBe(true);
       expect(r.text).toContain("/connect/search-console?t=");
@@ -1648,10 +1663,21 @@ describe("OAuth + MCP end to end", () => {
         const r = await propose({ type: "submit_sitemap", site_url: SITE, sitemap_url: "https://acme.test/new.xml" });
         expect(r.isError).toBe(true);
         expect(r.text).toContain("Changing Search Console needs its edit access");
+        expect(lastOffered()).toBe("search-console-edit");
         const link = r.text.match(/https?:\/\/\S+\/connect\/search-console\?t=\S+/)![0];
+        events.length = 0;
         const go = await fetch(link, { redirect: "manual" });
-        expect(new URL(go.headers.get("location")!).searchParams.get("scope")).toBe(`openid email ${EDIT}`);
+        const g = new URL(go.headers.get("location")!);
+        expect(g.searchParams.get("scope")).toBe(`openid email ${EDIT}`);
         expect(sc.writes).toEqual([]);
+        // Ticking the box upgrades the connection, and Matomo names it as an upgrade, not a first-time add.
+        googleGrant.scope += ` ${EDIT}`;
+        try {
+          const done = await fetch(`${base}/oauth/google/callback?code=gcode&state=${g.searchParams.get("state")}`,
+            { redirect: "manual", headers: { cookie: go.headers.get("set-cookie")!.split(";")[0]! } });
+          expect(done.status).toBe(200);
+        } finally { googleGrant.scope = googleGrant.scope.replace(` ${EDIT}`, ""); }
+        expect(grantEvents()).toEqual([["grant_opened", "search-console-edit"], ["grant_added", "search-console-edit"]]);
       } finally { scopes(`openid ${EDIT}`); }
     });
 

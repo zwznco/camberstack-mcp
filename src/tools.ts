@@ -14,6 +14,7 @@ import { DEMO_SITE } from "./demo.js";
 import { DEMO_PROPERTY } from "./ga4.js";
 import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
+import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
 export const SERVER_VERSION = "0.26.0";
@@ -142,7 +143,12 @@ interface ToolCall {
   service?: string | null;
   /** servicesOf on a call a notice stopped: what it was after, for reading the paywall by service. Never counts as use. */
   serviceWanted?: string | null;
+  /** The grant link this call handed out (google.ts grantName), in an error or a result's grant_url. */
+  grantOffered?: string | null;
 }
+
+/** A personal grant link (grant.ts) in a tool's output; the group is its kind. */
+const GRANT_LINK = /\/connect\/([a-z-]+)\?t=/;
 
 /** What the /tools page and llms.txt show about each tool; filled as buildServer registers them. */
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
@@ -161,6 +167,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       let out: ReturnType<typeof ok> | ReturnType<typeof fail>;
       let release = () => {};
       let notice: string | null = null;
+      let offered: string | null = null;
       const services = servicesOf(name, a);
       try {
         if (services.length) {
@@ -181,6 +188,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           notice = e.message;
           out = ok({ notice: e.message, ...e.detail });
         } else {
+          if (e instanceof NotGrantedError && e.link) offered = grantName(e.kind, e.edit);
           out = fail(e);
           if (isUnexpected(e)) reportError(e, name);
         }
@@ -194,6 +202,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
           service: services.length && !("isError" in out) && !notice ? services.join(",") : null,
           serviceWanted: services.length && notice ? services.join(",") : null,
+          // A result's grant_url (search_console_sites, analytics_properties, …) names only the service, never edit.
+          grantOffered: offered ?? GRANT_LINK.exec(out.content[0]!.text)?.[1] ?? null,
         });
       } catch { /* logging must never break a tool */ }
       release();  // after the log: the account now counts as used from tool_calls instead

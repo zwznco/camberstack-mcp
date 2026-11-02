@@ -245,6 +245,8 @@ export function openDb(dataDir: string): DB {
   if (!tc.has("service")) db.exec("ALTER TABLE tool_calls ADD COLUMN service TEXT");
   // Which services a call stopped by a notice was after (2026-10-31): `service` stays null there, or a stop would count as use.
   if (!tc.has("service_wanted")) db.exec("ALTER TABLE tool_calls ADD COLUMN service_wanted TEXT");
+  // Which grant link the call handed the user (2026-11-02): grantName(), e.g. search-console-edit. Offered vs grant_added in Matomo.
+  if (!tc.has("grant_offered")) db.exec("ALTER TABLE tool_calls ADD COLUMN grant_offered TEXT");
   // The admin's email on an /account session opened through "Log in as user" (account.ts); NULL = the user's own.
   const ws = new Set((db.prepare("PRAGMA table_info(web_sessions)").all() as { name: string }[]).map((c) => c.name));
   if (!ws.has("impersonator")) db.exec("ALTER TABLE web_sessions ADD COLUMN impersonator TEXT");

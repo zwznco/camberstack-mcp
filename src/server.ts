@@ -87,8 +87,11 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey, fetch: overrides.fetch, allowedEmails: cfg.allowedEmails,
     // Google verified the Analytics scopes 2026-10-17, so sign-in asks for them next to Ads + Search Console.
   });
+  const analytics = new Analytics({ matomoUrl: cfg.matomo?.url ?? "", siteId: cfg.matomo?.siteId ?? "",
+    token: cfg.matomo?.token ?? "", site: cfg.baseUrl, fetch: overrides.analyticsFetch });
   const grants = new Grants({ db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
-    signingKey: deriveKey(cfg.encryptionKey, "grant-links"), forgetToken: clearGoogleCache, fetch: overrides.fetch });
+    signingKey: deriveKey(cfg.encryptionKey, "grant-links"), forgetToken: clearGoogleCache, fetch: overrides.fetch,
+    track: (req, action, name) => analytics.event(req, action, name) });
   const deps: SessionDeps = {
     db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
     freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails, freeOneServiceFrom: cfg.freeOneServiceFrom,
@@ -98,11 +101,9 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };
   const mcpUrl = new URL(`${cfg.baseUrl}/mcp`);
-  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service, service_wanted)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service, service_wanted, grant_offered)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
-  const analytics = new Analytics({ matomoUrl: cfg.matomo?.url ?? "", siteId: cfg.matomo?.siteId ?? "",
-    token: cfg.matomo?.token ?? "", site: cfg.baseUrl, fetch: overrides.analyticsFetch });
 
   app.use((req, res, next) => {
     analytics.aiFetch(req, res);
@@ -213,8 +214,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     }
     const state = typeof req.query.state === "string" ? req.query.state : undefined;
     if (grants.owns(state)) {
-      const added = await grants.finish(req, res, info).catch((e: Error) => void res.status(400).type("html").send(errorPage(cfg.baseUrl, e.message)));
-      if (added) analytics.event(req, "grant_added", added);
+      await grants.finish(req, res, info).catch((e: Error) => void res.status(400).type("html").send(errorPage(cfg.baseUrl, e.message)));
       return;
     }
     try {
@@ -259,7 +259,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     // Admins only, not PRO_EMAILS: that holds the directory reviewers' login, who mustn't meet an unverified scope.
     const merchant = merchantOn() || (!!email && cfg.adminEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
-      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.serviceWanted ?? null);
+      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.serviceWanted ?? null, c.grantOffered ?? null);
     }, [], { chatgpt, merchant,
       feedback: async (kind, message) => {
         if (!email) throw new Error("Feedback needs a connected account.");
