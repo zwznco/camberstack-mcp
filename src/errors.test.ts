@@ -63,6 +63,8 @@ describe("AdsApiError fix hints", () => {
   it("doesn't blame a developer token for restricted metrics: Google sunset them (2026-10-30)", () => {
     const code = { authorizationError: "METRIC_ACCESS_DENIED" };
     expect(new AdsApiError(403, body(code, "The developer doesn't have access to metrics: ''auction_insight_search_impression_share''")).message).toContain("Auction insights report");
+    // The domains alone do come back, so name that query instead of "no query" (prod, 2026-11-03: 7 retries of the metrics).
+    expect(new AdsApiError(403, body(code, "The developer doesn't have access to metrics: ''auction_insight_search_impression_share''")).message).toContain("segments.auction_insight_domain FROM campaign");
     const other = new AdsApiError(403, body(code, "The developer doesn't have access to metrics: ''other_metric''")).message.split(" → ")[1];
     expect(other).toContain("drop them from the query");
     expect(other).not.toContain("developer token");

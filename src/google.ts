@@ -184,11 +184,15 @@ const NO_OR = "GAQL has no parentheses or OR: WHERE conditions can only be joine
 function adsErrorFix(code: string, message: string, field: string): string | null {
   switch (code) {
     case "METRIC_ACCESS_DENIED":
-      // Auction insights for a ChatGPT user, 2026-10-23: no query can get these, so say so instead of inviting a retry.
+      // Auction insights for a ChatGPT user, 2026-10-23: no query can get these metrics, so say so instead of inviting a retry.
+      // The domains alone do come back (checked on 386-283-8095, 2026-11-03); a user retried the metrics 7× without knowing
+      // that, and once got the domains by chance. Google rejects any metric next to the domain segment, even impressions.
       return (message.includes("auction_insight")
-        ? "Google doesn't give Camberstack access to auction insights metrics, so no query "
-          + "here can return them. The user can see competitors in Google Ads' Auction insights report; for the account's own share, "
-          + "metrics.search_impression_share and metrics.search_top_impression_share work."
+        ? "Google doesn't give Camberstack access to auction insights metrics (impression share, overlap, position above, "
+          + "outranking), so no query here can return them: don't retry them. What does work: the competitor domains, with no metrics "
+          + "in the query: SELECT campaign.name, segments.auction_insight_domain FROM campaign WHERE segments.date DURING LAST_30_DAYS. "
+          + "For the account's own share, metrics.search_impression_share and metrics.search_top_impression_share. "
+          + "The competitors' numbers are in Google Ads' Auction insights report."
         : "Google doesn't give Camberstack access to these metrics: drop them from the query.");
     case "EXPECTED_FILTERS_ON_DATE_RANGE":
       return "add a finite range to WHERE: segments.date DURING LAST_30_DAYS, or segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'.";
