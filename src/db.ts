@@ -119,6 +119,9 @@ CREATE TABLE IF NOT EXISTS ad_conversions (
 );
 
 -- Lifecycle emails (lifecycle.ts): one row per user per kind, so each is sent at most once.
+-- Other writers: announcements ('announce:<id>', announce.ts) and the operator's personal follow-ups ('followup:<tool_calls.id>',
+-- written outside this server by ~/scripts/gaql-reliability/run.sh followup, which also records 'check_in'). Match kinds exactly
+-- or by prefix, never with a broad LIKE, and don't prune them: the follow-up spacing rules read them back.
 CREATE TABLE IF NOT EXISTS email_log (
   user_id  TEXT NOT NULL,
   kind     TEXT NOT NULL,
