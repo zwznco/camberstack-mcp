@@ -13,7 +13,7 @@ import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { esc } from "./pages.js";
-import { planLabel } from "./plans.js";
+import { dateLabel, planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
 import { AUDIENCES, DAILY_LIMIT, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
@@ -68,7 +68,7 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
   const view = (req: Request) => {
     const days = [1, 7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
     const report = buildReport(d.db, { days, exclude: [...d.internalEmails], freeOneServiceFrom: d.freeOneServiceFrom });
-    return { days, all: req.query.all === "1", report, feedback: feedbackCount(d.db, windowStart(days)) };
+    return { days, all: req.query.all === "1", report, feedback: feedbackCount(d.db, windowStart(days)), freeFrom: d.freeOneServiceFrom };
   };
   const pages: Record<string, (v: ReturnType<typeof view>) => string> = {
     "/": overviewPage, "/users": usersPage, "/activity": activityPage, "/revenue": revenuePage,
@@ -90,7 +90,7 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
     const u = userDetail(d.db, req.params.id, windowStart(v.days));
     if (!u) { res.status(404).send("No such user."); return; }
     if (req.query.format === "json") { res.json(u); return; }
-    const heading = `<a class="muted" href="/users${qs(v)}">Users</a> <span class="dim">/</span> ${esc(u.user.email)} ${planBadge(u.user.plan, Boolean(u.user.stripe_sub))}${
+    const heading = `<a class="muted" href="/users${qs(v)}">Users</a> <span class="dim">/</span> ${esc(u.user.email)} ${planBadge(v, u.user.plan, Boolean(u.user.stripe_sub), u.user.created_at)}${
       d.internalEmails.has(u.user.email.toLowerCase()) ? ` <span class="chip">internal</span>` : ""}`;
     res.type("html").send(shell("/users", who, v, userPage(u, v), heading));
   });
@@ -145,7 +145,7 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
 
 // ---------------------------------------------------------------- views
 
-type View = { days: number; all: boolean; report: Report; feedback: number };
+type View = { days: number; all: boolean; report: Report; feedback: number; /** FREE_ONE_SERVICE's start: who is on legacy Free. */ freeFrom?: number };
 
 /** Monthly recurring revenue: each paying customer at their plan's price (report.ts MONTHLY). Complimentary plans aren't in it. */
 const mrr = (r: Report) => r.payingByPlan.reduce((a, p) => a + p.n * (MONTHLY[p.plan] ?? 0), 0);
@@ -185,8 +185,16 @@ function perms(scopes: string | null, connected: number | boolean, o: { short?: 
   const off = o.missing ? Object.values(SCOPE_LABELS).filter((l) => !have.includes(l)).map((l) => `<span class="chip">${label(l)}</span>`) : [];
   return [...on, ...off].join(" ") || `<span class="dim">none</span>`;
 }
-const planBadge = (plan: string, paying: number | boolean) =>
-  plan === "free" ? `<span class="chip">free</span>` : `<span class="chip pro">${esc(plan)}${paying ? "" : "*"}</span>`;
+/**
+ * Plan chip. Paid plan with no subscription (complimentary): "plus*". Legacy Free (plans.ts freePlanFor: signed up before
+ * FREE_ONE_SERVICE's date, keeps every service): "free" in blue, so one-service Free signups (grey "free") stand out.
+ */
+const planBadge = (v: View, plan: string, paying: number | boolean, createdAt: number) => {
+  if (plan !== "free") return `<span class="chip pro">${esc(plan)}${paying ? "" : "*"}</span>`;
+  return v.freeFrom !== undefined && createdAt < v.freeFrom
+    ? `<span class="chip legacy" title="Legacy Free: signed up before ${dateLabel(v.freeFrom)}, keeps every service">free</span>`
+    : `<span class="chip">free</span>`;
+};
 
 function table(cols: (string | [string, "r"])[], rows: unknown[][], empty = "Nothing yet.", cls = ""): string {
   if (!rows.length) return `<p class="empty">${empty}</p>`;
@@ -257,7 +265,7 @@ th{font-weight:500;color:var(--muted);font-size:12px;text-align:left;padding:7px
 td{padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--hover)}
 .r{text-align:right}td.wrap{white-space:normal;min-width:280px}.empty{color:var(--dim);padding:14px;margin:0}
 .chip{display:inline-block;font:11px/1.6 ui-monospace,Menlo,monospace;padding:0 6px;border-radius:4px;border:1px solid var(--line);color:var(--dim)}
-.chip.on{background:var(--chip);color:var(--fg);border-color:var(--chip)}.chip.pro{color:var(--pro);border-color:var(--pro)}
+.chip.on{background:var(--chip);color:var(--fg);border-color:var(--chip)}.chip.pro{color:var(--pro);border-color:var(--pro)}.chip.legacy{color:var(--accent);border-color:var(--accent)}
 .chip.okc{color:var(--ok);border-color:var(--ok)}.chip.badc{color:var(--bad);border-color:var(--bad)}
 .dim{color:var(--dim)}.bad{color:var(--bad)}.ok{color:var(--ok)}.muted{color:var(--muted)}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim)}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
@@ -324,7 +332,7 @@ ${card("Connects by app", table(["app", ["users", "r"], [`new · ${w}`, "r"], ["
       num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>app of first call, else token</small>`)}
 <div class="grid2">
 ${card("Latest signups", table(["user", "plan", "permissions", ["signed up", "r"]], [...r.users].sort((a, b) => b.created_at - a.created_at).slice(0, 6)
-    .map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }), `<span class="r">${when(u.created_at)}</span>`])),
+    .map((u) => [userLink(v, u.id, u.email), planBadge(v, u.plan, u.paying, u.created_at), perms(u.google_scopes, u.connected, { short: true }), `<span class="r">${when(u.created_at)}</span>`])),
     `<a class="muted" href="/users${qs(v)}">all users →</a>`)}
 ${card("Top tools", table(["tool", ["calls", "r"], ["errors", "r"]], r.tools.slice(0, 6).map((t) => [`<code>${esc(t.tool)}</code>`, num(t.calls), bad(t.errors)]), "No calls in this window."),
     `<a class="muted" href="/activity${qs(v)}">activity →</a>`)}
@@ -407,7 +415,7 @@ function usersPage(v: View): string {
   const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
   const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
   return signupsChart(v) + paywallCard(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
-    users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
+    users.map((u) => [userLink(v, u.id, u.email), planBadge(v, u.plan, u.paying, u.created_at), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
     `<small>${toggle}</small>`);
@@ -418,8 +426,8 @@ function sharingCard(v: View, always = false): string {
   const rows = v.report.sharing;
   if (!rows.length && !always) return "";
   return card("Shared across logins", table(["", "account", "users", ["last", "r"]], rows.map((s) => {
-    const users = JSON.parse(s.users) as { id: string; email: string; plan: string }[];
-    return [s.kind, cid(s.customer_id), users.map((u) => `${userLink(v, u.id, u.email)} ${planBadge(u.plan, true)}`).join("<br>"),
+    const users = JSON.parse(s.users) as { id: string; email: string; plan: string; created_at: number }[];
+    return [s.kind, cid(s.customer_id), users.map((u) => `${userLink(v, u.id, u.email)} ${planBadge(v, u.plan, true, u.created_at)}`).join("<br>"),
       `<span class="r">${when(s.last)}</span>`];
   }), "No ad or manager account is shared by two logins."), `<small>ad account: tools run by 2+ users · manager: reachable by 2+</small>`);
 }
@@ -429,7 +437,7 @@ function opportunitiesCard(v: View): string {
   const rows = v.report.opportunities;
   if (!rows.length) return "";
   return card("Plan opportunities", table(["user", "why", ["reachable", "r"], ["active · 30d", "r"], ["used · 30d", "r"], ["last gate hit", "r"]], rows.map((o) => [
-    `${userLink(v, o.id, o.email)} ${planBadge(o.plan, true)}`, esc(o.why.join(" · ")),
+    `${userLink(v, o.id, o.email)} ${planBadge(v, o.plan, true, o.created_at)}`, esc(o.why.join(" · ")),
     `<span class="r">${o.reach === null ? "?" : num(o.reach)}${o.managers ? `<span class="dim"> +${o.managers}m</span>` : ""}</span>`,
     `<span class="r">${o.active === null ? "?" : num(o.active)}</span>`, `<span class="r">${num(o.used30)}</span>`,
     `<span class="r">${o.last_hit ? when(o.last_hit) : "—"}</span>`]), "", "opps"),
@@ -527,7 +535,7 @@ ${stat("Paying", num(paying), "live Stripe subscriptions; complimentary plans no
 ${stat("MRR", `$${mrr(r)}`, byPlan(r) || "no paid plans")}
 ${stat("Ad connects uploaded", num(r.adConversions?.uploaded), `${r.adConversions?.recorded ?? 0} recorded`)}
 </div>
-${card("Paying", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
+${card("Paying", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(v, u.plan, u.paying, u.created_at),
     perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No paying users yet."))}
 <div class="grid2">
 ${card("Emails", table(["email", ["all time", "r"], [lastW(v.days), "r"]], r.emails.map((e) => [`<code>${esc(e.kind)}</code>`, num(e.sent), num(e.in_window)]), "No emails sent yet."))}
