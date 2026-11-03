@@ -238,6 +238,10 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
       if (/(^|\.)type$/.test(field)) return "this item's type is managed by Google, so the API can't change its settings. For a conversion action, "
         + "check it with SELECT conversion_action.name, conversion_action.type FROM conversion_action; count with a different action (propose "
         + "create_conversion_action; for calls, source AD_CALL), or change it in Google Ads (Goals → Conversions) if Google allows it there.";
+      // A remove refused outright: a Google-managed conversion action, and the generic text below sent the model away (2026-11-03).
+      if (/\.remove$/.test(field)) return "Google won't let the API remove this item: it's one Google creates and manages (for a conversion action, "
+        + "types like GOOGLE_HOSTED, STORE_VISITS, SMART_CAMPAIGN_*, LEAD_FORM_SUBMIT or WEBPAGE_CODELESS). Tell the user it's Google's own; if it "
+        + "shouldn't count toward bidding, they can make it secondary or remove it in Google Ads (Goals → Conversions → Summary) where Google allows it.";
       return "Google doesn't allow this change through the API (some legacy or system-managed items are locked, and some campaign types "
         + "can't be created). Do it in Google Ads. For a locked shared bid strategy, set_bidding_strategy can still move campaigns off it.";
     case "UNRECOGNIZED_FIELD":

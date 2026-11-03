@@ -30,6 +30,9 @@ const RSA_LIMIT = 3;
 const NO_UNDO = " ⚠ permanent: Google can't restore it, so this can't be undone; to only stop it, pause it instead";
 /** conversion_action.type values imported from an analytics tool, whose counting the tool decides. */
 const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTICS|UNIVERSAL_ANALYTICS)/;
+/** conversion_action.type values Google's API reference marks "Read only" (ConversionActionTypeEnum, v22): Google creates and
+ *  manages them, and refuses a remove with MUTATE_NOT_ALLOWED + IMMUTABLE_FIELD (a paying user, 2026-11-03). */
+const READ_ONLY_CONVERSION = /^(ANDROID_APP_PRE_REGISTRATION|ANDROID_INSTALLS_ALL_OTHER_APPS|FLOODLIGHT_(ACTION|TRANSACTION)|GOOGLE_HOSTED|LEAD_FORM_SUBMIT|SEARCH_ADS_360|SMART_CAMPAIGN_\w+|STORE_SALES|STORE_VISITS|WEBPAGE_CODELESS)$/;
 
 const id = z.string().regex(/^\d+$/, "numeric id");
 const campaignId = id.describe("Digits only (campaign_id from account_overview or run_gaql)");
@@ -1208,6 +1211,11 @@ export async function resolveChange(
       if (!a) throw new Error(`Conversion action ${change.conversion_action_id} not found`);
       const c = a.conversionAction, g = c.googleAnalytics4Settings;
       if (c.status === "REMOVED") return { change, service: "conversionActions", operations: [], describe: `Remove conversion action "${c.name}" (already in place)` };
+      if (READ_ONLY_CONVERSION.test(String(c.type ?? ""))) {
+        throw new Error(`Conversion action "${c.name}" is one Google creates and manages (${c.type}), so the Google Ads API can't remove it. `
+          + "Tell the user it's Google's own and needs no cleanup. If it shouldn't count toward bidding, they can make it secondary or remove it in "
+          + "Google Ads (Goals → Conversions → Summary), where Google allows that for its type. Nothing was proposed.");
+      }
       // Google can't bring a removed action back, except a GA4 import: importing it again re-enables it.
       const ga4 = String(c.type ?? "").startsWith("GOOGLE_ANALYTICS_4") && g?.propertyId && g?.eventName;
       return {

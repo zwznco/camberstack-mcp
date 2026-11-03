@@ -133,6 +133,7 @@ class FakeAds {
     }
     if (q.includes("FROM conversion_action WHERE conversion_action.id = 78")) return [{ conversionAction: { name: "Site (web) generate_lead", countingType: "MANY_PER_CLICK", type: "GOOGLE_ANALYTICS_4_CUSTOM",
       googleAnalytics4Settings: { propertyId: "321", eventName: "generate_lead" } } }];
+    if (q.includes("FROM conversion_action WHERE conversion_action.id = 79")) return [{ conversionAction: { name: "Local actions - Directions", type: "GOOGLE_HOSTED" } }];
     if (q.includes("FROM conversion_action WHERE conversion_action.id")) return [{ conversionAction: { name: "Signup", countingType: "MANY_PER_CLICK", type: "WEBPAGE" } }];
     if (q.includes("campaign.name = ")) return q.includes("campaign.name = 'Search'") ? [{ campaign: { id: "10" } }] : [];
     if (q.includes("FROM bidding_strategy WHERE bidding_strategy.name")) return q.includes("'Taken'") ? [{ biddingStrategy: { id: "5" } }] : [];
@@ -2576,6 +2577,12 @@ describe("OAuth + MCP end to end", () => {
     expect(rmGa4.summary).not.toContain("⚠");
     await call(token, "apply_changes", { proposal_id: rmGa4.proposal_id });
     expect((await call(token, "undo_changes", { proposal_id: rmGa4.proposal_id })).text).toContain("Import GA4 key event");
+    // Google's own conversion actions are read-only: refused before Google is asked, saying where it can be changed.
+    const before = ads.mutations.length;
+    const rmManaged = (await call(token, "propose_changes", { customer_id: "1112223333", changes: [{ type: "remove_conversion_action", conversion_action_id: "79" }] })).text;
+    expect(rmManaged).toContain('"Local actions - Directions" is one Google creates and manages (GOOGLE_HOSTED)');
+    expect(rmManaged).toContain("Goals → Conversions");
+    expect(ads.mutations.length).toBe(before);
     // An undo of a create stored before the change was public named the action by resource name.
     expect(ChangeSchema.parse({ type: "remove_conversion_action", resource_name: "customers/1/conversionActions/55", name: "Old" }))
       .toEqual({ type: "remove_conversion_action", conversion_action_id: "55" });
