@@ -158,10 +158,19 @@ export function checkGaql(query: string, cat: Catalog): string[] {
         // Prefer suggestions this FROM can use; fall back to any field; with none close, the lookup that finds it.
         // Another resource's field only when it's the same field under another path (performance_label): a looser match
         // offered segments.webpage for conversion_action.webpage_code, and the model dropped the whole query (prod, 2026-10-26).
-        const anywhere = near.length ? [] : closest(name, pool.map((x) => x.name)).filter((c) => sameLeaf(c, name));
-        issues.push(`${name} doesn't exist${near.length ? `. Closest usable FROM ${p.from}: ${near.join(", ")}.`
-          : anywhere.length ? `. Closest: ${anywhere.join(", ")} (not usable FROM ${p.from}).`
-          : `. Drop it, or find the name with run_gaql: ${lookupQuery(keyWord(name))}`}`);
+        // Each with the resource to query it FROM: "not usable FROM campaign" alone left the model guessing four more
+        // campaign.* location names instead of going to campaign_criterion (prod, 2026-11-03).
+        // With a usable near name, still name the list field this one is the singular of: offered only final_url_suffix, the
+        // model resent ad_group.final_url 7 times and never reached ad_group_ad.ad.final_urls (prod, 2026-11-03). Only the
+        // plural: same-named fields elsewhere buried campaign.start_date_time under four *_simulation.start_date.
+        const leaf = name.split(".").at(-1)!;
+        const anywhere = near.some((c) => sameLeaf(c, name)) ? []
+          : linkedFirst(pool.filter((x) => !usable(x) && (near.length ? x.name.split(".").at(-1) === `${leaf}s` : sameField(x.name, name)))
+            .map((x) => x.name).sort((a, b) => levenshtein(name, a) - levenshtein(name, b)), p.from, cat).slice(0, 4);
+        const elsewhere = anywhere.map((c) => ownFrom(c, cat)).join(", ");
+        issues.push(`${name} doesn't exist${near.length ? `. Closest usable FROM ${p.from}: ${near.join(", ")}.` : ""}`
+          + (anywhere.length ? (near.length ? ` As a list, on other resources: ${elsewhere}.` : `. Closest, not usable FROM ${p.from}: ${elsewhere}.`)
+          : near.length ? "" : `. Drop it, or find the name with run_gaql: ${lookupQuery(keyWord(name))}`));
         unknown.add(issues.at(-1)!);
         continue;
       }
@@ -231,6 +240,18 @@ function ownDates(cat: Catalog, from: string): string[] {
   return [...cat.values()].filter((x) => x.category === "ATTRIBUTE" && x.dataType === "DATE" && x.filterable !== false
     && x.name.split(".").length === 2 && x.name.startsWith(`${from}.`)).map((x) => x.name)
     .sort((a, b) => Number(b.includes("start")) - Number(a.includes("start")));
+}
+
+/** A field with the resource it can be queried FROM, when that's its own (campaign_criterion.location.geo_target_constant). */
+function ownFrom(name: string, cat: Catalog): string {
+  const res = name.split(".")[0]!;
+  return cat.get(res)?.category === "RESOURCE" && cat.get(name)?.category === "ATTRIBUTE" ? `${name} (FROM ${res})` : name;
+}
+
+/** Fields of resources that can also select `from`'s fields first: FROM ad_group_ad can filter by campaign, FROM ad can't. */
+function linkedFirst(names: string[], from: string, cat: Catalog): string[] {
+  const linked = (n: string) => (cat.get(n.split(".")[0]!)?.attributeResources ?? []).includes(from);
+  return [...names.filter(linked), ...names.filter((n) => !linked(n))];
 }
 
 /** Longest list of field names worth putting in an error: past this, run_gaql's usage log cuts it off and the reader skims it. */
@@ -358,7 +379,8 @@ export function closest(name: string, pool: string[]): string[] {
     const cl = c.split(".").at(-1)!;
     return c.replace(/\./g, "_") === flat                                  // ad_group_criterion.keyword_text → keyword.text
       || (leaf.length >= 4 && cl.includes(leaf))                           // metrics.cost → cost_micros, impression_share → search_impression_share
-      || (cl.length >= 4 && leaf.startsWith(`${cl}_`))                      // segments.device_type → segments.device
+      // at the same depth only: campaign.location_target isn't campaign.target_impression_share.location (prod, 2026-11-03)
+      || (cl.length >= 4 && leaf.startsWith(`${cl}_`) && c.split(".").length === parts.length) // segments.device_type → segments.device
       // but not a word inside a longer name: "conversions" isn't what "all_conversions_settings" meant
       || levenshtein(leaf, cl) <= Math.max(2, Math.floor(leaf.length / 3));
   };
@@ -379,6 +401,12 @@ const words = (name: string) => name.split(".").at(-1)!.split("_").filter((w) =>
  */
 function sameLeaf(a: string, b: string): boolean {
   const stem = (n: string) => n.split(".").at(-1)!.replace(/\d+$/, "");
+  return stem(a) === stem(b);
+}
+
+/** sameLeaf, plural aside too: ad_group.final_url is ad_group_ad.ad.final_urls (prod, 2026-11-03). Only for naming it elsewhere. */
+function sameField(a: string, b: string): boolean {
+  const stem = (n: string) => n.split(".").at(-1)!.replace(/\d+$/, "").replace(/s$/, "");
   return stem(a) === stem(b);
 }
 

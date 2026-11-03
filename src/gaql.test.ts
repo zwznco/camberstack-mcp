@@ -140,7 +140,7 @@ describe("checkGaql against Google's field catalog", () => {
     // The same field under another resource still comes through, as for asset_group_asset.performance_label.
     live.set("ad_group_ad.performance_label", { name: "ad_group_ad.performance_label", category: "ATTRIBUTE", dataType: "ENUM", selectable: true, filterable: true });
     expect(checkGaql("SELECT conversion_action.performance_label FROM conversion_action", live)[0])
-      .toContain("Closest: ad_group_ad.performance_label (not usable FROM conversion_action).");
+      .toContain("Closest, not usable FROM conversion_action: ad_group_ad.performance_label.");
     // With a second problem in the query, no claim that the rest runs.
     expect(checkGaql("SELECT conversion_action.name, conversion_action.webpage_code FROM conversion_action WHERE conversion_action.status = 'BOGUS'", live)
       .join(" ")).not.toContain("the rest runs");
@@ -241,6 +241,30 @@ describe("checkGaql against Google's field catalog", () => {
     it("keeps the near-miss path for a resource too long to list", () => {
       expect(checkGaql("SELECT campaign.id, campaign.target_spend.cpc_bid_ceiling_micro FROM campaign", live)[0]).toContain("Fields under campaign.target_spend: ");
       expect(checkGaql("SELECT campaign.name, campaign.url_expansion_opt_out FROM campaign", live)[0]).toContain("find the name with run_gaql");
+    });
+    it("names the same field on other resources, with where to query it (prod, 2026-11-03)", () => {
+      const more: Catalog = new Map(live);
+      const add = (f: FieldMeta) => more.set(f.name, f);
+      add({ name: "ad_group_ad", category: "RESOURCE", attributeResources: ["ad_group", "campaign", "customer"] });
+      add({ name: "ad", category: "RESOURCE", attributeResources: ["customer"] });
+      add({ name: "ad.final_urls", category: "ATTRIBUTE", dataType: "STRING", selectable: true, isRepeated: true });
+      add({ name: "ad_group_ad.ad.final_urls", category: "ATTRIBUTE", dataType: "STRING", selectable: true, isRepeated: true });
+      add({ name: "campaign_criterion", category: "RESOURCE", attributeResources: ["campaign", "customer"] });
+      add({ name: "campaign_criterion.location.geo_target_constant", category: "ATTRIBUTE", dataType: "RESOURCE_NAME", selectable: true });
+      // Was only "Closest usable FROM ad_group: ad_group.final_url_suffix", and the model resent ad_group.final_url 7 times.
+      const [url] = checkGaql("SELECT ad_group.name, ad_group.final_url FROM ad_group", more);
+      expect(url).toContain("Closest usable FROM ad_group: ad_group.final_url_suffix. As a list, on other resources: ad_group_ad.ad.final_urls (FROM ad_group_ad)");
+      // A resource that can also select ad_group's fields comes before one that can't.
+      expect(url!.indexOf("ad_group_ad.ad.final_urls")).toBeLessThan(url!.indexOf("ad.final_urls (FROM ad)"));
+      // Was "(not usable FROM campaign)" with no resource named, and the model guessed four more campaign.* names.
+      expect(checkGaql("SELECT campaign.name, campaign.geo_target_constant FROM campaign", more)[0])
+        .toContain("Closest, not usable FROM campaign: campaign_criterion.location.geo_target_constant (FROM campaign_criterion)");
+      // A shorter near name is the answer itself: no list beside it.
+      expect(checkGaql("SELECT ad_group.name, ad_group.campaign_id FROM ad_group", more)[0]).not.toContain("elsewhere");
+    });
+    it("doesn't offer a deeper path's last part for a longer name (prod, 2026-11-03)", () => {
+      // Was "Closest usable FROM campaign: campaign.target_impression_share.location".
+      expect(checkGaql("SELECT campaign.name, campaign.location_target FROM campaign", live)[0]).not.toContain("target_impression_share");
     });
     it("finds an unknown FROM's data by its words", () => {
       expect(checkGaql("SELECT merchant_center_link.status FROM merchant_center_link", live)).toEqual([
