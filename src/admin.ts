@@ -519,15 +519,16 @@ ${card("Recent calls", callsTable(r.recent.map((c) => ({ ...c, id: r.users.find(
 
 function revenuePage(v: View): string {
   const r = v.report;
-  const pros = r.users.filter((u) => u.plan !== "free");
+  // Complimentary plans (paid plan, no live subscription) are left out: this tab is revenue.
+  const pros = r.users.filter((u) => u.plan !== "free" && u.paying);
   const paying = r.paying;
   return `<div class="stats">
 ${stat("Paying", num(paying), "live Stripe subscriptions; complimentary plans not counted")}
 ${stat("MRR", `$${mrr(r)}`, byPlan(r) || "no paid plans")}
 ${stat("Ad connects uploaded", num(r.adConversions?.uploaded), `${r.adConversions?.recorded ?? 0} recorded`)}
 </div>
-${card("Paid and complimentary", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
-    perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No paid or complimentary users yet."))}
+${card("Paying", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
+    perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No paying users yet."))}
 <div class="grid2">
 ${card("Emails", table(["email", ["all time", "r"], [lastW(v.days), "r"]], r.emails.map((e) => [`<code>${esc(e.kind)}</code>`, num(e.sent), num(e.in_window)]), "No emails sent yet."))}
 ${card("Ad conversions", `<dl><dt>Recorded</dt><dd>${num(r.adConversions?.recorded)}</dd><dt>Uploaded to Google Ads</dt><dd>${num(r.adConversions?.uploaded)}</dd>
