@@ -1307,7 +1307,7 @@ export function errorPage(baseUrl: string, message: string): string {
 function effect(t: ToolDoc): { cls: string; label: string } {
   if (t.annotations.readOnlyHint) return { cls: "ro", label: "Read-only" };
   if (t.annotations.destructiveHint) return { cls: "act", label: "Needs your go-ahead" };
-  return { cls: "prep", label: "Changes nothing in Google Ads" };
+  return { cls: "prep", label: "Changes nothing in Google" };
 }
 
 /** /tools: generated from the registered tool definitions, so it can't drift from what the server offers. */
@@ -1336,8 +1336,8 @@ export function toolsPage(baseUrl: string, tools: ToolDoc[]): string {
 <h1>Every Camberstack tool</h1>
 <p class="lede">These are the ${tools.length} tools your AI assistant gets when you connect Camberstack. This page is built from the
 same definitions the server uses, so it always matches what's live, and the descriptions are the ones your AI reads. The code is open source: <a href="${SOURCE_URL}">read it on GitHub</a>.</p>
-<p><span class="pill ro">Read-only</span> tools never change anything. <span class="pill prep">Changes nothing in Google Ads</span>
-tools prepare or manage proposals. Only <code>apply_changes</code> edits your ads, and only after you approve a specific proposal.
+<p><span class="pill ro">Read-only</span> tools never change anything. <span class="pill prep">Changes nothing in Google</span>
+tools prepare or manage proposals. Only <code>apply_changes</code> changes anything in ${esc(servicesOr())}, and only after you approve a specific proposal.
 <code>disconnect</code> asks you to confirm before it revokes access.</p>
 ${cards}
 <p class="muted">You don't call these yourself: ask your AI in plain English and it picks the tools. <a href="/#setup">Connect Camberstack</a>.</p>`,
