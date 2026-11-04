@@ -83,6 +83,11 @@ class FakeAds {
       selectableWith: Array.from({ length: 650 }, (_, i) => `resource_${i}`) }];
   }
   async search(_cid: string, q: string): Promise<any[]> {
+    if (q.includes("FROM geo_target_constant WHERE geo_target_constant.id IN")) return [
+      { geoTargetConstant: { id: "2840", canonicalName: "United States", status: "ENABLED" } },
+      { geoTargetConstant: { id: "2764", canonicalName: "Thailand", status: "ENABLED" } },
+      { geoTargetConstant: { id: "1012873", canonicalName: "Bangkok,Thailand", status: "REMOVAL_PLANNED" } },
+    ].filter((r) => q.includes(r.geoTargetConstant.id));
     // 30-day spend per account (session.ts spendActivity): 2223334444 is the dormant one.
     if (q.includes("metrics.cost_micros FROM customer WHERE segments.date")) return [{ metrics: { costMicros: _cid === "2223334444" ? "0" : "5000000" } }];
     if (q.includes("missing_eu_political_advertising_declaration = TRUE")) return (this.euBlock ?? []).map((c) => ({ campaign: c }));
@@ -167,6 +172,9 @@ class FakeAds {
   plannerCalls: { method: string; req: any }[] = [];
   async keywordPlan(_cid: string, method: string, req: any) {
     this.plannerCalls.push({ method, req });
+    if (req.geoTargetConstants.some((g: string) => !/\/(2840|2826)$/.test(g)))
+      throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { fieldError: "INVALID_VALUE" },
+        message: "The input has an invalid value.", location: { fieldPathElements: [{ fieldName: "geo_target_constants" }] } }] }] } }));
     if (method === "generateKeywordIdeas") {
       return { results: [
         { text: "invoice", keywordIdeaMetrics: { avgMonthlySearches: "90500", competition: "HIGH", lowTopOfPageBidMicros: "2100000", highTopOfPageBidMicros: "9800000" } },
@@ -1502,6 +1510,12 @@ describe("OAuth + MCP end to end", () => {
     expect((await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: [...many, ...Array.from({ length: 900 }, (_, i) => `x ${i}`)] })).isError).toBe(true);
 
     expect((await call(token, "keyword_ideas", { customer_id: "1112223333" })).isError).toBe(true);  // needs a seed
+
+    // A location Google refuses: the message names which of the ids, instead of the generic lookup hint.
+    const bad = await call(token, "keyword_ideas", { customer_id: "1112223333", keywords: ["invoice"], location_ids: ["2840", "1012873", "9999999"] });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain("not a usable geo target: 1012873 (Bangkok,Thailand, REMOVAL_PLANNED), 9999999 (no such location). These are fine: 2840 United States.");
+    expect(bad.text).not.toContain("a location ID isn't a valid geo target");
     expect(ads.mutations.length).toBe(before);
   });
 

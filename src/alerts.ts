@@ -49,6 +49,8 @@ interface Episode {
   errors: Call[];
   /** The user's calls after the last error (up to 8, within 30 minutes): what the model did next. */
   after: Call[];
+  /** Seconds of `after` there have been so far: the run can come before the 30 minutes are up. */
+  watched: number;
   verdict: { act: boolean; why: string };
 }
 
@@ -68,8 +70,10 @@ export function errorCode(error: string): string {
 const ACCOUNT_REFUSALS = /EU_POLITICAL_ADVERTISING|POLICY_FINDING|IMMUTABLE_FIELD|USER_PERMISSION_DENIED|CUSTOMER_NOT_ENABLED|NOT_ADS_USER|AUTHORIZATION_ERROR|DEVELOPER_TOKEN|ACCOUNT_SUSPENDED|CUSTOMER_NOT_FOUND/;
 
 /** Whether it's worth acting on, and what to do. Rules, not judgment: the email carries the trace to check it. */
-export function verdict(code: string, error: string, recoveredLater: boolean): { act: boolean; why: string } {
+export function verdict(code: string, error: string, recoveredLater: boolean, recoveredBefore = false): { act: boolean; why: string } {
   if (recoveredLater && !error.startsWith(UNSUPPORTED_PREFIX)) return { act: false, why: "Recovered later (a success of this tool after the alert window). Nothing to do." };
+  if (recoveredBefore && !error.startsWith(UNSUPPORTED_PREFIX))
+    return { act: false, why: "The model got past this same error earlier in the session, so the message works. Likely the session just ended; act only if it repeats." };
   if (error.startsWith(UNSUPPORTED_PREFIX))
     return { act: true, why: "Camberstack doesn't do this, and the user wanted it. Consider building it; email them when it ships." };
   if (/^HTTP_5\d\d$/.test(code)) return { act: false, why: "Google was down (5xx). Transient; act only if it keeps happening (Bugsink tracks these)." };
@@ -126,7 +130,7 @@ export function findStuck(db: DB, internalEmails: Set<string>, t = now(), mailed
     const code = errorCode(e.error ?? "");
     const key = `${e.user_id}|${fam}|${code}`;
     if (e.id <= (mailed.get(key) ?? 0)) continue;
-    const g = groups.get(key) ?? { key, userId: e.user_id, email: e.email, plan: e.plan, app: e.app, tool: fam, code, errors: [], after: [], verdict: { act: false, why: "" } };
+    const g = groups.get(key) ?? { key, userId: e.user_id, email: e.email, plan: e.plan, app: e.app, tool: fam, code, errors: [], after: [], watched: 0, verdict: { act: false, why: "" } };
     g.errors.push(e);
     groups.set(key, g);
   }
@@ -137,8 +141,15 @@ export function findStuck(db: DB, internalEmails: Set<string>, t = now(), mailed
     const last = g.errors[g.errors.length - 1];
     const calls = callsOf(g.userId);
     g.after = calls.filter((c) => c.id > last.id && c.at <= last.at + 1800).slice(0, 8);
+    g.watched = Math.min(1800, t - last.at);
     const recoveredLater = calls.some((c) => c.ok && family(c.tool) === g.tool && c.id > last.id);
-    g.verdict = verdict(g.code, last.error ?? "", recoveredLater);
+    // One error after the model already got past the same one this session (an error, then a success of the tool, within
+    // the hour before): the message worked, the session ended on a retry. #12287 (2026-11-04) mailed ACT for exactly that.
+    const first = g.errors[0];
+    const recoveredBefore = g.errors.length === 1 && calls.some((ok) => ok.ok && family(ok.tool) === g.tool && ok.id < first.id
+      && ok.at >= first.at - 3600 && calls.some((x) => !x.ok && x.id < ok.id && x.at >= first.at - 3600 && family(x.tool) === g.tool
+        && errorCode(x.error ?? "") === g.code));
+    g.verdict = verdict(g.code, last.error ?? "", recoveredLater, recoveredBefore);
     out.push(g);
   }
   return out;
@@ -156,7 +167,7 @@ function render(eps: Episode[], adminUrl?: string): { subject: string; text: str
     const head = `${e.verdict.act ? "ACT" : "FYI"}: ${e.email} (${e.plan}${e.app ? `, ${e.app}` : ""}) — ${e.tool} ${e.code}, ${e.errors.length}× unrecovered`;
     const err = (e.errors[e.errors.length - 1].error ?? "").slice(0, 700);
     const user = adminUrl ? `${adminUrl}/users/${e.userId}` : "";
-    return { head, why: e.verdict.why, err, errors: e.errors.map(line), after: e.after.length ? e.after.map(line) : ["(no calls in the 30 minutes after)"], user };
+    return { head, why: e.verdict.why, err, errors: e.errors.map(line), after: e.after.length ? e.after.map(line) : [`(no calls in the ${Math.round(e.watched / 60)} minutes after)`], user };
   };
   const bs = [...eps].sort((a, b) => Number(b.verdict.act) - Number(a.verdict.act) || Number(isPaid(b.plan)) - Number(isPaid(a.plan))).map(block);
   const text = bs.map((b) => [b.head, b.why, "", "Last error:", b.err, "", "Errors:", ...b.errors, "", "Next calls:", ...b.after, b.user].join("\n")).join("\n\n────────\n\n");

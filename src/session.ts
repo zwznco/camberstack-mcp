@@ -947,7 +947,7 @@ export class UserSession {
     const seed = keywords.length && o.url ? { keywordAndUrlSeed: { keywords, url: o.url } }
       : keywords.length ? { keywordSeed: { keywords } } : { urlSeed: { url: o.url } };
     const [res, have] = await Promise.all([
-      this.ads.keywordPlan(a.customerId, "generateKeywordIdeas", { ...planTarget(o), includeAdultKeywords: false, ...seed }, a.loginCustomerId),
+      this.keywordPlan(a, "generateKeywordIdeas", o, { includeAdultKeywords: false, ...seed }),
       this.keywordsInAccount(a),
     ]);
     const ideas = (res.results ?? [])
@@ -967,7 +967,7 @@ export class UserSession {
     const a = await this.account(customerId);
     const keywords = [...new Set(o.keywords.map((k) => k.trim()).filter(Boolean))];
     const [res, have] = await Promise.all([
-      this.ads.keywordPlan(a.customerId, "generateKeywordHistoricalMetrics", { ...planTarget(o), includeAdultKeywords: false, keywords }, a.loginCustomerId),
+      this.keywordPlan(a, "generateKeywordHistoricalMetrics", o, { includeAdultKeywords: false, keywords }),
       this.keywordsInAccount(a),
     ]);
     const rows = (res.results ?? []).map((r) => ({
@@ -994,6 +994,38 @@ export class UserSession {
         (r as { in_account?: string }).in_account ?? null, months.map((m) => (r.monthly as Record<string, number>)[m] ?? null)]),
       no_data: noData,
     };
+  }
+
+  /**
+   * Keyword Planner, naming the bad location when Google refuses one. Google's INVALID_VALUE on geo_target_constants doesn't
+   * say which of several ids it means, and models passing a batch retried blind (prod 2026-11-04, #12283 and #12287, the
+   * second ending the session). Only on that error: look the ids up, and say which ones Google doesn't know.
+   */
+  private async keywordPlan(a: Account, method: "generateKeywordIdeas" | "generateKeywordHistoricalMetrics", o: KeywordPlanOpts, req: object) {
+    try {
+      return await this.ads.keywordPlan(a.customerId, method, { ...planTarget(o), ...req }, a.loginCustomerId);
+    } catch (e) {
+      if (e instanceof AdsApiError && e.status === 400 && e.message.includes("(field geo_target_constants)")) {
+        const fix = await this.badLocations(a, o.location_ids).catch(() => null);
+        if (fix) (e as Error).message = e.message.replace(/→ a location ID isn't a valid geo target\..*?(?=; [A-Z_]{3,} |\n|$)/, `→ ${fix}`);
+      }
+      throw e;
+    }
+  }
+
+  /** Which of `ids` aren't enabled geo targets, as the message's fix; null when the lookup can't tell. */
+  private async badLocations(a: Account, ids: string[]): Promise<string | null> {
+    const want = [...new Set(ids)];
+    const rows = await this.ads.search(a.customerId, `SELECT geo_target_constant.id, geo_target_constant.canonical_name, geo_target_constant.status
+      FROM geo_target_constant WHERE geo_target_constant.id IN (${want.join(", ")})`, a.loginCustomerId);
+    const found = new Map(rows.map((r: any) => [String(r.geoTargetConstant?.id), r.geoTargetConstant]));
+    const bad = want.filter((id) => !found.has(id) || found.get(id).status !== "ENABLED")
+      .map((id) => found.has(id) ? `${id} (${found.get(id).canonicalName}, ${found.get(id).status})` : `${id} (no such location)`);
+    if (!bad.length) return null;
+    const good = want.filter((id) => found.get(id)?.status === "ENABLED").map((id) => `${id} ${found.get(id).canonicalName}`);
+    return `not a usable geo target: ${bad.join(", ")}.${good.length ? ` These are fine: ${good.join("; ")}.` : ""} `
+      + "Drop it, or look up the right id with run_gaql: SELECT geo_target_constant.id, geo_target_constant.canonical_name "
+      + "FROM geo_target_constant WHERE geo_target_constant.name = 'Bangkok'";
   }
 
   /** Lowercased keyword text → "keyword" or "negative", across the whole account. */

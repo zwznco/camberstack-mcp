@@ -49,6 +49,17 @@ describe("findStuck", () => {
     expect(e.after.map((c) => c.tool)).toEqual(["account_overview"]);
   });
 
+  it("calls one error FYI when the model got past the same one earlier in the session", () => {
+    const s = setup();
+    s.user("p", "p@x.com", "pro");
+    s.call("p", 3020, "run_gaql", BAD_FIELD);
+    s.call("p", 3017, "run_gaql");
+    s.call("p", 3000, "run_gaql", BAD_FIELD);
+    const [e] = findStuck(s.db, new Set(), T);
+    expect(e).toMatchObject({ errors: { length: 1 }, verdict: { act: false } });
+    expect(e.verdict.why).toMatch(/earlier in the session/);
+  });
+
   it("needs MIN_REPEATS of the same error for a free user, across the propose_* tools", () => {
     const s = setup();
     s.user("f", "f@x.com");
