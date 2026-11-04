@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.camberstack/google-ads",
   "title": "Camberstack: Google Ads",
-  "description": "Hosted Google Ads MCP: build Search, PMax, Display and YouTube campaigns, approve each change, undo.",
-  "version": "0.26.0",
+  "description": "Hosted MCP for Google Ads, Search Console, GA4 and Merchant Center: ask, build, approve changes.",
+  "version": "0.26.1",
   "websiteUrl": "https://camberstack.io",
   "repository": {
     "url": "https://github.com/zwznco/camberstack-mcp",

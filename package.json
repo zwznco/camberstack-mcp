@@ -1,7 +1,7 @@
 {
   "name": "camberstack-mcp",
-  "version": "0.26.0",
-  "description": "Google Ads + Search Console MCP server: build Search, Performance Max, Display and YouTube (Demand Gen) campaigns, research keywords, and make only the changes you approve, with undo.",
+  "version": "0.26.1",
+  "description": "Google Ads, Search Console, Google Analytics 4 and Merchant Center in one MCP server: build Search, Performance Max, Display and YouTube (Demand Gen) campaigns, research keywords, fix Shopping products, and make only the changes you approve.",
   "private": true,
   "type": "module",
   "engines": {
@@ -43,7 +43,11 @@
     "claude",
     "chatgpt",
     "negative-keywords",
-    "search-console"
+    "search-console",
+    "google-analytics",
+    "ga4",
+    "merchant-center",
+    "google-shopping"
   ],
   "repository": {
     "type": "git",

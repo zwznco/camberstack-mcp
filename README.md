@@ -2,10 +2,12 @@
 
 [![Camberstack MCP server on Glama](https://glama.ai/mcp/servers/zwznco/camberstack-mcp/badges/score.svg)](https://glama.ai/mcp/servers/zwznco/camberstack-mcp)
 
-Connect Google Ads (and, optionally, Search Console, Google Analytics and Merchant Center) to Claude, ChatGPT, Cursor or any MCP client. Your AI
-reads the account with read-only tools and can propose changes, from negative keywords to whole Search,
-Performance Max, Display and YouTube campaigns. **Nothing changes in the account until you approve a specific
-proposal, and applied changes can be undone in one call, on every plan, apart from deletions Google can't reverse, which are flagged first.** Risky changes (turning a campaign on,
+Connect **Google Ads, Search Console, Google Analytics 4 and Merchant Center** to Claude, ChatGPT, Cursor or any
+MCP client with one Google sign-in, and use them together: the searches you pay for that already rank, whether ad
+clicks convert on the landing page, which disapproved products were earning in Shopping. Your AI reads with
+read-only tools and can propose changes, from negative keywords to whole Search, Performance Max, Display and
+YouTube campaigns, GA4 key events and Merchant Center product fixes. **Nothing changes until you approve a specific
+proposal**, and applied changes can be undone, apart from deletions Google can't reverse, which are flagged first. Risky changes (turning a campaign on,
 more than doubling a budget or bid, switching bid strategy) are flagged in the proposal before you approve. A demo
 account lets anyone try every tool first.
 

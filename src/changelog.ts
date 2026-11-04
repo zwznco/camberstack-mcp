@@ -7,6 +7,10 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.26.1", date: "2026-11-04",
+    summary: "Camberstack's listings now describe all four Google services it connects: Google Ads, Search Console, Google Analytics 4 and Merchant Center. No change to tools.",
+  },
+  {
     version: "0.26.0", date: "2026-11-04",
     summary: "Google Merchant Center: find out why products aren't showing on Google, and fix them with your approval.",
     items: [
