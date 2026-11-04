@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -333,18 +333,20 @@ export class UserSession {
       const head = `${SERVICE_LIMIT_PREFIX} ${this.chatgpt ? "the current plan" : "the Free plan"} covers one Google service at a time (${servicesOr()}), and ${why}.`
         + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
       const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
-      if (this.chatgpt) throw new SwitchNotice(`${head} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
+      // C1 (UNPROMPTED-STOPS.md): most stops are calls the AI made on its own; it answers with what's covered instead.
+      const scope = (options: string) => (have ? ` ${serviceLimitScope(have, want, options)}` : "");
+      if (this.chatgpt) throw new SwitchNotice(`${head}${scope("the plans page (plans_page)")} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
       const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
       if (plusUrl) {
         const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-        throw new SwitchNotice(`${head} Plus (${PLUS_PRICE_LABEL}) covers ${allN()} together on 1 Google Ads account, so ${want} works right away; `
+        throw new SwitchNotice(`${head}${scope("the options below")} Plus (${PLUS_PRICE_LABEL}) covers ${allN()} together on 1 Google Ads account, so ${want} works right away; `
           + `Pro (${PRO_PRICE_LABEL}) does on up to ${this.deps.proAccounts}.`,
           { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${allServices()}, on 1 Google Ads account`, cancel: "any time",
             upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" },
             or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
       }
       const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-      throw new SwitchNotice(`${head} Pro (${PRO_PRICE_LABEL}) covers ${allN()} together, so ${want} works right away.`,
+      throw new SwitchNotice(`${head}${scope("the options below")} Pro (${PRO_PRICE_LABEL}) covers ${allN()} together, so ${want} works right away.`,
         { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: allServices(), cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
     }
@@ -570,6 +572,22 @@ export class UserSession {
   /** Which Free is live now (plans.ts freePlan): FREE_ONE_SERVICE's date can pass while the server runs. */
   private get freePlan(): FreePlan { return freePlan(this.deps.freeOneServiceFrom); }
   private get oneService(): boolean { return this.freePlan.kind === "one_service"; }
+
+  /**
+   * C2 (UNPROMPTED-STOPS.md): a line for the server instructions on one-service Free, so the AI stays on the covered
+   * service unless the user asks for another, instead of calling one on its own and meeting a Service limit stop.
+   * Null for paid plans and while Free isn't one-service. Instructions are read when a conversation starts.
+   */
+  serviceNote(): string | null {
+    if (!this.oneService || this.isPro) return null;
+    const s = this.servicesInUse()[0]?.s;
+    if (!s) return `This login's plan covers one Google service at a time (${servicesOr()}) and none is picked yet. `
+      + `Once one is used, call tools for another service only when the user asks about that service.`;
+    const have = SERVICE_LABELS[s];
+    const others = listedServices().filter((x) => x !== s).map((x) => SERVICE_LABELS[x]).join(", ");
+    return `This login's plan covers one Google service at a time, and it's set to ${have}. Answer with ${have} tools, and call `
+      + `tools for another service (${others}) only when the user asks about that service: those calls are stopped and return no data.`;
+  }
 
   private freeIncluded(): string {
     return this.oneService

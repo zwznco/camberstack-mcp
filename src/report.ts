@@ -234,6 +234,9 @@ function retention(q: <T>(sql: string, ...p: unknown[]) => T[]) {
   });
 }
 
+/** Seconds between the end of a user's previous call and the start of a Service limit stop, past which it's labelled on request. */
+export const ON_REQUEST_GAP = 45;
+
 /**
  * The one-service paywall (FREE_ONE_SERVICE; projects/camberstack/PRICING-TEST.md), from switch-on: the flag's date, or the first
  * Service notice. Users split into those who signed up before it (they lost all three) and after (Free was always one service),
@@ -254,14 +257,21 @@ function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
   const merchant = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on}
     AND (coalesce(c.service, '') LIKE '%merchant%' OR coalesce(c.service_wanted, '') LIKE '%merchant%'))`;
   const stopped = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%')`;
+  // C3 (UNPROMPTED-STOPS.md): a stop "on request" started more than ON_REQUEST_GAP seconds after the user's previous call
+  // ended (or had none before it), so a new message from the user likely asked for it. Closer than that, the AI made the
+  // call inside one answer, often on its own. `at` is logged when a call ends, so a call started at at - ms/1000.
+  const onRequest = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%'
+    AND NOT EXISTS (SELECT 1 FROM tool_calls q WHERE q.user_id = c.user_id AND q.id < c.id AND q.at >= c.at - c.ms / 1000.0 - ${ON_REQUEST_GAP}))`;
   const emailed = `EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'service_limit')`;
   const offered = `(${stopped} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;
+  const offeredReq = `(${onRequest} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;
   const rows = q<{ existing: number; chatgpt: number; merchant: number; users: number; stopped: number; emailed: number; viewed: number; clicked: number; paid: number;
-      offered: number; offered_paid: number; applied: number }>(
+      offered: number; offered_paid: number; stopped_req: number; offered_req: number; offered_req_paid: number; applied: number }>(
     `SELECT u.created_at < ${on} existing, ${chatgpt} chatgpt, ${merchant} merchant, count(*) users,
        sum(${stopped}) stopped, sum(${emailed}) emailed,
        sum(${ev("plans_view")}) viewed, sum(${ev("upgrade_click")}) clicked, sum(${ev("paid")}) paid,
        sum(${offered}) offered, sum(${offered} AND ${ev("paid")}) offered_paid,
+       sum(${onRequest}) stopped_req, sum(${offeredReq}) offered_req, sum(${offeredReq} AND ${ev("paid")}) offered_req_paid,
        sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}' AND p.applied_at >= ${on})) applied
      FROM {U} u WHERE coalesce(u.last_seen_at, u.created_at) >= ${on} AND (u.plan = 'free' OR coalesce(u.stripe_sub, '') != '')
      GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 DESC, 3 DESC`);

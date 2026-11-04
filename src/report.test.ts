@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDb, now } from "./db.js";
-import { buildReport, MONTHLY, userDetail, windowStart } from "./report.js";
+import { buildReport, MONTHLY, ON_REQUEST_GAP, userDetail, windowStart } from "./report.js";
 
 describe("buildReport", () => {
   // The seeds sit 25-30 min back; between 00:00 and 00:30 UTC that is yesterday, outside a "today" window. Pin to noon.
@@ -86,8 +86,10 @@ describe("buildReport", () => {
     const p = buildReport(db, { days: 7, exclude: [] }).paywall;
     expect(p.since).toBe(on);
     expect(p.rows).toEqual([
-      { existing: 1, chatgpt: 0, merchant: 0, users: 1, stopped: 1, emailed: 0, viewed: 0, clicked: 1, paid: 1, offered: 1, offered_paid: 1, applied: 0 },
-      { existing: 0, chatgpt: 1, merchant: 0, users: 1, stopped: 1, emailed: 1, viewed: 1, clicked: 0, paid: 0, offered: 1, offered_paid: 0, applied: 0 },
+      { existing: 1, chatgpt: 0, merchant: 0, users: 1, stopped: 1, emailed: 0, viewed: 0, clicked: 1, paid: 1, offered: 1, offered_paid: 1,
+        stopped_req: 1, offered_req: 1, offered_req_paid: 1, applied: 0 },
+      { existing: 0, chatgpt: 1, merchant: 0, users: 1, stopped: 1, emailed: 1, viewed: 1, clicked: 0, paid: 0, offered: 1, offered_paid: 0,
+        stopped_req: 1, offered_req: 1, offered_req_paid: 0, applied: 0 },
     ]);
     // A stop that asked for Merchant Center splits them out, a complimentary plan leaves the read, and the flag's date sets existing vs new.
     db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, ok, error, ms, bytes, service_wanted) VALUES (?, 'gptnew', 'gpt', 'merchant_report', 1, 'Service limit: x', 1, 1, 'merchant')").run(t - 60);
@@ -96,6 +98,27 @@ describe("buildReport", () => {
     const split = buildReport(db, { days: 7, exclude: [], freeOneServiceFrom: t - 2 * 86400 }).paywall;
     expect(split.since).toBe(t - 2 * 86400);
     expect(split.rows.map((r) => [r.existing, r.chatgpt, r.merchant, r.users])).toEqual([[1, 0, 0, 1], [0, 1, 1, 1]]);
+  });
+
+  it("labels a stop on request only when it starts more than ON_REQUEST_GAP after the user's previous call ended (C3)", () => {
+    const db = openDb(":memory:");
+    const t = now(), on = t - 5 * 86400;
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, last_seen_at) VALUES (?, ?, ?, 'free', ?, ?)");
+    u.run("chain", "g1", "a@x.com", t - 86400, t);   // the AI reached for a second service mid-answer
+    u.run("asked", "g2", "b@x.com", t - 86400, t);   // the user's next message asked for it
+    u.run("par", "g3", "c@x.com", t - 86400, t);     // a stop in parallel with a covered call: same answer
+    const c = db.prepare("INSERT INTO tool_calls (id, at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, ?, ?, 1, ?, ?, 1)");
+    c.run(1, on, "chain", "run_gaql", "Service choice: x", 10);
+    c.run(2, t - 600, "chain", "account_overview", null, 4000);       // ends at t-600
+    c.run(3, t - 590, "chain", "analytics_report", "Service limit: x", 2000);   // starts t-592: 8 s later → in an answer
+    c.run(4, t - 600, "asked", "account_overview", null, 4000);
+    c.run(5, t - 500, "asked", "analytics_report", "Service limit: x", 2000);   // starts t-502: 98 s later → on request
+    c.run(6, t - 400, "par", "account_overview", null, 20000);        // started t-420, ended t-400
+    c.run(7, t - 419, "par", "analytics_report", "Service limit: x", 500);      // started t-419.5, while the covered call ran
+    const byUser = (rows: { users: number; stopped: number; stopped_req: number }[]) => rows.reduce((a, r) => ({ s: a.s + r.stopped, q: a.q + r.stopped_req }), { s: 0, q: 0 });
+    const p = buildReport(db, { days: 7, exclude: [] }).paywall;
+    expect(byUser(p.rows)).toEqual({ s: 3, q: 1 });  // all three stopped; only "asked" on request
+    expect(ON_REQUEST_GAP).toBe(45);
   });
 
   it("counts signups by hour today and by day otherwise, and retention by weeks since each user's own signup", () => {

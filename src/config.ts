@@ -27,6 +27,8 @@ export interface Config {
   agencyAccounts: number;
   /** FREE_ONE_SERVICE: when Free starts covering one Google service at a time (plans.ts parseDateFlag). Off unless set. */
   freeOneServiceFrom?: number;
+  /** GATE_DEMO=1, test only (UNPROMPTED-STOPS.md): the plan gate treats demo IDs as real. Dev's test runs set it; prod never does. */
+  gateDemo: boolean;
   /**
    * Pro subscription; unset = no upgrade links (free users stop at the limit with no way to pay).
    * agencyPriceId: STRIPE_AGENCY_PRICE_ID, plusPriceId: STRIPE_PLUS_PRICE_ID; unset = that plan isn't offered.
@@ -84,6 +86,7 @@ export function loadConfig(): Config {
     },
     freeAccounts: 1,
     freeOneServiceFrom: parseDateFlag(process.env.FREE_ONE_SERVICE),
+    gateDemo: process.env.GATE_DEMO === "1",
     proAccounts: PRO_ACCOUNTS,
     agencyAccounts: AGENCY_ACCOUNTS,
     stripe: process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID

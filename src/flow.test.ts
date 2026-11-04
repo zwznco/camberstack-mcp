@@ -17,7 +17,7 @@ import { ChangeSchema, io, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES } from "./chang
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { PUBLIC_SC_CHANGES } from "./search-console-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
-import { SERVER_VERSION, servicesOf } from "./tools.js";
+import { SERVER_VERSION, gateDemoCalls, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
 import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
 import { allN, allServices, freePlan, listMerchant, oneServiceFree, parseDateFlag, type FreePlan } from "./plans.js";
@@ -501,6 +501,17 @@ async function signIn(google: URL, state: string): Promise<string> {
 
 let lastCallbackCookies = "";
 let rpcId = 0;
+/** The server instructions a client gets on initialize (C2 adds a plan line on one-service Free). */
+async function instructionsFor(token: string): Promise<string> {
+  const res = await fetch(`${base}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } } }),
+  });
+  return (await res.json()).result?.instructions ?? "";
+}
+
 async function call(token: string, name: string, args: object = {}) {
   const res = await fetch(`${base}/mcp`, {
     method: "POST",
@@ -2835,6 +2846,9 @@ describe("OAuth + MCP end to end", () => {
       // The demo site uses no service, so it doesn't pick one.
       expect((await call(t, "search_console_summary", { site_url: "sc-domain:northwind-plumbing.example", days: 28 })).isError).toBe(false);
       expect((await call(t, "billing")).json).toMatchObject({ plan: "free", service_in_use: null, services_included: 1 });
+      // C2: the instructions say a service is picked by use, and to stay on it unless the user asks for another.
+      expect(await instructionsFor(t)).toContain("This login's plan covers one Google service at a time");
+      expect(await instructionsFor(t)).toContain("none is picked yet");
       // The first real call asks instead of picking: nothing runs, nothing is taken, and it isn't an error.
       expect((await call(t, "switch_account", { customer_id: "111-222-3333" })).isError).toBe(false);
       const ask = await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 });
@@ -2849,6 +2863,11 @@ describe("OAuth + MCP end to end", () => {
       expect(sc1.json).toMatchObject({ stop: "service_limit", service_in_use: "Google Ads", service_requested: "Search Console" });
       expect(sc1.text).toContain("Service limit: the Free plan covers one Google service at a time");
       expect(sc1.text).toContain("Pro ($15/month) covers all three together");
+      // C1: answer with what's covered unless the user asked for the other service.
+      expect(sc1.text).toContain("If the user's request didn't ask for Search Console, answer it with Google Ads and don't lead with this");
+      expect(sc1.text).toContain("If it did ask for Search Console, tell them it isn't on this plan, with the options below.");
+      // C2: once Ads is the plan's, the instructions name it.
+      expect(await instructionsFor(t)).toContain("it's set to Google Ads. Answer with Google Ads tools");
       // ChatGPT connections: the same stop with no paid plan named, as every other ChatGPT plan text.
       const gptClient = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
       const gptInfo = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(gptClient) as { info: string }).info;
@@ -2856,6 +2875,7 @@ describe("OAuth + MCP end to end", () => {
       const gptStop = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
       expect(gptStop.text).toContain("Service limit: the current plan covers one Google service at a time");
       expect(gptStop.text).toContain("Using several together needs a different plan.");
+      expect(gptStop.text).toContain("tell them it isn't on this plan, with the plans page (plans_page).");
       expect(gptStop.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bFree plan\b|\bPro\b|\$|upgrade/i);
       db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(gptInfo, gptClient);
       // A refused call takes nothing: Ads still works, and billing names it.
@@ -2872,6 +2892,7 @@ describe("OAuth + MCP end to end", () => {
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).toContain("this login uses it for Search Console");
       // Paid plans cover all three.
       db.prepare("UPDATE users SET plan = 'pro' WHERE id = ?").run(uid);
+      expect(await instructionsFor(t)).not.toContain("This login's plan covers");
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
       // A stop records what the call was after, and still doesn't count as use.
       expect(db.prepare("SELECT service, service_wanted w FROM tool_calls WHERE error LIKE 'Service limit:%' ORDER BY id DESC LIMIT 1").get())
@@ -3058,6 +3079,14 @@ describe("OAuth + MCP end to end", () => {
     expect(servicesOf("propose_mark_key_event", { property_id: "123" })).toEqual(["analytics"]);
     expect(servicesOf("propose_analytics_changes", { changes: [{ type: "create_ga4_property" }] })).toEqual(["analytics"]);
     expect(servicesOf("paid_organic_overlap", { customer_id: "111-222-3333", site_url: "sc-domain:acme.test" })).toEqual(["ads", "search_console"]);
+    // GATE_DEMO (test only, UNPROMPTED-STOPS.md): off by default; on, the demo counts like a real account, site and property.
+    gateDemoCalls(true);
+    try {
+      expect(servicesOf("run_gaql", { customer_id: "0000000001", query: "SELECT campaign.id FROM campaign" })).toEqual(["ads"]);
+      expect(servicesOf("analytics_report", { property_id: "000000001" })).toEqual(["analytics"]);
+      expect(servicesOf("search_console_summary", { site_url: "sc-domain:northwind-plumbing.example" })).toEqual(["search_console"]);
+    } finally { gateDemoCalls(false); }
+    expect(servicesOf("analytics_report", { property_id: "000000001" })).toEqual([]);
     for (const n of ["apply_changes", "undo_changes", "change_history", "list_accounts", "switch_account", "billing"])
       expect(servicesOf(n, { customer_id: "111-222-3333" })).toEqual([]);
   });

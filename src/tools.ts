@@ -52,22 +52,29 @@ const SC_PROPOSES = new Set(PUBLIC_SC_CHANGES.map((c) => `propose_${c.shape.type
  * login can reach (list_accounts, search_console_sites, analytics_properties, merchant_accounts) and the demo account, site, property and store
  * use none; nor do apply/undo/history, which act on a proposal the gate already let through.
  */
+/**
+ * Test only (projects/camberstack/UNPROMPTED-STOPS.md): GATE_DEMO=1 makes the plan gate treat the demo account, site,
+ * property and store as real, so the one-service gate can be tested on the demo's live-looking data. Never set in prod.
+ */
+let gateDemo = false;
+export function gateDemoCalls(on: boolean): void { gateDemo = on; }
+
 export function servicesOf(name: string, a: unknown): Service[] {
   const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; changes?: { property_id?: unknown; site_url?: unknown; type?: unknown }[] };
-  const realGa = (p: unknown) => p !== DEMO_PROPERTY;
-  const realMc = typeof x.account_id === "string" && x.account_id !== DEMO_MERCHANT;
+  const realGa = (p: unknown) => gateDemo || p !== DEMO_PROPERTY;
+  const realMc = typeof x.account_id === "string" && (gateDemo || x.account_id !== DEMO_MERCHANT);
   // Reads Ads and Merchant Center together, so like paid_organic_overlap it needs a paid plan on one-service Free.
   // Linking touches both, so it's paid too; undo isn't gated, so a link can always be reversed.
   if (LINK_TOOLS.has(name) || (name === "propose_changes" && x.changes?.some((c) => LINK_CHANGES.has(String(c?.type)))))
-    return typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads", "merchant"] : [];
+    return typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) ? ["ads", "merchant"] : [];
   if (name === "merchant_ad_spend")
-    return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(realMc ? ["merchant" as const] : [])];
+    return [...(typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) ? ["ads" as const] : []), ...(realMc ? ["merchant" as const] : [])];
   if (MC_GATED.has(name)) return realMc ? ["merchant"] : [];
   if (name === "paid_organic_overlap")
-    return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(x.site_url !== DEMO_SITE ? ["search_console" as const] : [])];
-  if (GATED.has(name) && name !== "switch_account") return typeof x.customer_id === "string" && !isDemo(x.customer_id) && !isLookup(name, a) ? ["ads"] : [];
-  if ((name.startsWith("search_console_") && name !== "search_console_sites") || SC_PROPOSES.has(name)) return x.site_url !== DEMO_SITE ? ["search_console"] : [];
-  if (name === "propose_search_console_changes") return (x.changes ?? []).some((c) => c?.site_url !== DEMO_SITE) ? ["search_console"] : [];
+    return [...(typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) ? ["ads" as const] : []), ...((gateDemo || x.site_url !== DEMO_SITE) ? ["search_console" as const] : [])];
+  if (GATED.has(name) && name !== "switch_account") return typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) && !isLookup(name, a) ? ["ads"] : [];
+  if ((name.startsWith("search_console_") && name !== "search_console_sites") || SC_PROPOSES.has(name)) return (gateDemo || x.site_url !== DEMO_SITE) ? ["search_console"] : [];
+  if (name === "propose_search_console_changes") return (x.changes ?? []).some((c) => (gateDemo || c?.site_url !== DEMO_SITE)) ? ["search_console"] : [];
   if (["analytics_report", "analytics_landing_pages", "analytics_setup"].includes(name) || GA_PROPOSES.has(name)) return realGa(x.property_id) ? ["analytics"] : [];
   // create_ga4_property has no property_id: a new property is real.
   if (name === "propose_analytics_changes") return (x.changes ?? []).some((c) => realGa(c?.property_id)) ? ["analytics"] : [];
@@ -154,9 +161,9 @@ const GRANT_LINK = /\/connect\/([a-z-]+)\?t=/;
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { chatgpt?: boolean; merchant?: boolean; stuck?: (tool: string, error: string) => string | null;
+  o: { chatgpt?: boolean; merchant?: boolean; planNote?: string | null; stuck?: (tool: string, error: string) => string | null;
     feedback?: (kind: FeedbackKind, message: string) => Promise<{ sent: boolean; email: string }> } = {}): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + (o.merchant ? MERCHANT_INSTRUCTIONS : "") });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + (o.merchant ? MERCHANT_INSTRUCTIONS : "") + (o.planNote ? `\n${o.planNote}` : "") });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
       const t0 = Date.now();

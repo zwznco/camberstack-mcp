@@ -61,6 +61,13 @@ export const allN = () => (merchantOn() ? "all four" : "all three");
 const joinLabels = (xs: string[], word: string) => `${xs.slice(0, -1).join(", ")} ${word} ${xs.at(-1)}`;
 /** Text of the service gate's refusal. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
 export const SERVICE_LIMIT_PREFIX = "Service limit:";
+/**
+ * What the AI should do with a Service limit stop (projects/camberstack/UNPROMPTED-STOPS.md, C1). Most stops come from
+ * calls the AI made on its own while answering, so the user shouldn't get a plan notice in place of the answer they asked for.
+ */
+export const serviceLimitScope = (have: string, want: string, options: string) =>
+  `If the user's request didn't ask for ${want}, answer it with ${have} and don't lead with this: at most one sentence at the end saying ${want} isn't on this plan. `
+  + `If it did ask for ${want}, tell them it isn't on this plan, with ${options}.`;
 /** Text of the notice before Free's one service is picked: the user chooses, so 30 days aren't spent on whatever the AI called first. */
 export const SERVICE_CHOICE_PREFIX = "Service choice:";
 /** How long after a Service choice notice the next real call counts as the user's answer (session.ts checkService). */

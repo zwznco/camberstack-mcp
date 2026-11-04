@@ -13,7 +13,7 @@ import { deriveKey } from "./crypto.js";
 import { CamberstackProvider, MCP_SCOPE, consentCookie } from "./provider.js";
 import { UserSession, clearGoogleCache, type SessionDeps } from "./session.js";
 import { Grants } from "./grant.js";
-import { buildServer, SERVER_VERSION, toolCatalog } from "./tools.js";
+import { buildServer, gateDemoCalls, SERVER_VERSION, toolCatalog } from "./tools.js";
 import { Analytics, BEACON_JS, gtagJs, parseBeacon } from "./analytics.js";
 import { mountAdmin } from "./admin.js";
 import { mountAccount } from "./account.js";
@@ -65,6 +65,7 @@ export interface Service {
 export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Service {
   // Before anything renders: pages, emails and tool results name Merchant Center as a service only once it's public.
   listMerchant(cfg.merchantPublicFrom);
+  gateDemoCalls(cfg.gateDemo);
   const app = express();
   app.set("trust proxy", 1); // behind Traefik: one hop
   app.disable("x-powered-by");
@@ -249,6 +250,13 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     return uris.some((u) => { try { return new URL(u).hostname === "chatgpt.com"; } catch { return false; } });
   };
 
+  // C2 (UNPROMPTED-STOPS.md): on one-service Free, the instructions say which service the plan covers. Loaded without
+  // touching last_seen_at; any failure just leaves the line out.
+  const planNoteFor = (userId: string, chatgpt: boolean): string | null => {
+    if (!userId) return null;
+    try { return UserSession.load(deps, userId, { chatgpt, seen: false }).serviceNote(); } catch { return null; }
+  };
+
   // A fresh server per request, bound to the caller the bearer middleware verified.
   const serverFor = (auth: AuthInfo | undefined) => {
     const userId = String(auth?.extra?.userId ?? "");
@@ -260,7 +268,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const merchant = merchantOn() || (!!email && cfg.adminEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.serviceWanted ?? null, c.grantOffered ?? null);
-    }, [], { chatgpt, merchant,
+    }, [], { chatgpt, merchant, planNote: planNoteFor(userId, chatgpt),
       feedback: async (kind, message) => {
         if (!email) throw new Error("Feedback needs a connected account.");
         return { sent: await submitFeedback(feedbackDeps, email, kind, message, "sent from their AI app"), email };
