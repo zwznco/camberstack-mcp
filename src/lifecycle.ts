@@ -27,7 +27,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, dateLabel, freePlan, freePlanChange, freePlanFor, oneServiceFree, payingSql, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, payingSql, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { DEMO_MERCHANT } from "./merchant.js";
@@ -203,12 +203,12 @@ export class Lifecycle {
       AND u.email_opt_out = 0 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = 'pro_welcome')`)
       .all() as { id: string; email: string; plan: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
-    const fresh = (this.d.db.prepare(`SELECT u.id, u.email, u.created_at FROM users u WHERE u.plan = 'free' AND u.enc_refresh IS NOT NULL
+    const fresh = (this.d.db.prepare(`SELECT u.id, u.email FROM users u WHERE u.plan = 'free' AND u.enc_refresh IS NOT NULL
       AND u.created_at >= ? AND u.email_opt_out = 0 AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = 'welcome')
       AND (EXISTS (SELECT 1 FROM tokens t WHERE t.user_id = u.id) OR EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id))`)
-      .all(Math.max(WELCOME_SINCE, now() - WELCOME_WITHIN)) as { id: string; email: string; created_at: number }[])
+      .all(Math.max(WELCOME_SINCE, now() - WELCOME_WITHIN)) as { id: string; email: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
-    return await this.deliver(fresh.map((u) => ({ ...u, kind: "welcome" as const, days: 0 })), (u) => welcome(this.d.baseUrl, freePlanFor(this.d.freeOneServiceFrom, u.created_at)))
+    return await this.deliver(fresh.map((u) => ({ ...u, kind: "welcome" as const, days: 0 })), () => welcome(this.d.baseUrl, freePlan(this.d.freeOneServiceFrom)))
       + await this.deliver(pros.map((u) => ({ ...u, kind: "pro_welcome" as const, days: 0 })), (u) => proWelcome(this.d.baseUrl, u.plan));
   }
 

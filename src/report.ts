@@ -162,12 +162,12 @@ export function buildReport(db: DB, o: ReportOptions) {
      * logins). Both are often innocent: a colleague taking over, an owner and their agency. `users` is a JSON array.
      */
     sharing: q<{ kind: "ad account" | "manager"; customer_id: string; users: string; last: number | null }>(
-      `SELECT 'ad account' kind, c.customer_id, json_group_array(DISTINCT json_object('id', u.id, 'email', u.email, 'plan', u.plan, 'created_at', u.created_at)) users, max(c.at) last
+      `SELECT 'ad account' kind, c.customer_id, json_group_array(DISTINCT json_object('id', u.id, 'email', u.email, 'plan', u.plan)) users, max(c.at) last
          FROM tool_calls c JOIN {U} u ON u.id = c.user_id
          WHERE c.ok = 1 AND c.customer_id IS NOT NULL AND ${ON_ADS}
          GROUP BY c.customer_id HAVING count(DISTINCT c.user_id) > 1
        UNION ALL
-       SELECT 'manager', m.value, json_group_array(DISTINCT json_object('id', u.id, 'email', u.email, 'plan', u.plan, 'created_at', u.created_at)), max(u.ads_accounts_at)
+       SELECT 'manager', m.value, json_group_array(DISTINCT json_object('id', u.id, 'email', u.email, 'plan', u.plan)), max(u.ads_accounts_at)
          FROM {U} u, json_each(u.ads_manager_ids) m
          GROUP BY m.value HAVING count(DISTINCT u.id) > 1
        ORDER BY last DESC`),
@@ -176,9 +176,9 @@ export function buildReport(db: DB, o: ReportOptions) {
      * plan covers, or ran into the account gate. `active` (accounts that spent in the last 30 days) beats `reach`, since a
      * login often reaches dormant accounts (2026-10-26: of 4 users reaching 2, all used 1). Newest signal first.
      */
-    opportunities: q<{ id: string; email: string; plan: string; created_at: number; reach: number | null; managers: number | null; active: number | null;
+    opportunities: q<{ id: string; email: string; plan: string; reach: number | null; managers: number | null; active: number | null;
         used30: number; gate_hits: number; last_hit: number | null; last_seen: number | null }>(
-      `SELECT u.id, u.email, u.plan, u.created_at, u.ads_accounts reach, u.ads_managers managers, u.ads_active active, u.last_seen_at last_seen,
+      `SELECT u.id, u.email, u.plan, u.ads_accounts reach, u.ads_managers managers, u.ads_active active, u.last_seen_at last_seen,
          (SELECT count(DISTINCT c.customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL
             AND ${ON_ADS} AND c.at >= ?) used30,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND (c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%')) gate_hits,

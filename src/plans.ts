@@ -77,15 +77,6 @@ export function freePlan(from: number | undefined, t = Math.floor(Date.now() / 1
   return from === undefined ? { kind: "accounts" } : t < from ? { kind: "upcoming", from } : { kind: "one_service", from };
 }
 /**
- * Legacy Free (operator, 2026-11-03): whoever signed up before FREE_ONE_SERVICE's start keeps the Free they joined (by
- * Google Ads account, every service), with no end date and no announcement. No public page names it: only that user's own
- * gate, billing, account page and welcome email read this. It replaced complimentary Plus (PRICING-TEST.md Decision 8): the
- * four comped users went back to free 2026-11-03. With FREE_ONE_SERVICE=1 (from 0) no one signed up before, so no one is legacy.
- */
-export function freePlanFor(from: number | undefined, createdAt: number, t?: number): FreePlan {
-  return from !== undefined && createdAt < from ? { kind: "accounts" } : freePlan(from, t);
-}
-/**
  * A flag that starts on a date (FREE_ONE_SERVICE, MERCHANT_PUBLIC) → when: "1" = always (0), "YYYY-MM-DD" = that day at 08:00 UTC, else off.
  * 08:00 UTC is midnight Pacific (PST), so it's already that date in the Americas, Europe and Asia when it starts; at 00:00
  * UTC it would still be the day before across the Americas, while the notice names the day.

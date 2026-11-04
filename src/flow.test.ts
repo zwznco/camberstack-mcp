@@ -2935,35 +2935,36 @@ describe("OAuth + MCP end to end", () => {
     }
   });
 
-  it("legacy Free: whoever signed up before FREE_ONE_SERVICE's date keeps the old Free, unannounced; later signups pick a service", async () => {
+  it("before FREE_ONE_SERVICE's date, announces it and gates nothing; from the date, everyone picks a service, history before it aside", async () => {
     googleUser.sub = "google-sub-dated"; googleUser.email = "dated@example.com";
     deps.freeOneServiceFrom = now() + 86400;
     try {
       const t = await connect();
-      const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-dated") as { id: string }).id;
-      // Signed up before the date: no announcement anywhere they look, every service works.
+      // Announced: every service works, billing says what changes and when, and nothing counts as picked.
       expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
       const before = (await call(t, "billing")).json;
-      expect(before).not.toHaveProperty("free_plan_change");
+      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console or Google Analytics; Plus \(\$7\/month\) covers all three together on 1 Google Ads account, and Pro and Agency on more\.$/);
       expect(before.included).toBe("every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work");
+      expect(before.pro).toContain("Google Ads, Search Console and Google Analytics together");
+      expect(before).not.toHaveProperty("service_in_use");
+      // ChatGPT connections get it with no paid plan named (its guidelines bar upgrade pitches), as every other plan text.
+      const clientId = (db.prepare("SELECT client_id FROM tokens WHERE user_id = (SELECT id FROM users WHERE google_sub = 'google-sub-dated') LIMIT 1").get() as { client_id: string }).client_id;
+      const info = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(clientId) as { info: string }).info;
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(info), redirect_uris: ["https://chatgpt.com/connector/oauth/dated"] }), clientId);
+      const gpt = (await call(t, "billing")).json;
+      expect(gpt.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, the current plan covers one Google service at a time: .+; using several together needs a different plan\.$/);
+      expect(JSON.stringify(gpt).replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/upgrade|\bPro\b|\$|account_page|https?:/i);
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(info, clientId);
+      // The account page's plan box says the same.
       const login = await fetch(`${base}/account/login`, { redirect: "manual" });
       const cookie = await signIn(new URL(login.headers.get("location")!), stateCookie(login));
       const accountPage = async () => (await fetch(`${base}/account`, { headers: { cookie } })).text();
-      const legacyBox = await accountPage();
-      expect(legacyBox).toContain("Every tool, with unlimited applied changes, on 1 Google Ads account.");
-      expect(legacyBox).not.toMatch(/From [A-Z][a-z]+ \d+, Free covers one Google service/);
-      // The date passes while the server runs: still the old Free, no service gate, no Plus pitch.
+      const soonBox = await accountPage();
+      expect(soonBox).toContain("Every tool, with unlimited applied changes, on 1 Google Ads account.");
+      expect(soonBox).toMatch(/<strong style="color:var\(--fg\)">From [A-Z][a-z]+ \d+, Free covers one Google service at a time/);
+      // The date passes while the server runs: Search Console use before it doesn't pick the service, so the user is asked.
       deps.freeOneServiceFrom = now() + 1;
       await new Promise((r) => setTimeout(r, 1100));
-      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
-      const legacy = (await call(t, "billing")).json;
-      expect(legacy).toMatchObject({ plan: "free", accounts_included: 1 });
-      for (const k of ["service_in_use", "services_included", "free_plan_change", "plus_upgrade_url"]) expect(legacy).not.toHaveProperty(k);
-      expect(await accountPage()).toContain("Every tool, with unlimited applied changes, on 1 Google Ads account.");
-      // Signed up on the date: one-service Free, and use before it doesn't pick the service, so the user is asked.
-      db.prepare("UPDATE users SET created_at = ? WHERE id = ?").run(deps.freeOneServiceFrom, uid);
-      db.prepare("DELETE FROM tool_calls WHERE user_id = ?").run(uid);
       const ask = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
       expect(ask.json).toMatchObject({ stop: "service_choice", this_call_uses: "Search Console" });
       const after = (await call(t, "billing")).json;
@@ -2972,6 +2973,8 @@ describe("OAuth + MCP end to end", () => {
       const onBox = await accountPage();
       expect(onBox).toContain("on one Google service at a time (Google Ads on 1 account, Search Console or Google Analytics). In use: <strong");
       expect(onBox).toContain("none yet; your AI asks which before the first");
+      expect(onBox).toContain("Pro covers all three together, on up to 5");
+      expect(onBox).not.toContain("Free covers one Google service at a time; Pro and Agency");
     } finally {
       deps.freeOneServiceFrom = undefined;
       googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";

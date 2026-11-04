@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlanChange, freePlanFor, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -567,8 +567,8 @@ export class UserSession {
   /** Plus is pitched once one-service Free is on, outside ChatGPT, when it's sold. Before that it would equal Free. */
   private get plusOffered(): boolean { return !this.chatgpt && !!this.deps.plusAvailable && this.freePlan.kind === "one_service"; }
 
-  /** Which Free is live for this user now (plans.ts freePlanFor): legacy Free if they signed up before FREE_ONE_SERVICE's date, which can pass while the server runs. */
-  private get freePlan(): FreePlan { return freePlanFor(this.deps.freeOneServiceFrom, this.user.created_at); }
+  /** Which Free is live now (plans.ts freePlan): FREE_ONE_SERVICE's date can pass while the server runs. */
+  private get freePlan(): FreePlan { return freePlan(this.deps.freeOneServiceFrom); }
   private get oneService(): boolean { return this.freePlan.kind === "one_service"; }
 
   private freeIncluded(): string {
