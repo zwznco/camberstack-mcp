@@ -20,7 +20,7 @@ import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, gateDemoCalls, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
 import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
-import { allN, allServices, freePlan, listMerchant, oneServiceFree, parseDateFlag, type FreePlan } from "./plans.js";
+import { allServices, freePlan, oneServiceFree, parseDateFlag, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 
@@ -1194,7 +1194,7 @@ describe("OAuth + MCP end to end", () => {
       expect(names).not.toContain("undo_changes");
       for (const n of ["propose_pause_campaign", "propose_create_performance_max_campaign", "propose_set_conversion_counting",
         "propose_link_google_ads", "propose_create_ga4_property", "propose_undo", "apply_changes"]) expect(names).toContain(n);
-      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + MERCHANT_LINK_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_SC_CHANGES.length + PUBLIC_MC_CHANGES.length + 1);  // this user is internal, so Merchant Center's too
+      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + MERCHANT_LINK_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_SC_CHANGES.length + PUBLIC_MC_CHANGES.length + 1);
       for (const t of tools.filter((t) => t.name.startsWith("propose_"))) {
         expect(t.description, t.name).not.toMatch(/undefined|propose_changes|undo_changes/);
         expect(t.inputSchema.properties, t.name).not.toHaveProperty("type");
@@ -2699,13 +2699,11 @@ describe("OAuth + MCP end to end", () => {
     for (const t of listed) for (const [k, v] of Object.entries<any>(t.inputSchema.properties ?? {})) expect(v.description, `${t.name}.${k}`).toBeTruthy();
     const page = await (await fetch(`${base}/tools`)).text();
     const llms = await (await fetch(`${base}/llms.txt`)).text();
-    // Merchant Center tools reach internal users (this one) before MERCHANT_PUBLIC lists them publicly.
-    const shown = names.filter((n) => !/^(merchant_|propose_merchant_)/.test(n));
-    for (const n of shown) {
+    for (const n of names) {
       expect(page, n).toContain(`id="${n}"`);
       expect(llms, n).toContain(n);
     }
-    expect(page).toContain(`${shown.length} tools`);
+    expect(page).toContain(`${names.length} tools`);
     // Parameters come from the schemas: defaults and descriptions, not hand-written copy.
     expect(page).toContain("<code>location_ids</code>");
     expect(page).toContain("Default [&quot;2840&quot;].");
@@ -2714,8 +2712,7 @@ describe("OAuth + MCP end to end", () => {
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/tools`);
     // The changelog: every release from changelog.ts, and in the sitemap.
     const cl = await (await fetch(`${base}/changelog`)).text();
-    expect(cl).toContain(`id="v${CHANGELOG.find((r) => !r.merchantLaunch)!.version}"`);
-    expect(cl).not.toContain(`id="v${CHANGELOG.find((r) => r.merchantLaunch)!.version}"`); // Merchant's release waits for MERCHANT_PUBLIC (merchant-launch.test.ts)
+    for (const r of CHANGELOG) expect(cl).toContain(`id="v${r.version}"`);
     expect(cl).toContain("<strong>Shared (portfolio) bid strategies.</strong>");
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/changelog`);
   });
@@ -2862,7 +2859,7 @@ describe("OAuth + MCP end to end", () => {
       expect(sc1.isError).toBe(false);  // a stop, not a failure
       expect(sc1.json).toMatchObject({ stop: "service_limit", service_in_use: "Google Ads", service_requested: "Search Console" });
       expect(sc1.text).toContain("Service limit: the Free plan covers one Google service at a time");
-      expect(sc1.text).toContain("Pro ($15/month) covers all three together");
+      expect(sc1.text).toContain("Pro ($15/month) covers all four together");
       // C1: answer with what's covered unless the user asked for the other service.
       expect(sc1.text).toContain("If the user's request didn't ask for Search Console, answer it with Google Ads and don't lead with this");
       expect(sc1.text).toContain("If it did ask for Search Console, tell them it isn't on this plan, with the options below.");
@@ -2883,7 +2880,7 @@ describe("OAuth + MCP end to end", () => {
       const plan = (await call(t, "billing")).json;
       expect(plan).toMatchObject({ service_in_use: "Google Ads" });
       expect(plan.included).toContain("1 Google service at a time");
-      expect(plan.pro).toContain("Google Ads, Search Console and Google Analytics together");
+      expect(plan.pro).toContain("Google Ads, Search Console, Google Analytics and Merchant Center together");
       // A reset by hand clears it: Search Console becomes the one, and Ads waits.
       db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = ?").run(now() + 1, uid);
       await new Promise((r) => setTimeout(r, 1100));
@@ -2919,11 +2916,11 @@ describe("OAuth + MCP end to end", () => {
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.stop).toBe("service_choice");
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
       const stop = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      expect(stop.text).toContain("Plus ($7/month) covers all three together on 1 Google Ads account, so Search Console works right away; Pro ($15/month) does on up to 5.");
+      expect(stop.text).toContain("Plus ($7/month) covers all four together on 1 Google Ads account, so Search Console works right away; Pro ($15/month) does on up to 5.");
       expect(stop.json).toMatchObject({ stop: "service_limit", upgrade: { plan: "plus", price: "$7/month" }, or_pro: { plan: "pro", price: "$15/month" } });
       expect(stop.json.upgrade.upgrade_url).toMatch(/\/upgrade\?t=[\w.-]+&plan=plus&src=tool$/);
       const free = (await call(t, "billing")).json;
-      expect(free.plus).toBe("Google Ads, Search Console and Google Analytics together, on 1 Google Ads account, $7/month, cancel any time");
+      expect(free.plus).toBe("Google Ads, Search Console, Google Analytics and Merchant Center together, on 1 Google Ads account, $7/month, cancel any time");
       expect(free.plus_upgrade_url).toContain("&plan=plus");
       // ChatGPT connections are never pitched Plus (or any plan): the same stop, neutral.
       const pc = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
@@ -2964,9 +2961,9 @@ describe("OAuth + MCP end to end", () => {
       // Announced: every service works, billing says what changes and when, and nothing counts as picked.
       expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
       const before = (await call(t, "billing")).json;
-      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console or Google Analytics; Plus \(\$7\/month\) covers all three together on 1 Google Ads account, and Pro and Agency on more\.$/);
+      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console, Google Analytics or Merchant Center \(1 account\); Plus \(\$7\/month\) covers all four together on 1 Google Ads account, and Pro and Agency on more\.$/);
       expect(before.included).toBe("every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work");
-      expect(before.pro).toContain("Google Ads, Search Console and Google Analytics together");
+      expect(before.pro).toContain("Google Ads, Search Console, Google Analytics and Merchant Center together");
       expect(before).not.toHaveProperty("service_in_use");
       // ChatGPT connections get it with no paid plan named (its guidelines bar upgrade pitches), as every other plan text.
       const clientId = (db.prepare("SELECT client_id FROM tokens WHERE user_id = (SELECT id FROM users WHERE google_sub = 'google-sub-dated') LIMIT 1").get() as { client_id: string }).client_id;
@@ -2992,9 +2989,9 @@ describe("OAuth + MCP end to end", () => {
       expect(after).toMatchObject({ service_in_use: null, services_included: 1 });
       expect(after).not.toHaveProperty("free_plan_change");
       const onBox = await accountPage();
-      expect(onBox).toContain("on one Google service at a time (Google Ads on 1 account, Search Console or Google Analytics). In use: <strong");
+      expect(onBox).toContain("on one Google service at a time (Google Ads on 1 account, Search Console, Google Analytics or Merchant Center on 1 account). In use: <strong");
       expect(onBox).toContain("none yet; your AI asks which before the first");
-      expect(onBox).toContain("Pro covers all three together, on up to 5");
+      expect(onBox).toContain("Pro covers all four together, on up to 5");
       expect(onBox).not.toContain("Free covers one Google service at a time; Pro and Agency");
     } finally {
       deps.freeOneServiceFrom = undefined;
@@ -3023,13 +3020,13 @@ describe("OAuth + MCP end to end", () => {
     const [off, soon, on] = ([{ kind: "accounts" }, { kind: "upcoming", from }, { kind: "one_service", from }] as FreePlan[])
       .map((fp) => withFreePlan(fp, () => plansPage("https://x.test")));
     expect(off).toContain("on <strong>1 Google Ads account</strong> at a time");
-    expect(off).toContain("Search Console and Google Analytics are included and don't count.</p>");
+    expect(off).toContain("Search Console and Google Analytics are included and don't count. Merchant Center is included too, on 1 Merchant Center account.</p>");
     expect(off).toContain("Everything in Free, on <strong>up to 5 Google Ads accounts</strong>");
-    expect(soon).toContain("don't count. From November 16, Free covers one Google service at a time");
-    expect(soon).toContain("Google Ads, Search Console and Google Analytics together, on <strong>up to 5 Google Ads accounts</strong>");
+    expect(soon).toContain("on 1 Merchant Center account. From November 16, Free covers one Google service at a time");
+    expect(soon).toContain("Google Ads, Search Console, Google Analytics and Merchant Center together, on <strong>up to 5 Google Ads accounts</strong>");
     expect(on).toContain("<strong>one Google service at a time</strong>");
     expect(on).not.toContain("don't count");
-    expect(on).toContain("Google Ads, Search Console and Google Analytics together, on <strong>up to 5 Google Ads accounts</strong>");
+    expect(on).toContain("Google Ads, Search Console, Google Analytics and Merchant Center together, on <strong>up to 5 Google Ads accounts</strong>");
     // The body (the site header's nav is every page's): nothing that starts an upgrade or links the account page.
     for (const h of [off, soon, on]) expect(h.slice(h.indexOf('<div class="legal">'))).not.toMatch(/upgrade=|Upgrade to|href="\/account/i);
   });
@@ -3063,7 +3060,7 @@ describe("OAuth + MCP end to end", () => {
     expect(soon).toContain('<div class="plan"><h3>Plus</h3>');
     expect(on).toContain("Using it together with Google Ads or Analytics needs <a href=\"/#pricing\">Plus</a> ($7/month)");
     expect(on).toContain("<h2>Plus · $7/month</h2>");
-    expect(on).toContain("Plus $7/month covers all three together on 1 Google Ads account");
+    expect(on).toContain("Plus $7/month covers all four together on 1 Google Ads account");
     expect(on).toContain('"name":"Plus","price":"7"');
   });
 
@@ -3106,17 +3103,9 @@ describe("OAuth + MCP end to end", () => {
     expect(servicesOf("propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center" }] })).toEqual([]);
   });
 
-  it("names Merchant Center in the plan copy only once it's public", () => {
-    try {
-      listMerchant(undefined);
-      expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console or Google Analytics");
-      expect(allServices()).toBe("Google Ads, Search Console and Google Analytics together");
-      expect(allN()).toBe("all three");
-      listMerchant(0);
-      expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console, Google Analytics or Merchant Center (1 account)");
-      expect(allServices()).toBe("Google Ads, Search Console, Google Analytics and Merchant Center together");
-      expect(allN()).toBe("all four");
-    } finally { listMerchant(undefined); }
+  it("names Merchant Center in the plan copy", () => {
+    expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console, Google Analytics or Merchant Center (1 account)");
+    expect(allServices()).toBe("Google Ads, Search Console, Google Analytics and Merchant Center together");
   });
 
 });
@@ -3135,7 +3124,7 @@ describe("Merchant Center rollout", () => {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" } })).json())
     .result.tools as { name: string }[]).map((t) => t.name).filter((n) => n.startsWith("merchant_"));
 
-  it("lists the tools for internal users only, and adds Merchant Center by link with just its scope", async () => {
+  it("lists the tools for every user, and adds Merchant Center by link with just its scope", async () => {
     const owner = await connect();
     expect(await listTools(owner)).toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report", "merchant_ad_spend"]);
     const out = (await call(owner, "merchant_accounts")).json;
@@ -3147,23 +3136,8 @@ describe("Merchant Center rollout", () => {
     googleUser.sub = "google-sub-outsider"; googleUser.email = "outsider@example.com";
     let outsider = "";
     try { outsider = await connect(); } finally { googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com"; }
-    expect(await listTools(outsider)).toEqual([]);
-    // A MERCHANT_PUBLIC date in the future keeps them out; once it passes they're in, on a connection that's already open.
-    const t = Math.floor(Date.now() / 1000);
-    try {
-      listMerchant(t + 60);
-      expect(await listTools(outsider)).toEqual([]);
-      listMerchant(t - 60);
-      expect(await listTools(outsider)).toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report", "merchant_ad_spend"]);
-    } finally { listMerchant(undefined); }
-    // Off for them means off: linking isn't offered in propose_changes either, nor taken if an AI sends it anyway.
-    const linked = await call(outsider, "propose_changes", { customer_id: "000-000-0001", changes: [{ type: "link_merchant_center", merchant_center_id: "000000001" }] });
-    expect(linked.isError).toBe(true);
-    expect(linked.json).toBeNull();
-    const sw = await call(outsider, "switch_account", { customer_id: "mc:123" });
-    expect(sw.isError).toBe(true);
-    expect(sw.text).not.toContain("connect/merchant-center");
-    expect(await fetch(`${base}/terms`).then((r) => r.text())).not.toContain("Merchant Center");
+    expect(await listTools(outsider)).toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report", "merchant_ad_spend"]);
+    expect(await fetch(`${base}/terms`).then((r) => r.text())).toContain("Merchant Center");
   });
 });
 

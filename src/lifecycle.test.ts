@@ -78,7 +78,7 @@ describe("lifecycle emails", () => {
     db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - DAY);
     expect(await lc.run()).toBe(2);
     const sc = sent.find((m) => m.to[0] === "sc@example.com"), both = sent.find((m) => m.to[0] === "both@example.com");
-    expect(sc.subject).toBe("Using Google Ads, Search Console and Google Analytics together");
+    expect(sc.subject).toBe("Using Google Ads, Search Console, Google Analytics and Merchant Center together");
     expect(sc.text).toContain("stopped when your AI tried to use Google Ads. The Free plan covers one Google service at a time, "
       + "and you're using it for Search Console; Google Ads opens on Free on November 27.");
     expect(sc.text).toContain("https://camberstack.io/upgrade?t=sc.sig");
@@ -99,14 +99,14 @@ describe("lifecycle emails", () => {
       "Service limit: the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and this login "
       + "uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used.");
     expect(await lc.run()).toBe(1);
-    expect(sent[0].text).toContain("Camberstack Plus covers Google Ads, Search Console and Google Analytics together on one Google Ads account");
+    expect(sent[0].text).toContain("Camberstack Plus covers Google Ads, Search Console, Google Analytics and Merchant Center together on one Google Ads account");
     expect(sent[0].text).toContain("for $7/month; cancel any time. Pro ($15/month) does the same on up to 5 accounts.");
     expect(sent[0].text).toContain("https://camberstack.io/upgrade?t=sc.sig&plan=plus");
     expect(sent[0].html).toContain(">Get Plus</a>");
     db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES ('pl', 'g-pl', 'pl@example.com', 'plus', 'sub_pl', ?)").run(now());
     expect(await lc.transactional()).toBe(1);
     expect(sent.at(-1).subject).toBe("You're on Camberstack Plus");
-    expect(sent.at(-1).text).toContain("What Plus adds: Google Ads, Search Console and Google Analytics together, on one Google Ads account.");
+    expect(sent.at(-1).text).toContain("What Plus adds: Google Ads, Search Console, Google Analytics and Merchant Center together, on one Google Ads account.");
     expect(sent.at(-1).text).toContain("$7/month, renewing monthly");
   });
 
@@ -121,8 +121,8 @@ describe("lifecycle emails", () => {
     };
     const off = await welcomeText(), soon = await welcomeText(Date.UTC(2099, 10, 16) / 1000), on = await welcomeText(0);
     expect(off).toContain("Free covers one Google Ads account; Pro ($15/month) covers up to 5, and Agency ($49/month) up to 25.\n");
-    expect(soon).toContain("up to 25. From November 16, Free covers one Google service at a time: Google Ads (1 account), Search Console or Google Analytics; Plus ($7/month) covers all three together on 1 Google Ads account, and Pro and Agency on more.");
-    expect(on).toContain("Free covers one Google service at a time: Google Ads (1 account), Search Console or Google Analytics; Plus ($7/month) covers Google Ads, Search Console and Google Analytics together on 1 Google Ads account, Pro ($15/month) on up to 5");
+    expect(soon).toContain("up to 25. From November 16, Free covers one Google service at a time: Google Ads (1 account), Search Console, Google Analytics or Merchant Center (1 account); Plus ($7/month) covers all four together on 1 Google Ads account, and Pro and Agency on more.");
+    expect(on).toContain("Free covers one Google service at a time: Google Ads (1 account), Search Console, Google Analytics or Merchant Center (1 account); Plus ($7/month) covers Google Ads, Search Console, Google Analytics and Merchant Center together on 1 Google Ads account, Pro ($15/month) on up to 5");
     expect(on).not.toContain("From November");
   });
 

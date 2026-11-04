@@ -25,7 +25,7 @@ import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
 import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage, withFreePlan } from "./pages.js";
-import { freePlan, listMerchant, merchantOn, withMerchantAt } from "./plans.js";
+import { freePlan } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
@@ -63,8 +63,6 @@ export interface Service {
 }
 
 export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Service {
-  // Before anything renders: pages, emails and tool results name Merchant Center as a service only once it's public.
-  listMerchant(cfg.merchantPublicFrom);
   gateDemoCalls(cfg.gateDemo);
   const app = express();
   app.set("trust proxy", 1); // behind Traefik: one hop
@@ -264,11 +262,9 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const chatgpt = isChatGpt(clientId);
     let session: UserSession | undefined;
     const email = (db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string } | undefined)?.email.toLowerCase();
-    // Admins only, not PRO_EMAILS: that holds the directory reviewers' login, who mustn't meet an unverified scope.
-    const merchant = merchantOn() || (!!email && cfg.adminEmails.has(email));
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.serviceWanted ?? null, c.grantOffered ?? null);
-    }, [], { chatgpt, merchant, planNote: planNoteFor(userId, chatgpt),
+    }, [], { chatgpt, planNote: planNoteFor(userId, chatgpt),
       feedback: async (kind, message) => {
         if (!email) throw new Error("Feedback needs a connected account.");
         return { sent: await submitFeedback(feedbackDeps, email, kind, message, "sent from their AI app"), email };
@@ -352,10 +348,10 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.get("/mcp", noSessions);
   app.delete("/mcp", noSessions);
 
-  // Each page rendered once per phase of the date flags (FREE_ONE_SERVICE: announced, then on; MERCHANT_PUBLIC: off, then on),
-  // and the live phase's copy served, so the pages flip at each date, no restart. With no date set, there's one phase.
+  // Each page rendered once per phase of FREE_ONE_SERVICE (announced, then on), and the live phase's copy served,
+  // so the pages flip at its date, no restart. With no date set, there's one phase.
   const render = (): Record<string, string> => {
-    const tools = toolCatalog({ merchant: merchantOn() });
+    const tools = toolCatalog();
     return {
     "/": homePage(cfg.baseUrl),
     "/google-ads-claude": claudeGuidePage(cfg.baseUrl),
@@ -374,8 +370,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     };
   };
   const from = cfg.freeOneServiceFrom;
-  const dates = [...new Set([from, cfg.merchantPublicFrom])].filter((t): t is number => !!t).sort((a, b) => a - b);
-  const phases = [0, ...dates].map((at) => ({ at, pages: withMerchantAt(at, () => withFreePlan(freePlan(from, at), render)) }));
+  const phases = [0, ...(from ? [from] : [])].map((at) => ({ at, pages: withFreePlan(freePlan(from, at), render) }));
   const live = () => phases.filter((p) => p.at <= now()).at(-1)!.pages;
   const pages = live();
   const page = (path: string) => (req: express.Request, res: express.Response) => {

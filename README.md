@@ -2,14 +2,14 @@
 
 [![Camberstack MCP server on Glama](https://glama.ai/mcp/servers/zwznco/camberstack-mcp/badges/score.svg)](https://glama.ai/mcp/servers/zwznco/camberstack-mcp)
 
-Connect Google Ads (and, optionally, Search Console) to Claude, ChatGPT, Cursor or any MCP client. Your AI
+Connect Google Ads (and, optionally, Search Console, Google Analytics and Merchant Center) to Claude, ChatGPT, Cursor or any MCP client. Your AI
 reads the account with read-only tools and can propose changes, from negative keywords to whole Search,
 Performance Max, Display and YouTube campaigns. **Nothing changes in the account until you approve a specific
 proposal, and applied changes can be undone in one call, on every plan, apart from deletions Google can't reverse, which are flagged first.** Risky changes (turning a campaign on,
 more than doubling a budget or bid, switching bid strategy) are flagged in the proposal before you approve. A demo
 account lets anyone try every tool first.
 
-Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes on 1 Google Ads account at a time, with one switch a month; from November 15, Free covers one Google service at a time: Google Ads, Search Console or Google Analytics. Plus $7/mo: all three together on 1 account; Pro $15/mo: all three on up to 5 accounts; Agency $49/mo: up to 25).
+Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes on 1 Google Ads account at a time, with one switch a month; from November 15, Free covers one Google service at a time: Google Ads, Search Console, Google Analytics or Merchant Center. Plus $7/mo: all four together on 1 account; Pro $15/mo: all four on up to 5 accounts; Agency $49/mo: up to 25).
 
 **Setup guides, with screenshots and troubleshooting:** [Connect Google Ads to Claude](https://camberstack.io/google-ads-claude) ·
 [Connect Google Ads to ChatGPT](https://camberstack.io/google-ads-chatgpt) · [every tool](https://camberstack.io/tools) ·
@@ -62,12 +62,11 @@ asks for them alongside Ads and Search Console; a connection made before they we
 `/connect/analytics` link on its first Analytics call, which adds both to the same Google account. The Cloud project
 needs the Google Analytics Data API and Admin API enabled.
 
-Merchant Center accounts are their own plan allowance, the same size as Google Ads' (Free 1, Pro 5), counted as
+Merchant Center accounts are their own plan allowance, the same size as Google Ads' (Free 1, Plus 1, Pro 5, Agency 25), counted as
 `mc:<id>` in `tool_calls` with their own switch (`switch_account` takes `mc:<id>`).
 
 The Merchant Center tools need `content`, which isn't part of connecting: the first call without it
-returns a personal `/connect/merchant-center` link that adds it. They're listed only for `ADMIN_EMAILS` until
-`MERCHANT_PUBLIC`'s date (or `=1`). Before any call works, the Cloud project needs
+returns a personal `/connect/merchant-center` link that adds it. Before any call works, the Cloud project needs
 the Merchant API enabled and **registered once** with a production Merchant Center account the operator administers
 (`POST https://merchantapi.googleapis.com/accounts/v1/accounts/{ID}/developerRegistration:registerGcp`); merchants
 don't register. Unregistered, calls answer 401 "not registered", which the tools report as Camberstack's to fix.
@@ -148,9 +147,8 @@ BASE_URL=https://your.host npm run dev
 | `BASE_URL` | public origin, the OAuth issuer (default `https://camberstack.io`) |
 | `DATA_DIR` | SQLite location (default `./data`) |
 | `PRO_EMAILS` | emails treated as Pro |
-| `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console or GA4: the most recently used, over 30 days); paid plans cover all three. `YYYY-MM-DD` = announced until that day, 08:00 UTC (midnight Pacific): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
+| `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console, GA4 or Merchant Center: the most recently used, over 30 days); paid plans cover all four. `YYYY-MM-DD` = announced until that day, 08:00 UTC (midnight Pacific): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
-| `MERCHANT_PUBLIC` | When the Merchant Center tools open to everyone. `YYYY-MM-DD` = from that day, 08:00 UTC (midnight Pacific): the tools, site copy, emails, changelog entry and terms date all flip then, no restart. `1` = on now. Unset = `ADMIN_EMAILS` only |
 | `STRIPE_AGENCY_PRICE_ID` | the Agency plan's price (its own product); unset = no Agency offered. Which plan a user is on follows their subscription's price, so a Pro ↔ Agency switch in Stripe's billing portal (which must list both prices) moves it within the hour |
 
 The hosted HTTP server is `npm run start:http` (the Docker image runs `node dist/server.js`).

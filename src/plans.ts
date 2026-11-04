@@ -35,29 +35,10 @@ export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
  */
 export type Service = "ads" | "search_console" | "analytics" | "merchant";
 export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", search_console: "Search Console", analytics: "Google Analytics", merchant: "Merchant Center" };
-/**
- * Merchant Center is a 4th service in the gate (operator, 2026-10-30), but the copy names it only once it's public
- * (MERCHANT_PUBLIC; until then only internal users can call it). server.ts sets its start at boot, before pages render,
- * so a date passes on its own: the tools, copy and emails all read merchantOn(), no restart.
- */
-let merchantFrom: number | undefined;
-/** The moment the pages are being rendered for (withMerchantAt); unset = now. */
-let merchantClock: number | undefined;
-export function listMerchant(from: number | undefined): void { merchantFrom = from; }
-export const merchantOn = () => merchantFrom !== undefined && (merchantClock ?? Date.now() / 1000) >= merchantFrom;
-/** When Merchant went public, once it has and if a date set it (not MERCHANT_PUBLIC=1): the terms and changelog date. */
-export const merchantSince = () => (merchantOn() && merchantFrom ? merchantFrom : undefined);
-export function withMerchantAt<T>(t: number, render: () => T): T {
-  const prev = merchantClock;
-  merchantClock = t;
-  try { return render(); } finally { merchantClock = prev; }
-}
-/** The services every page, email and tool result names, in order. */
-export const listedServices = (): Service[] => merchantOn() ? ["ads", "search_console", "analytics", "merchant"] : ["ads", "search_console", "analytics"];
-/** "Google Ads, Search Console or Google Analytics" (+ ", … or Merchant Center" once listed). */
+/** The services every page, email and tool result names, in order. Merchant Center is the 4th (public since 2026-11-04). */
+export const listedServices = (): Service[] => ["ads", "search_console", "analytics", "merchant"];
+/** "Google Ads, Search Console, Google Analytics or Merchant Center". */
 export const servicesOr = () => joinLabels(listedServices().map((s) => SERVICE_LABELS[s]), "or");
-/** "all three" / "all four". */
-export const allN = () => (merchantOn() ? "all four" : "all three");
 const joinLabels = (xs: string[], word: string) => `${xs.slice(0, -1).join(", ")} ${word} ${xs.at(-1)}`;
 /** Text of the service gate's refusal. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
 export const SERVICE_LIMIT_PREFIX = "Service limit:";
@@ -84,7 +65,7 @@ export function freePlan(from: number | undefined, t = Math.floor(Date.now() / 1
   return from === undefined ? { kind: "accounts" } : t < from ? { kind: "upcoming", from } : { kind: "one_service", from };
 }
 /**
- * A flag that starts on a date (FREE_ONE_SERVICE, MERCHANT_PUBLIC) → when: "1" = always (0), "YYYY-MM-DD" = that day at 08:00 UTC, else off.
+ * A flag that starts on a date (FREE_ONE_SERVICE) → when: "1" = always (0), "YYYY-MM-DD" = that day at 08:00 UTC, else off.
  * 08:00 UTC is midnight Pacific (PST), so it's already that date in the Americas, Europe and Asia when it starts; at 00:00
  * UTC it would still be the day before across the Americas, while the notice names the day.
  */
@@ -109,7 +90,7 @@ export const allServices = () => `${joinLabels(listedServices().map((s) => SERVI
 export const freePlanChange = (fp: FreePlan, neutral = false) =>
   fp.kind !== "upcoming" ? ""
     : `From ${dateLabel(fp.from)}, ${neutral ? "the current plan" : "Free"} covers ${oneServiceFree()}; `
-      + (neutral ? "using several together needs a different plan." : `Plus (${PLUS_PRICE_LABEL}) covers ${allN()} together on 1 Google Ads account, and Pro and Agency on more.`);
+      + (neutral ? "using several together needs a different plan." : `Plus (${PLUS_PRICE_LABEL}) covers all four together on 1 Google Ads account, and Pro and Agency on more.`);
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number, pool: Pool = "ads") => `${n} ${pool === "mc" ? "Merchant Center" : "Google Ads"} account${n === 1 ? "" : "s"}`;

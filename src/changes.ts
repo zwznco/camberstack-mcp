@@ -377,7 +377,7 @@ export const PUBLIC_CHANGES = [
     .describe("Apply or dismiss one of Google's recommendations. Applying has no undo and Google picks the details: say so before they approve"),
 ] as const;
 
-/** Listed only with the Merchant Center tools (tools.ts o.merchant), so a connection that can't reach them isn't offered these. */
+/** Google Ads ↔ Merchant Center links: Ads changes, kept apart because they need Merchant Center's API too. */
 export const MERCHANT_LINK_CHANGES = [
   z.object({ type: z.literal("link_merchant_center"), merchant_center_id: z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID (from merchant_accounts)") })
     .describe("Link a Merchant Center account to this Google Ads account, so Shopping and Performance Max campaigns can use its products (the user must be an admin of both)"),
@@ -386,8 +386,7 @@ export const MERCHANT_LINK_CHANGES = [
 ] as const;
 
 /** For propose_changes' input: what the AI sees. */
-export const PublicChangeSchema = z.discriminatedUnion("type", [...PUBLIC_CHANGES]);
-export const MerchantPublicChangeSchema = z.discriminatedUnion("type", [...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES]);
+export const PublicChangeSchema = z.discriminatedUnion("type", [...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES]);
 
 /** An undo of create_conversion_action stored before remove_conversion_action was public named the action by resource name. */
 const byId = (c: unknown) => {

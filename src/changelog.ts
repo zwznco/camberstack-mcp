@@ -3,15 +3,11 @@
  * come from the same entry (`npx tsx src/changelog.ts <version>`). Newest first. Keep it to what users notice;
  * internal work (admin pages, deploys) stays in git.
  */
-export interface Release {
-  version: string; date: string; summary: string; items?: string[];
-  /** Shown only once MERCHANT_PUBLIC is on, dated by it (`date` is the fallback for MERCHANT_PUBLIC=1). */
-  merchantLaunch?: boolean;
-}
+export interface Release { version: string; date: string; summary: string; items?: string[] }
 
 export const CHANGELOG: Release[] = [
   {
-    version: "0.26.0", date: "2026-11-04", merchantLaunch: true,
+    version: "0.26.0", date: "2026-11-04",
     summary: "Google Merchant Center: find out why products aren't showing on Google, and fix them with your approval.",
     items: [
       "**Product problems** (`merchant_product_issues`): account issues, how many products are eligible, limited, pending or disapproved, and every issue with the products it affects, worst first.",

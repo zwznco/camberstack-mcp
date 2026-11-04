@@ -40,8 +40,6 @@ export interface Config {
   adminUrl?: string;
   /** Google accounts allowed into the admin site. */
   adminEmails: Set<string>;
-  /** MERCHANT_PUBLIC (plans.ts parseDateFlag): when the Merchant Center tools open to everyone. Until then only ADMIN_EMAILS see them. */
-  merchantPublicFrom?: number;
   /** Hand our own campaign's conversions to operations (adconversions.ts); unset = clicks are kept but not sent. */
   conversions?: import("./adconversions.js").ConversionConfig;
   /** Lifecycle emails via Resend (lifecycle.ts); unset = none are sent. */
@@ -96,7 +94,6 @@ export function loadConfig(): Config {
     proEmails: emails(process.env.PRO_EMAILS),
     adminUrl: process.env.ADMIN_URL?.replace(/\/+$/, "") || undefined,
     adminEmails: emails(process.env.ADMIN_EMAILS),
-    merchantPublicFrom: parseDateFlag(process.env.MERCHANT_PUBLIC),
     noindex: process.env.NOINDEX === "1",
     allowedEmails: emails(process.env.ALLOWED_EMAILS),
     glamaClaim: process.env.GLAMA_CLAIM || undefined,

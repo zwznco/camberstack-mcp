@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allN, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -315,7 +315,7 @@ export class UserSession {
         throw new SwitchNotice(`${SERVICE_CHOICE_PREFIX} ${plan} covers one Google service at a time: ${servicesOr()}. `
           + `Nothing has run yet. Ask the user which one they want to use for the next ${ACCOUNT_WINDOW_DAYS} days, then make the call for that service: `
           + `the first one made in the next ${SERVICE_CHOICE_SECONDS / 60} minutes becomes the plan's service, and the others wait until ${ACCOUNT_WINDOW_DAYS} days after it was last used.`
-          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers ${allN()} together.` : ` Pro (${PRO_PRICE_LABEL}) covers ${allN()} together.`),
+          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers all four together.` : ` Pro (${PRO_PRICE_LABEL}) covers all four together.`),
           { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: listedServices().map((s) => SERVICE_LABELS[s]), window_days: ACCOUNT_WINDOW_DAYS,
             ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
       }
@@ -339,14 +339,14 @@ export class UserSession {
       const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
       if (plusUrl) {
         const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-        throw new SwitchNotice(`${head}${scope("the options below")} Plus (${PLUS_PRICE_LABEL}) covers ${allN()} together on 1 Google Ads account, so ${want} works right away; `
+        throw new SwitchNotice(`${head}${scope("the options below")} Plus (${PLUS_PRICE_LABEL}) covers all four together on 1 Google Ads account, so ${want} works right away; `
           + `Pro (${PRO_PRICE_LABEL}) does on up to ${this.deps.proAccounts}.`,
           { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${allServices()}, on 1 Google Ads account`, cancel: "any time",
             upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" },
             or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
       }
       const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-      throw new SwitchNotice(`${head}${scope("the options below")} Pro (${PRO_PRICE_LABEL}) covers ${allN()} together, so ${want} works right away.`,
+      throw new SwitchNotice(`${head}${scope("the options below")} Pro (${PRO_PRICE_LABEL}) covers all four together, so ${want} works right away.`,
         { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: allServices(), cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
     }

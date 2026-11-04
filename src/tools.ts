@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ListToolsResult, ToolAnnotations } from "@modelcontextprotocol/server";
-import { MAX_CHANGES, MERCHANT_LINK_CHANGES, MerchantPublicChangeSchema, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
+import { MAX_CHANGES, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
 import { landingPages, listProperties, report } from "./ga4.js";
 import { DEMO_MERCHANT, listMerchantAccounts, merchantReport, productIssues } from "./merchant.js";
 import { PUBLIC_MC_CHANGES, PublicMcChangeSchema, mcTarget } from "./merchant-changes.js";
@@ -161,9 +161,9 @@ const GRANT_LINK = /\/connect\/([a-z-]+)\?t=/;
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { chatgpt?: boolean; merchant?: boolean; planNote?: string | null; stuck?: (tool: string, error: string) => string | null;
+  o: { chatgpt?: boolean; planNote?: string | null; stuck?: (tool: string, error: string) => string | null;
     feedback?: (kind: FeedbackKind, message: string) => Promise<{ sent: boolean; email: string }> } = {}): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + (o.merchant ? MERCHANT_INSTRUCTIONS : "") + (o.planNote ? `\n${o.planNote}` : "") });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + MERCHANT_INSTRUCTIONS + (o.planNote ? `\n${o.planNote}` : "") });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
       const t0 = Date.now();
@@ -504,90 +504,88 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   }, ({ property_id, ...o }: GaWindow & { property_id: string; dimensions: string[]; metrics: string[];
     filter?: { dimension: string; contains: string }; order_by?: string; limit: number }) => report(session().ga, property_id, o));
 
-  // Merchant Center: listed only where o.merchant (server.ts: MERCHANT_PUBLIC, or internal users before its date).
-  if (o.merchant) {
-    tool("merchant_accounts", {
-      title: "List Merchant Center accounts",
-      description: "Lists the Google Merchant Center accounts this Google login can read, including sub-accounts of an advanced (multi-client) account. "
-        + "Use an account_id from here in the other Merchant Center tools. If Merchant Center isn't part of the connection yet, says so and returns grant_url, "
-        + "a personal link the user opens to add it.",
-      annotations: read,
-    }, () => listMerchantAccounts(session().merchant));
+  // Merchant Center.
+  tool("merchant_accounts", {
+    title: "List Merchant Center accounts",
+    description: "Lists the Google Merchant Center accounts this Google login can read, including sub-accounts of an advanced (multi-client) account. "
+      + "Use an account_id from here in the other Merchant Center tools. If Merchant Center isn't part of the connection yet, says so and returns grant_url, "
+      + "a personal link the user opens to add it.",
+    annotations: read,
+  }, () => listMerchantAccounts(session().merchant));
 
-    tool("merchant_product_issues", {
-      title: "Merchant Center product issues",
-      description: "Why products aren't showing on Google (Shopping ads and free listings): the account's own issues, how many products are eligible, "
-        + "limited, pending or disapproved, and every product issue (such as a price mismatch or a missing GTIN) with how many products it affects, "
-        + "worst first, and a few example products. With offer_id, that one product's issues in full. Use it when Shopping or Performance Max "
-        + "spend or clicks drop, or products are missing. Changes nothing.",
-      inputSchema: {
-        account_id: merchantId,
-        offer_id: z.string().min(1).max(150).regex(/^[^'\\]+$/, "no quotes or backslashes").optional()
-          .describe("One product's ID as in the feed (offer_id), to see its issues in full"),
-        examples: z.number().int().min(0).max(20).default(5).describe("Example products listed per issue"),
-      },
-      annotations: read,
-    }, ({ account_id, ...o }: { account_id: string; offer_id?: string; examples: number }) => productIssues(session().merchant, account_id, o));
+  tool("merchant_product_issues", {
+    title: "Merchant Center product issues",
+    description: "Why products aren't showing on Google (Shopping ads and free listings): the account's own issues, how many products are eligible, "
+      + "limited, pending or disapproved, and every product issue (such as a price mismatch or a missing GTIN) with how many products it affects, "
+      + "worst first, and a few example products. With offer_id, that one product's issues in full. Use it when Shopping or Performance Max "
+      + "spend or clicks drop, or products are missing. Changes nothing.",
+    inputSchema: {
+      account_id: merchantId,
+      offer_id: z.string().min(1).max(150).regex(/^[^'\\]+$/, "no quotes or backslashes").optional()
+        .describe("One product's ID as in the feed (offer_id), to see its issues in full"),
+      examples: z.number().int().min(0).max(20).default(5).describe("Example products listed per issue"),
+    },
+    annotations: read,
+  }, ({ account_id, ...o }: { account_id: string; offer_id?: string; examples: number }) => productIssues(session().merchant, account_id, o));
 
-    tool("merchant_report", {
-      title: "Run a Merchant Center report",
-      description: "Runs a read-only Merchant Center Query Language (MCQL) query on one account and returns up to `limit` rows. One view per query. "
-        + "product_performance_view: segments date, week, offer_id, title, brand, marketing_method (ADS or ORGANIC), customer_country_code, "
-        + "category_l1…l5, product_type_l1…l5, custom_label0…4; metrics clicks, impressions, click_through_rate (conversions, conversion_value and "
-        + "conversion_rate count free listings only). It needs a date range and at least one metric, e.g. SELECT offer_id, title, clicks, impressions "
-        + "FROM product_performance_view WHERE date DURING LAST_30_DAYS AND marketing_method = 'ADS' ORDER BY clicks DESC LIMIT 50. "
-        + "product_view (current status): id, offer_id, title, brand, price, availability, gtin, feed_label, aggregated_reporting_context_status "
-        + "(ELIGIBLE, ELIGIBLE_LIMITED, PENDING, NOT_ELIGIBLE_OR_DISAPPROVED), item_issues, click_potential (LOW, MEDIUM, HIGH); id must be selected. "
-        + "Also price_competitiveness_product_view, price_insights_product_view and best_sellers_product_cluster_view. "
-        + "WHERE joins conditions with AND only (no OR); dates as date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' or date DURING LAST_7_DAYS / LAST_30_DAYS. "
-        + "Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Changes nothing.",
-      inputSchema: {
-        account_id: merchantId,
-        query: z.string().min(1).max(5000).describe("An MCQL SELECT statement"),
-        limit: z.number().int().min(1).max(1000).default(500).describe("Most rows to return"),
-      },
-      annotations: read,
-    }, ({ account_id, query, limit }: { account_id: string; query: string; limit: number }) => merchantReport(session().merchant, account_id, query, limit));
+  tool("merchant_report", {
+    title: "Run a Merchant Center report",
+    description: "Runs a read-only Merchant Center Query Language (MCQL) query on one account and returns up to `limit` rows. One view per query. "
+      + "product_performance_view: segments date, week, offer_id, title, brand, marketing_method (ADS or ORGANIC), customer_country_code, "
+      + "category_l1…l5, product_type_l1…l5, custom_label0…4; metrics clicks, impressions, click_through_rate (conversions, conversion_value and "
+      + "conversion_rate count free listings only). It needs a date range and at least one metric, e.g. SELECT offer_id, title, clicks, impressions "
+      + "FROM product_performance_view WHERE date DURING LAST_30_DAYS AND marketing_method = 'ADS' ORDER BY clicks DESC LIMIT 50. "
+      + "product_view (current status): id, offer_id, title, brand, price, availability, gtin, feed_label, aggregated_reporting_context_status "
+      + "(ELIGIBLE, ELIGIBLE_LIMITED, PENDING, NOT_ELIGIBLE_OR_DISAPPROVED), item_issues, click_potential (LOW, MEDIUM, HIGH); id must be selected. "
+      + "Also price_competitiveness_product_view, price_insights_product_view and best_sellers_product_cluster_view. "
+      + "WHERE joins conditions with AND only (no OR); dates as date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' or date DURING LAST_7_DAYS / LAST_30_DAYS. "
+      + "Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Changes nothing.",
+    inputSchema: {
+      account_id: merchantId,
+      query: z.string().min(1).max(5000).describe("An MCQL SELECT statement"),
+      limit: z.number().int().min(1).max(1000).default(500).describe("Most rows to return"),
+    },
+    annotations: read,
+  }, ({ account_id, query, limit }: { account_id: string; query: string; limit: number }) => merchantReport(session().merchant, account_id, query, limit));
 
-    tool("merchant_ad_spend", {
-      title: "Merchant Center issues by ad spend",
-      description: "Which Merchant Center problems cost money: products that are disapproved, limited or pending, joined with what they earned in "
-        + "Shopping and Performance Max ads (cost, clicks, conversions, conversion value) over the window, most value first, and whether each "
-        + "has stopped spending in the last 7 days. Use it when Shopping or Performance Max results drop, before fixing issues one by one. Changes nothing.",
-      inputSchema: { customer_id: customerId, account_id: merchantId,
-        days: z.number().int().min(7).max(90).default(30).describe("Look-back window in days, ending yesterday; reach back before a drop"),
-        limit: z.number().int().min(1).max(200).default(25).describe("Most products to return") },
-      annotations: read,
-    }, async ({ customer_id, account_id, ...o }: { customer_id: string; account_id: string; days: number; limit: number }) => {
-      // The Ads account is gated and logged by wrap; the Merchant Center one here, or it would never count as used. Under
-      // its own name: it's a marker, not a second call, so per-tool counts stay right.
-      const release = await session().checkAccount(mcTarget(account_id));
-      try {
-        const out = await session().merchantAdSpend(customer_id, account_id, o);
-        log({ tool: "merchant_ad_spend.account", customerId: mcTarget(account_id), ok: true, error: null, ms: 0, bytes: 0, queryShape: null, service: null });
-        return out;
-      } finally { release(); }
-    });
+  tool("merchant_ad_spend", {
+    title: "Merchant Center issues by ad spend",
+    description: "Which Merchant Center problems cost money: products that are disapproved, limited or pending, joined with what they earned in "
+      + "Shopping and Performance Max ads (cost, clicks, conversions, conversion value) over the window, most value first, and whether each "
+      + "has stopped spending in the last 7 days. Use it when Shopping or Performance Max results drop, before fixing issues one by one. Changes nothing.",
+    inputSchema: { customer_id: customerId, account_id: merchantId,
+      days: z.number().int().min(7).max(90).default(30).describe("Look-back window in days, ending yesterday; reach back before a drop"),
+      limit: z.number().int().min(1).max(200).default(25).describe("Most products to return") },
+    annotations: read,
+  }, async ({ customer_id, account_id, ...o }: { customer_id: string; account_id: string; days: number; limit: number }) => {
+    // The Ads account is gated and logged by wrap; the Merchant Center one here, or it would never count as used. Under
+    // its own name: it's a marker, not a second call, so per-tool counts stay right.
+    const release = await session().checkAccount(mcTarget(account_id));
+    try {
+      const out = await session().merchantAdSpend(customer_id, account_id, o);
+      log({ tool: "merchant_ad_spend.account", customerId: mcTarget(account_id), ok: true, error: null, ms: 0, bytes: 0, queryShape: null, service: null });
+      return out;
+    } finally { release(); }
+  });
 
-    if (!o.chatgpt) tool("propose_merchant_changes", {
-      title: "Propose Merchant Center changes (applies nothing)",
-      description: "Checks Merchant Center product changes against the live account and stores them as a proposal with a plain-English summary; "
-        + "nothing is changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). "
-        + "Supported: set_product_attributes (override a product's price, sale price, GTIN, brand, title, availability, …, e.g. to fix a price "
-        + "mismatch or a missing GTIN), exclude_products / include_products (from Shopping ads or free listings), clear_product_overrides; "
-        + "and add_product / update_product / delete_product for products Camberstack creates in its own data source. "
-        + "Changes to products from the merchant's feed are overrides in Camberstack's own supplemental data source, layered on top: the feed itself is never edited. "
-        + "Point out any ⚠ line before they approve. A fix in the feed or the store (Shopify, …) lasts longer: suggest it too.",
-      inputSchema: { account_id: merchantId,
-        changes: z.array(PublicMcChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, ({ account_id, changes }: { account_id: string; changes: unknown[] }) => session().propose(mcTarget(account_id), changes));
-  }
+  if (!o.chatgpt) tool("propose_merchant_changes", {
+    title: "Propose Merchant Center changes (applies nothing)",
+    description: "Checks Merchant Center product changes against the live account and stores them as a proposal with a plain-English summary; "
+      + "nothing is changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). "
+      + "Supported: set_product_attributes (override a product's price, sale price, GTIN, brand, title, availability, …, e.g. to fix a price "
+      + "mismatch or a missing GTIN), exclude_products / include_products (from Shopping ads or free listings), clear_product_overrides; "
+      + "and add_product / update_product / delete_product for products Camberstack creates in its own data source. "
+      + "Changes to products from the merchant's feed are overrides in Camberstack's own supplemental data source, layered on top: the feed itself is never edited. "
+      + "Point out any ⚠ line before they approve. A fix in the feed or the store (Shopify, …) lasts longer: suggest it too.",
+    inputSchema: { account_id: merchantId,
+      changes: z.array(PublicMcChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, ({ account_id, changes }: { account_id: string; changes: unknown[] }) => session().propose(mcTarget(account_id), changes));
 
   if (!o.chatgpt) tool("propose_changes", {
     title: "Propose Google Ads changes (applies nothing)",
-    description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad rather than edit it: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, set_eu_political_advertising (Google refuses every change to an account until each campaign has declared this), create_conversion_action, set_conversion_counting, import_ga4_key_event, remove_conversion_action; and deleting: delete_keyword, delete_ad, delete_ad_group, delete_campaign (ads, ad groups and campaigns can't be undone), delete_negative_keywords, delete_sitelinks; and negatives: add_ad_group_negatives, delete_ad_group_negatives, create_negative_list, edit_negative_list, apply_negative_list, delete_negative_list; and edit_responsive_search_ad, which keeps the ad instead of replacing it; and set_ad_schedule, set_device_bid, add_campaign_assets, delete_campaign_assets, set_ai_max, set_conversion_settings; and create_remarketing_list, set_campaign_audience, act_on_recommendation${o.merchant ? "; and link_merchant_center / unlink_merchant_center (Shopping and Performance Max need the link)" : ""}. Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
-    inputSchema: { customer_id: customerId, changes: z.array(o.merchant ? MerchantPublicChangeSchema : PublicChangeSchema).min(1).max(MAX_CHANGES).describe(`Changes to propose; several can go in one proposal, up to ${MAX_CHANGES} (each keyword counts as one)`) },
+    description: `Checks a set of changes against the live account and dry-runs them with Google, then stores them as a proposal and returns a plain-English summary. Nothing is changed. Show the summary to the user and apply only after they approve. Supported: add_negative_keywords, pause_campaign, enable_campaign, pause_keyword, enable_keyword, pause_ad_group, enable_ad_group, set_daily_budget, set_end_date, and building: create_campaign (Search), create_display_campaign, create_demand_gen_campaign (YouTube), create_performance_max_campaign, all created paused; add_ad_group, add_keywords, add_responsive_search_ad, add_sitelinks, set_conversion_goal; and tuning: set_keyword_bid, set_ad_group_bid, pause_ad, enable_ad (to replace an ad rather than edit it: add the new one and pause the old in one proposal), add_campaign_targeting, remove_campaign_targeting, set_location_mode, set_bidding_strategy, set_shared_bid_strategy, create_shared_bid_strategy, set_url_suffix, set_eu_political_advertising (Google refuses every change to an account until each campaign has declared this), create_conversion_action, set_conversion_counting, import_ga4_key_event, remove_conversion_action; and deleting: delete_keyword, delete_ad, delete_ad_group, delete_campaign (ads, ad groups and campaigns can't be undone), delete_negative_keywords, delete_sitelinks; and negatives: add_ad_group_negatives, delete_ad_group_negatives, create_negative_list, edit_negative_list, apply_negative_list, delete_negative_list; and edit_responsive_search_ad, which keeps the ad instead of replacing it; and set_ad_schedule, set_device_bid, add_campaign_assets, delete_campaign_assets, set_ai_max, set_conversion_settings; and create_remarketing_list, set_campaign_audience, act_on_recommendation; and link_merchant_center / unlink_merchant_center (Shopping and Performance Max need the link). Point out any ⚠ line in the summary to the user before they approve. At most ${MAX_CHANGES} changes per proposal, counting each keyword in add_keywords and add_negative_keywords as one (a create_campaign or add_ad_group counts as one however much it holds); for more, split them into several proposals up front and show the user all the summaries together.`,
+    inputSchema: { customer_id: customerId, changes: z.array(PublicChangeSchema).min(1).max(MAX_CHANGES).describe(`Changes to propose; several can go in one proposal, up to ${MAX_CHANGES} (each keyword counts as one)`) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, ({ customer_id, changes }: { customer_id: string; changes: unknown[] }) => session().propose(customer_id, changes));
 
@@ -597,7 +595,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     + "Show the summary, and any ⚠ line in it, to the user and call apply_changes only after they approve.";
   const proposes = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
   if (o.chatgpt) {
-    for (const c of [...PUBLIC_CHANGES, ...(o.merchant ? MERCHANT_LINK_CHANGES : [])]) {
+    for (const c of [...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES]) {
       const { type, ...shape } = c.shape;
       const op = type.value;
       tool(`propose_${op}`, {
@@ -629,7 +627,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         annotations: proposes,
       }, (rest: Record<string, unknown>) => session().propose(SC_TARGET, [{ type: op, ...rest }]));
     }
-    if (o.merchant) for (const c of PUBLIC_MC_CHANGES) {
+    for (const c of PUBLIC_MC_CHANGES) {
       const { type, ...shape } = c.shape;
       const op = type.value;
       tool(`propose_${op}`, {
@@ -685,13 +683,12 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       + "for this account and the user agreed, or answered \"Account choice:\" and the user picked this account (a first pick spends no switch). "
       + "Called with neither, it answers with the \"Account switch:\" notice and spends nothing. "
       + "Changes nothing in Google Ads; a no-op for an account that is already active."
-      + (o.merchant ? " Merchant Center accounts are a separate allowance with their own switch: pass mc:<account_id>, as the notice gives it." : ""),
+      + " Merchant Center accounts are a separate allowance with their own switch: pass mc:<account_id>, as the notice gives it.",
     inputSchema: { customer_id: customerId },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async ({ customer_id }: { customer_id: string }) => {
     const s = session(), id = customer_id.startsWith("mc:") ? customer_id : customer_id.replace(/-/g, "");
-    // Without o.merchant, mc: falls through to the refusal below: it's no account this connection can reach.
-    if (o.merchant && id.startsWith("mc:")) {
+    if (id.startsWith("mc:")) {
       if (!(await s.merchant.accounts()).some((a) => a.account_id === id.slice(3)))
         throw new Error(`${id.slice(3)} isn't a Merchant Center account this login can reach (merchant_accounts shows the ones it can). Nothing was spent.`);
       return { switched_to: id, active_merchant_center_accounts: s.planState(new Set(), "mc").active.map((c) => c.slice(3)) };
@@ -751,8 +748,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 }
 
 /** Every tool in registration (workflow) order, without a session: nothing is ever called. */
-export function toolCatalog(o: { merchant?: boolean } = {}): ToolDoc[] {
+export function toolCatalog(): ToolDoc[] {
   const catalog: ToolDoc[] = [];
-  buildServer(() => { throw new Error("catalog only"); }, undefined, catalog, o);
+  buildServer(() => { throw new Error("catalog only"); }, undefined, catalog);
   return catalog;
 }

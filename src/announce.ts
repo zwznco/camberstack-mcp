@@ -22,7 +22,7 @@ import type { DB } from "./db.js";
 import { now } from "./db.js";
 import type { Lifecycle } from "./lifecycle.js";
 import { esc } from "./pages.js";
-import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS, merchantOn } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, PRO_ACCOUNTS } from "./plans.js";
 
 export type Audience = "all" | "free" | "pro";
 export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Paid and complimentary plans (Plus, Pro, Agency)" };
@@ -89,9 +89,8 @@ Adam`,
   },
   {
     id: "merchant-center-open",
-    plan: "Once MERCHANT_PUBLIC's date has passed, after the free-one-service notice: Send stays locked until the tools are live.",
+    plan: "Merchant Center went public 2026-11-04: send after the free-one-service notice.",
     audience: "all",
-    ready: merchantOn,
     subject: "Google Merchant Center now works in Camberstack",
     body: `Hi,
 

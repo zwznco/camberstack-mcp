@@ -120,9 +120,8 @@ describe("Merchant Center tools on the demo account", () => {
 });
 
 describe("rollout", () => {
-  it("lists the Merchant Center tools only when enabled", () => {
-    const names = (o?: { merchant?: boolean }) => toolCatalog(o).map((t) => t.name).filter((n) => n.startsWith("merchant_"));
-    expect(names()).toEqual([]);
-    expect(names({ merchant: true })).toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report", "merchant_ad_spend"]);
+  it("lists the Merchant Center tools", () => {
+    expect(toolCatalog().map((t) => t.name).filter((n) => n.startsWith("merchant_")))
+      .toEqual(["merchant_accounts", "merchant_product_issues", "merchant_report", "merchant_ad_spend"]);
   });
 });
