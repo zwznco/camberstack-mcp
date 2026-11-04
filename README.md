@@ -7,11 +7,12 @@ MCP client with one Google sign-in, and use them together: the searches you pay 
 clicks convert on the landing page, which disapproved products were earning in Shopping. Your AI reads with
 read-only tools and can propose changes, from negative keywords to whole Search, Performance Max, Display and
 YouTube campaigns, GA4 key events and Merchant Center product fixes. **Nothing changes until you approve a specific
-proposal**, and applied changes can be undone, apart from deletions Google can't reverse, which are flagged first. Risky changes (turning a campaign on,
-more than doubling a budget or bid, switching bid strategy) are flagged in the proposal before you approve. A demo
+proposal**; risky changes and deletions Google can't reverse are flagged first, and the rest can be undone. A demo
 account lets anyone try every tool first.
 
-Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes on 1 Google Ads account at a time, with one switch a month; from November 15, Free covers one Google service at a time: Google Ads, Search Console, Google Analytics or Merchant Center. Plus $7/mo: all four together on 1 account; Pro $15/mo: all four on up to 5 accounts; Agency $49/mo: up to 25).
+Hosted: **https://camberstack.io/mcp**. Free: every tool and unlimited changes on 1 account, with one switch a month;
+from November 15, one Google service at a time. Plus $7/mo: all four services on 1 account. Pro $15/mo: up to 5
+accounts. Agency $49/mo: up to 25.
 
 **Setup guides, with screenshots and troubleshooting:** [Connect Google Ads to Claude](https://camberstack.io/google-ads-claude) ·
 [Connect Google Ads to ChatGPT](https://camberstack.io/google-ads-chatgpt) · [every tool](https://camberstack.io/tools) ·
@@ -56,8 +57,9 @@ Hosted: **https://camberstack.io/mcp** (Free: every tool and unlimited changes o
 | `disconnect` | no | revokes Camberstack's Google access and deletes the stored credentials (the user confirms) |
 
 The Search Console tools take either `days` or exact `start_date`/`end_date`, and `fresh: true` to include the last 2-3
-days Google is still filling in. Requesting indexing and submitting sitemaps aren't available: Camberstack only holds
-the read-only scope.
+days Google is still filling in. Sitemaps and properties change through `propose_search_console_changes`
+(submit or delete a sitemap, add or remove a property). Requesting indexing has no API, and verifying a property is
+done in Search Console.
 
 The Google Analytics tools need `analytics.readonly` and `analytics.edit` (Google-verified sensitive scopes). Sign-in
 asks for them alongside Ads and Search Console; a connection made before they were added gets a personal
@@ -85,8 +87,7 @@ source's rules, so the first override on a feed's products also patches that fee
 (every source already there is kept): the summary shows it as a ⚠ line. Feeds made in the Merchant Center UI or by
 autofeed can't be patched, and the proposal says so. Google can't read overrides back, so `merchant_overrides` keeps
 Camberstack's copy per product; undo restores exactly that (removing the input when there was none). The Merchant API
-has no dry run: re-resolving at apply is the check, as with GA4. Untested against a live account until the project is
-registered: try a Shopify-managed feed's rule patch on dev before opening it up.
+has no dry run: re-resolving at apply is the check, as with GA4.
 
 What a proposal can do:
 
@@ -151,7 +152,8 @@ BASE_URL=https://your.host npm run dev
 | `PRO_EMAILS` | emails treated as Pro |
 | `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console, GA4 or Merchant Center: the most recently used, over 30 days); paid plans cover all four. `YYYY-MM-DD` = announced until that day, 08:00 UTC (midnight Pacific): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
-| `STRIPE_AGENCY_PRICE_ID` | the Agency plan's price (its own product); unset = no Agency offered. Which plan a user is on follows their subscription's price, so a Pro ↔ Agency switch in Stripe's billing portal (which must list both prices) moves it within the hour |
+| `STRIPE_PLUS_PRICE_ID` | the Plus plan's price; unset = no Plus offered |
+| `STRIPE_AGENCY_PRICE_ID` | the Agency plan's price (its own product); unset = no Agency offered. Which plan a user is on follows their subscription's price, so a plan switch in Stripe's billing portal (which must list the prices) moves it within the hour |
 
 The hosted HTTP server is `npm run start:http` (the Docker image runs `node dist/server.js`).
 `npm start` is a stdio mode that needs no env, database or Google login: it lists every tool for
