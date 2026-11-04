@@ -335,6 +335,13 @@ export class UserSession {
       const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
       // C1 (UNPROMPTED-STOPS.md): most stops are calls the AI made on its own; it answers with what's covered instead.
       const scope = (options: string) => (have ? ` ${serviceLimitScope(have, want, options)}` : "");
+      // C1 v2 (round 2), ChatGPT only: lead with what to do; the limit and the plans page sit under only_if_user_asked_for,
+      // so they aren't relayed when the AI made the call on its own. Claude keeps the round-1 wording (tested with C2).
+      if (this.chatgpt && have) throw new SwitchNotice(`${SERVICE_LIMIT_PREFIX} nothing ran: ${want} isn't on the current plan, which covers one Google service at a time `
+        + `and is set to ${have}. Answer the user's request with ${have}. Only if the user asked for ${want}, tell them it isn't on their plan`
+        + `${opens ? ` (it opens on ${opens})` : ""} and that using several together needs a different plan (plans_page).`,
+        { stop: "service_limit", service_in_use: have, answer_with: have,
+          only_if_user_asked_for: { service: want, opens_on_free: opens, note: "Using several together needs a different plan.", plans_page: this.plansPage } });
       if (this.chatgpt) throw new SwitchNotice(`${head}${scope("the plans page (plans_page)")} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
       const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
       if (plusUrl) {
@@ -578,6 +585,20 @@ export class UserSession {
    * service unless the user asks for another, instead of calling one on its own and meeting a Service limit stop.
    * Null for paid plans and while Free isn't one-service. Instructions are read when a conversation starts.
    */
+  /**
+   * C4 (UNPROMPTED-STOPS.md round 2): a listing of another service's properties, on one-service Free, says that service
+   * isn't the plan's. Listings are free, and most unprompted calls follow one (ChatGPT often calls them all up front);
+   * clients that ignore per-user instructions (ChatGPT) still read tool results. Leads the result so it's read first.
+   */
+  withListingNote<T extends object>(service: Service, result: T): T | ({ plan_note: string } & T) {
+    if (!this.oneService || this.isPro) return result;
+    const covered = this.servicesInUse()[0]?.s;
+    if (!covered || covered === service) return result;
+    const label = SERVICE_LABELS[service];
+    return { plan_note: `${label} isn't on this login's plan: it covers one Google service at a time, and it's set to ${SERVICE_LABELS[covered]}. `
+      + `Calls to ${label} tools are stopped and return no data, so call them only if the user asks for ${label}.`, ...result };
+  }
+
   serviceNote(): string | null {
     if (!this.oneService || this.isPro) return null;
     const s = this.servicesInUse()[0]?.s;

@@ -2870,11 +2870,20 @@ describe("OAuth + MCP end to end", () => {
       const gptInfo = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(gptClient) as { info: string }).info;
       db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(gptInfo), redirect_uris: ["https://chatgpt.com/connector/oauth/one"] }), gptClient);
       const gptStop = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      expect(gptStop.text).toContain("Service limit: the current plan covers one Google service at a time");
-      expect(gptStop.text).toContain("Using several together needs a different plan.");
-      expect(gptStop.text).toContain("tell them it isn't on this plan, with the plans page (plans_page).");
+      // C1 v2 (round 2): ChatGPT's stop leads with what to do; the limit and plans page only if the user asked.
+      expect(gptStop.text).toContain("Service limit: nothing ran: Search Console isn't on the current plan");
+      expect(gptStop.text).toContain("Answer the user's request with Google Ads. Only if the user asked for Search Console");
+      expect(gptStop.json).toMatchObject({ stop: "service_limit", answer_with: "Google Ads",
+        only_if_user_asked_for: { service: "Search Console", note: "Using several together needs a different plan.", plans_page: expect.stringContaining("/plans") } });
+      // C4: a listing of a service the plan doesn't cover says so, in every client.
+      const gptSites = (await call(t, "search_console_sites")).json;
+      expect(Object.keys(gptSites)[0]).toBe("plan_note");
+      expect(gptSites.plan_note).toContain("Search Console isn't on this login's plan");
       expect(gptStop.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bFree plan\b|\bPro\b|\$|upgrade/i);
       db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(gptInfo, gptClient);
+      // C4 for other clients too; the covered service's own listing carries no note.
+      expect((await call(t, "search_console_sites")).json.plan_note).toContain("it's set to Google Ads");
+      expect((await call(t, "list_accounts")).json).not.toHaveProperty("plan_note");
       // A refused call takes nothing: Ads still works, and billing names it.
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
       const plan = (await call(t, "billing")).json;
@@ -2890,6 +2899,7 @@ describe("OAuth + MCP end to end", () => {
       // Paid plans cover all three.
       db.prepare("UPDATE users SET plan = 'pro' WHERE id = ?").run(uid);
       expect(await instructionsFor(t)).not.toContain("This login's plan covers");
+      expect((await call(t, "search_console_sites")).json).not.toHaveProperty("plan_note");
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
       // A stop records what the call was after, and still doesn't count as use.
       expect(db.prepare("SELECT service, service_wanted w FROM tool_calls WHERE error LIKE 'Service limit:%' ORDER BY id DESC LIMIT 1").get())

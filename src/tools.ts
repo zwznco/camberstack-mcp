@@ -351,7 +351,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "List Search Console sites",
     description: "Lists the websites (Search Console properties) this Google login can read. Use a site_url from here in the other Search Console tools.",
     annotations: read,
-  }, () => session().searchConsoleSites());
+  }, async () => { const s = session(); return s.withListingNote("search_console", await s.searchConsoleSites()); });
 
   tool("search_console_summary", {
     title: "Search Console summary",
@@ -458,7 +458,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     description: "Lists the Google Analytics 4 properties this Google login can read. Use a property_id from here in the other Google Analytics tools. "
       + "If Google Analytics isn't part of the connection yet, says so and returns grant_url, a personal link the user opens to add it.",
     annotations: read,
-  }, () => listProperties(session().ga));
+  }, async () => { const s = session(); return s.withListingNote("analytics", await listProperties(s.ga)); });
 
   tool("analytics_setup", {
     title: "Google Analytics setup",
@@ -511,7 +511,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       + "Use an account_id from here in the other Merchant Center tools. If Merchant Center isn't part of the connection yet, says so and returns grant_url, "
       + "a personal link the user opens to add it.",
     annotations: read,
-  }, () => listMerchantAccounts(session().merchant));
+  }, async () => { const s = session(); return s.withListingNote("merchant", await listMerchantAccounts(s.merchant)); });
 
   tool("merchant_product_issues", {
     title: "Merchant Center product issues",
