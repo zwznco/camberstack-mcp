@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, PlanLimitError, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -535,6 +535,8 @@ export class UserSession {
         ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
   }
 
+  // A normal result, not isError (plans.ts SwitchNotice): the plan working as designed isn't a failure, and errors count
+  // against the directories' reliability metrics. lifecycle.ts limit_reached matches it on the text.
   private refuse(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool): never {
     const used = `${PLAN_LIMIT_PREFIX} Camberstack has been used on ${accountsLabel(st.used.length, pool)} in the last ${ACCOUNT_WINDOW_DAYS} days`;
     const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with one switch per ${ACCOUNT_WINDOW_DAYS} days, `
@@ -545,22 +547,22 @@ export class UserSession {
       still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"] };
     if (this.isPro) {
       const next = this.nextPlan(), name = planLabel(this.planName);
-      throw new PlanLimitError(`${used}; ${name} ${rule}`
+      throw new SwitchNotice(`${used}; ${name} ${rule}`
         + (next ? ` ${planLabel(next.plan)} (${next.price}) covers up to ${next.accounts_included}, switched to from the billing page (upgrade_url).` : ""),
-        { error: "plan_limit", ...common, ...(next ? { upgrade: { ...next, cancel: "any time", upgrade_url_expires: next.upgrade_url ? "7 days; personal to this user" : null } } : {}),
+        { stop: "plan_limit", ...common, ...(next ? { upgrade: { ...next, cancel: "any time", upgrade_url_expires: next.upgrade_url ? "7 days; personal to this user" : null } } : {}),
           contact: "adam@camberstack.io" });
     }
     // Lead with what gets them working again: someone refused here is working on more than one account.
     const wait = st.used.includes(cid) ? `${cid} opens again on ${st.switchOpens}` : `the next switch opens on ${st.switchOpens}`;
     if (this.chatgpt) {
-      throw new PlanLimitError(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}: the current plan ${rule} `
-        + `More accounts at a time need a different plan.`, { error: "plan_limit", ...common, plans_page: this.plansPage });
+      throw new SwitchNotice(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}: the current plan ${rule} `
+        + `More accounts at a time need a different plan.`, { stop: "plan_limit", ...common, plans_page: this.plansPage });
     }
     const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     const agency = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;
-    throw new PlanLimitError(`${used} (${st.used.join(", ")}). Pro (${PRO_PRICE_LABEL}) covers up to ${this.deps.proAccounts}, `
+    throw new SwitchNotice(`${used} (${st.used.join(", ")}). Pro (${PRO_PRICE_LABEL}) covers up to ${this.deps.proAccounts}, `
       + `so ${cid} works right away${agency ? `; Agency (${AGENCY_PRICE_LABEL}) up to ${this.deps.agencyAccounts}` : ""}. On Free, ${wait}: the Free plan ${rule}`,
-      { error: "plan_limit", ...common,
+      { stop: "plan_limit", ...common,
         upgrade: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts, cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null,
           pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` },

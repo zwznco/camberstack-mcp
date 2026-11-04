@@ -130,7 +130,8 @@ describe("lifecycle emails", () => {
     const { db, lc, sent, user, call } = setup();
     const refused = (userId: string, daysAgo: number, error = "Plan limit: Camberstack has been used on 2 Google Ads accounts; "
       + "the Free plan covers 1 at a time (active: 1112223333), with one switch per 30 days, already used; the next opens 2026-11-13.") =>
-      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'account_overview', 0, ?, 10, 10)")
+      // A refusal is a notice: logged ok, with no account (tools.ts), so it's found by its text.
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'account_overview', 1, ?, 10, 10)")
         .run(now() - daysAgo * DAY, userId, error);
     user("capped", "capped@example.com", 10); call("capped", "propose_changes"); refused("capped", 0.3);
     user("recent", "recent@example.com", 10); call("recent", "propose_changes"); refused("recent", 0.2);  // under 6 hours ago
@@ -138,7 +139,7 @@ describe("lifecycle emails", () => {
     user("pro", "pro@example.com", 10, "pro"); call("pro", "propose_changes"); refused("pro", 0.3);
     user("reset", "reset@example.com", 10); call("reset", "propose_changes"); refused("reset", 0.3);  // a reset by hand cancels it
     user("store", "store@example.com", 10); call("store", "propose_changes");  // a Merchant Center refusal isn't about Google Ads accounts
-    db.prepare("INSERT INTO tool_calls (at, user_id, customer_id, tool, ok, error, ms, bytes) VALUES (?, 'store', 'mc:123', 'merchant_report', 0, ?, 10, 10)")
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'store', 'merchant_report', 1, ?, 10, 10)")
       .run(now() - 0.3 * DAY, "Plan limit: Camberstack has been used on 2 Merchant Center accounts");
     db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = 'reset'").run(now() - 0.1 * DAY);
     expect(await lc.run()).toBe(1);

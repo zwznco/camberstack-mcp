@@ -73,7 +73,6 @@ export function verdict(code: string, error: string, recoveredLater: boolean): {
   if (error.startsWith(UNSUPPORTED_PREFIX))
     return { act: true, why: "Camberstack doesn't do this, and the user wanted it. Consider building it; email them when it ships." };
   if (/^HTTP_5\d\d$/.test(code)) return { act: false, why: "Google was down (5xx). Transient; act only if it keeps happening (Bugsink tracks these)." };
-  if (error.startsWith(PLAN_LIMIT_PREFIX)) return { act: true, why: "Plan limit: working as designed, but they wanted more. An upgrade nudge may land." };
   if (/access isn't part of this Google connection|needs its edit access/.test(error))
     return { act: true, why: "Missing Google grant. The message carries the grant link; if they never clicked it, email them the link." };
   if (code === "METRIC_ACCESS_DENIED") return { act: false, why: "Data Google doesn't give Camberstack (auction insights). Nothing we can fix." };

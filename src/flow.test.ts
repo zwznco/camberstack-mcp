@@ -879,15 +879,16 @@ describe("OAuth + MCP end to end", () => {
     const switched = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes) VALUES (?, ?, 'account_overview', '2223334444', 1, 1, 1)")
       .run(Math.floor(Date.now() / 1000) - 5 * 86400, uid).lastInsertRowid;
     const blocked = await call(token, "account_overview", { customer_id: "999-888-7777", days: 30 });
-    expect(blocked.isError).toBe(true);
+    // A notice, not an error (plans.ts SwitchNotice): errors count against the directories' reliability metrics.
+    expect(blocked.isError).toBeFalsy();
     expect(blocked.text).toContain("Plan limit:");
     expect(blocked.text).toContain("2 Google Ads accounts in the last 30 days (1112223333, 2223334444)");
     expect(blocked.text).toContain("1 at a time (active: 1112223333), with one switch per 30 days, already used");
     // Tagged as handed out by a tool, for the paywall funnel (billing.ts track).
     const link = blocked.text.match(/https?:\/\/\S+\/upgrade\?t=[\w.-]+&src=tool/)![0];
     // The refusal is structured: facts as fields, no instructions to the assistant.
-    const limit = JSON.parse(blocked.text.slice(blocked.text.indexOf("\n") + 1));
-    expect(limit).toMatchObject({ error: "plan_limit", plan: "free", accounts_in_use: ["1112223333", "2223334444"], active_accounts: ["1112223333"], accounts_included: 1,
+    const limit = JSON.parse(blocked.text);
+    expect(limit).toMatchObject({ stop: "plan_limit", plan: "free", accounts_in_use: ["1112223333", "2223334444"], active_accounts: ["1112223333"], accounts_included: 1,
       refused_account: "9998887777", upgrade: { plan: "pro", accounts_included: 5 } });
     expect(limit.upgrade.upgrade_url).toBe(link);
     expect(blocked.text).not.toMatch(/word for word|Show the user/i);
@@ -1288,7 +1289,8 @@ describe("OAuth + MCP end to end", () => {
       expect(all.filter((r) => r.text.includes("Plan limit:"))).toHaveLength(1);
     } finally {
       ads.search = realSearch;
-      db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
+      // The refusal is a notice, logged with no account: remove it too, or its id collides with a saved row's.
+      db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND (customer_id IS NOT NULL OR error LIKE 'Plan limit:%')").run(uid);
       const put = db.prepare("INSERT INTO tool_calls (id, at, user_id, client_id, tool, customer_id, ok, error, ms, bytes) VALUES (@id, @at, @user_id, @client_id, @tool, @customer_id, @ok, @error, @ms, @bytes)");
       for (const r of saved) put.run(r);
     }
@@ -1359,7 +1361,7 @@ describe("OAuth + MCP end to end", () => {
       expect(blocked.text).toContain("Plan limit:");
       // Switching back to an account used before: lead with Pro, then when it opens again.
       expect(blocked.text).toContain("Pro ($15/month) covers up to 5, so 1112223333 works right away. On Free, 1112223333 opens again on ");
-      const limit = JSON.parse(blocked.text.slice(blocked.text.indexOf("\n") + 1));
+      const limit = JSON.parse(blocked.text);
       // The switch comes back when the second most recent account ages out of the window.
       const opens = new Date((t - 3 * 86400 + 30 * 86400) * 1000).toISOString().slice(0, 10);
       expect(limit).toMatchObject({ active_accounts: ["2223334444"], accounts_in_use: ["2223334444", "3334445555", "1112223333"] });
