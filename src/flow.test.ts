@@ -19,7 +19,7 @@ import { PUBLIC_SC_CHANGES } from "./search-console-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, gateDemoCalls, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
-import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
+import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, merchantCenterPage, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
 import { allServices, freePlan, oneServiceFree, parseDateFlag, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
@@ -2750,6 +2750,15 @@ describe("OAuth + MCP end to end", () => {
     expect(await (await fetch(`${base}/`)).text()).toContain('href="/google-search-console-mcp"');
   });
 
+  it("serves the Merchant Center page, listed and linked", async () => {
+    const r = await fetch(`${base}/google-merchant-center-mcp`);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toContain("<h1>Google Merchant Center MCP server</h1>");
+    expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/google-merchant-center-mcp`);
+    expect(await (await fetch(`${base}/llms.txt`)).text()).toContain(`${base}/google-merchant-center-mcp`);
+    expect(await (await fetch(`${base}/`)).text()).toContain('href="/google-merchant-center-mcp"');
+  });
+
   it("serves the Claude guide and lists it in the sitemap", async () => {
     const g = await fetch(`${base}/google-ads-claude`);
     expect(g.status).toBe(200);
@@ -3046,7 +3055,7 @@ describe("OAuth + MCP end to end", () => {
   it("says nothing on any page, in any phase, that the live Free plan makes untrue", () => {
     const from = Date.UTC(2026, 10, 16) / 1000;
     const render = () => [homePage("https://x.test"), claudeGuidePage("https://x.test"), chatgptGuidePage("https://x.test"), geminiGuidePage("https://x.test"),
-      searchConsolePage("https://x.test"), docsPage("https://x.test"), plansPage("https://x.test"), llmsTxt("https://x.test", [])].join("\n");
+      searchConsolePage("https://x.test"), merchantCenterPage("https://x.test"), docsPage("https://x.test"), plansPage("https://x.test"), llmsTxt("https://x.test", [])].join("\n");
     const off = withFreePlan({ kind: "accounts" }, render), soon = withFreePlan({ kind: "upcoming", from }, render), on = withFreePlan({ kind: "one_service", from }, render);
     // Off: exactly as before the flag existed.
     expect(off).not.toMatch(/one Google service|November 16/);

@@ -361,6 +361,7 @@ export function homePage(baseUrl: string): string {
 <li>One URL and a Google sign-in for Claude, ChatGPT, Cursor or any MCP app. Works with manager (MCC) accounts</li>
 <li>Optional <a href="#search-console">Search Console</a>: where you already rank, which searches you may be paying for twice, and sitemaps you approve</li>
 <li>Optional <a href="#analytics">Google Analytics 4</a>: which landing pages turn ad clicks into conversions</li>
+<li>Optional <a href="/google-merchant-center-mcp">Merchant Center</a>: why products are disapproved or limited, what they were earning in Shopping ads, and fixes you approve</li>
 </ul>
 </div></section>
 
@@ -806,6 +807,114 @@ runs that part for you: one Google sign-in, and it works the same in Claude on t
 `)}
 ${closer("Ask your AI how your site is doing in Google Search.", fp.kind === "accounts" ? "Free. It doesn't count toward a plan." : "Free.",
   `<a class="btn btn-lg" href="/#setup">Connect Search Console</a><a class="btn btn-lg btn-ghost" href="/tools#search_console_sites">See the tools</a>`)}
+`,
+  });
+}
+
+/**
+ * Use-case page for "google merchant center mcp" (20/mo avg, 0 → 40 over the year to 2026-09; the per-issue searches such
+ * as "price mismatch" or "missing gtin" have no Keyword Planner volume, so they're sections here, not pages of their own.
+ * Keyword Planner via the dev connector, 2026-11-04). The hero's numbers are the demo store's (merchant.ts DEMO_PRODUCTS,
+ * merchant_ad_spend on 000-000-0001 + 000000001, 30 days to 2026-11-03).
+ */
+export function merchantCenterPage(baseUrl: string): string {
+  const mcpUrl = `${baseUrl}/mcp`;
+  return layout({
+    baseUrl, path: "/google-merchant-center-mcp", wide: true,
+    title: "Google Merchant Center MCP server, hosted | Camberstack",
+    description: "A hosted Google Merchant Center MCP server for Claude, ChatGPT and Cursor. See why products are disapproved or limited, what they were earning in Shopping ads, and fix price, GTIN and title issues with your approval.",
+    jsonLd: {
+      "@context": "https://schema.org", "@type": "TechArticle",
+      headline: "Google Merchant Center MCP server", url: `${baseUrl}/google-merchant-center-mcp`, dateModified: "2026-11-04",
+      author: { "@type": "Organization", name: "Camberstack", url: baseUrl },
+      about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
+    },
+    body: `
+${guideHero({
+  kicker: "No Google Ads account needed",
+  title: "Google Merchant Center MCP server",
+  lede: `Ask your AI assistant why products aren't showing on Google, and it reads your Merchant Center to answer: which products are
+disapproved or limited, why, and what they were earning in Shopping ads before they stopped. It can fix a price, GTIN or title for
+you, only when you approve. Camberstack is hosted, so setup is a Google sign-in.`,
+  ctas: `<a class="btn btn-lg" href="#setup">Connect Merchant Center</a><a class="btn btn-lg btn-ghost" href="/tools#merchant_accounts">See the tools</a>`,
+  aside: `<figure class="window" aria-label="An example answer, from the demo store">
+<div class="window-bar"><i></i><i></i><i></i><span>Demo store · Northwind Plumbing Supply</span></div>
+<div class="window-body">
+<p class="said you">Why did my Shopping sales drop?</p>
+<p class="ai">Two of your best sellers were disapproved for a price mismatch and stopped serving:</p>
+<table class="mini"><tr><th>Product</th><th>Issue</th><th>Ad value, 30 days</th></tr>
+<tr><td>Tankless Water Heater 5.0 GPM</td><td>Price mismatch</td><td>$33,321</td></tr>
+<tr><td>Tankless Water Heater 3.8 GPM</td><td>Price mismatch</td><td>$12,432</td></tr>
+<tr><td>Garbage Disposal 3/4 HP</td><td>Missing GTIN</td><td>$1,909</td></tr></table>
+<p class="ai">The feed price doesn't match your product page. Want me to propose setting it to the page's price?</p>
+</div>
+</figure>`,
+})}
+${guideBody(`
+<h2>Questions it answers</h2>
+${pairList([
+  [`<em>"Why aren't my products showing on Google?"</em>`, "Account issues, how many products are eligible, limited, pending or disapproved, and each issue with the products it hits, worst first"],
+  [`<em>"Which disapproved products were making me money?"</em>`, "Problem products joined with what they earned in Shopping and Performance Max ads, most value first, and which stopped spending in the last week (needs a Google Ads account)"],
+  [`<em>"Why is this product disapproved?"</em>`, "One product's issues in full, with the attribute each one names"],
+  [`<em>"Which products got the most Shopping clicks last month?"</em>`, "Any Merchant Center report: clicks and impressions per product, ads or free listings, price competitiveness, best sellers"],
+], "Reads")}
+
+<h2>Fixes it can make</h2>
+<p>Ask for a fix and your AI shows you a proposal first. Nothing changes until you approve it, and every change can be undone.</p>
+${pairList([
+  ["Override a product's price, sale price, GTIN, brand, title, availability or other attributes, for example to clear a price mismatch or a missing GTIN", "Your feed's own values apply again"],
+  ["Take products out of Shopping ads or free listings, or put them back", "Restores the previous setting"],
+  ["Add, change or delete products of Camberstack's own, in a data source named \"Camberstack products\"", "Removes or re-creates the product"],
+  ["Link or unlink your Merchant Center and Google Ads accounts", "Restores the previous link"],
+], "Undo")}
+<p>Your feed itself is never edited. An override goes into Camberstack's own supplemental data source in your account, which Google
+applies on top of your feed. The first time, that source has to be added to your feed's rules; the proposal says so before you
+approve. A fix in your store or feed lasts longer, and your AI will suggest that too.</p>
+
+<h2>Common issues</h2>
+<h3>Price mismatch</h3>
+<p>The price in your feed differs from the price on your product page, so Google disapproves the product. Ask your AI to check
+the product and propose the right price as an override. The override shows within a few minutes, and Google then rechecks the
+product. Fix the price at the source too, in your store or feed.</p>
+<h3>Missing GTIN</h3>
+<p>Products without a GTIN (the barcode number) are limited rather than disapproved, so they still show, but less. Give your AI
+the GTINs and it proposes them as overrides. For a product that has no GTIN, such as a custom item, set brand and MPN instead, or mark it as having no identifier.</p>
+<h3>Image too small, misrepresentation and account issues</h3>
+<p>Your AI can find these and tell you which products they hit, but the fix happens elsewhere: a larger image on your site, or
+Merchant Center's own settings for return policy, shipping and business details.</p>
+
+<h2>Shopify and other stores</h2>
+<p>Products from Shopify's Google &amp; YouTube app take overrides, and the overrides survive the app's syncs; so do products from
+other apps and from file feeds. Products added by hand in Merchant Center, or found by its automatic feed, can't take them, and
+the proposal tells you if a product is one of those.</p>
+
+<h2 id="setup">Set it up</h2>
+<p>Connect Camberstack in your AI app (<a href="/google-ads-claude">Claude</a>, <a href="/google-ads-chatgpt">ChatGPT</a>, or any MCP
+client with <code>${mcpUrl}</code>). Then ask <em>"List my Merchant Center accounts"</em>. Merchant Center isn't on the first sign-in
+screen: the first time you ask, Camberstack gives you a link that adds it to the same Google account, with no reconnecting.
+While Google finishes reviewing Camberstack's Merchant Center access, that link may show a "Google hasn't verified this app"
+screen: choose <strong>Advanced</strong>, then continue to Camberstack.</p>
+<p>You don't need a Google Ads account. Without one, every Merchant Center tool works on your real store; only the one that joins
+products with ad spend needs Ads.</p>
+
+<h2>Compared with running your own</h2>
+<p>Google's Merchant API needs a Google Cloud project with the API enabled, registered with a Merchant Center account before any call
+works, plus an OAuth client of your own. That suits a developer on one laptop. Camberstack runs that part for you: one Google sign-in,
+and it works the same in Claude on the web, on your phone, and in ChatGPT.</p>
+
+<h2>Questions</h2>
+<h3>What does it cost?</h3>
+<p>${fp.kind === "accounts" ? `Merchant Center is included on every plan: 1 Merchant Center account on <a href="/#pricing">Free</a>, ${PRO_ACCOUNTS} on Pro and ${AGENCY_ACCOUNTS} on Agency.`
+  : fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, Merchant Center is included on Free, on 1 Merchant Center account. From then, Free covers one Google service at a time, and Merchant Center can be that one. Using it together with Google Ads, for example to see what disapproved products were earning in ads, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`
+  : `Free covers one Google service at a time, and Merchant Center (1 account) can be that one. Using it together with Google Ads, for example to see what disapproved products were earning in ads, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`}</p>
+<h3>Can I try it first?</h3>
+<p>Yes. Ask for the demo store (Merchant Center account 000000001), a sample plumbing supply shop with disapproved and limited products. Fixes there change only the demo.</p>
+<h3>Do you store my product data?</h3>
+<p>Only the changes you approve, so they can be shown and undone; Google can't return them. Product statuses and reports are fetched
+when your AI asks and aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
+`)}
+${closer("Ask your AI why products aren't showing on Google.", fp.kind === "one_service" ? "Free for one Google service." : "Free on one Merchant Center account.",
+  `<a class="btn btn-lg" href="/#setup">Connect Merchant Center</a><a class="btn btn-lg btn-ghost" href="/tools#merchant_accounts">See the tools</a>`)}
 `,
   });
 }
@@ -1346,7 +1455,7 @@ export function robotsTxt(baseUrl: string): string {
 }
 
 /** The indexable pages, in sitemap order. */
-export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/google-search-console-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
+export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/google-search-console-mcp", "/google-merchant-center-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
 
 /** `lastmod`: each page's own last-changed date (lastmod.ts), never one date for the whole site. */
 export function sitemapXml(baseUrl: string, lastmod: Record<string, string>): string {
@@ -1363,6 +1472,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - Tools: ${tools.map((t) => t.name).join(", ")}
 - Writes (each one proposed, approved, then applied; almost all can be undone, and the few Google can't reverse warn first): negative keywords on campaigns and ad groups, and shared negative lists; pause/enable campaign, ad group, keyword or ad; daily budget; end date; build a Search, Display, Demand Gen (YouTube video) or Performance Max campaign (created paused); add ad groups, keywords, ads; edit a responsive search ad in place; delete keywords, ads, ad groups, campaigns, negatives and sitelinks; sitelinks, callouts, structured snippets, business name, logos and images; bids; bid strategy; ad schedules and device bids; location/language targeting; URL suffix; AI Max and Google-written text; conversion actions, goals, value, window and attribution; remarketing lists; apply or dismiss Google's recommendations.
 - Search Console (optional): site totals, query/page performance, period-over-period trends, ranking opportunities, URL Inspection (index status), sitemap status, and paid vs organic overlap with the Ads account; approved changes submit or remove sitemaps and add or remove properties.
+- Merchant Center (optional): account and product issues, Shopping and free-listing reports, disapproved products joined with their ad spend; approved changes override product attributes (price, GTIN, title, …) through Camberstack's own supplemental source, exclude or include products, add Camberstack's own products, and link Merchant Center to Google Ads. The feed itself is never edited.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
 - Pricing: ${fp.kind === "one_service" ? `Free plan covers ${oneServiceFree()} (every tool, unlimited applied changes); Plus ${PLUS_PRICE_LABEL} covers all four together on 1 Google Ads account; Pro and Agency cover all four on more accounts.`
   : `Free plan covers 1 Google Ads account (every tool, unlimited applied changes).${soon()}`} Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) and demo accounts don't count. Undo is always free.
@@ -1372,6 +1482,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - [Connect Google Ads to Claude (guide with a worked example)](${baseUrl}/google-ads-claude)
 - [Connect Google Ads to ChatGPT (step-by-step guide)](${baseUrl}/google-ads-chatgpt)
 - [Google Search Console MCP (works without a Google Ads account)](${baseUrl}/google-search-console-mcp)
+- [Google Merchant Center MCP (works without a Google Ads account)](${baseUrl}/google-merchant-center-mcp)
 - [Every tool, with its parameters](${baseUrl}/tools)
 - [Source (MIT)](${SOURCE_URL})
 - [Privacy](${baseUrl}/privacy)
