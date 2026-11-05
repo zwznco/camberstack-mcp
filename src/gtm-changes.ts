@@ -186,7 +186,7 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
       const idOf = (p?: string) => p?.split("/").at(-1);
       const tag = tags.find((t) => t.tagId === idOf(change.tag_path)), trig = triggers.find((t) => t.triggerId === idOf(change.trigger_path));
       const ops: GtmOp[] = [tag?.path, trig?.path].filter((p): p is string => !!p).map((p) => ({ method: "DELETE", path: p }));
-      return { ...base, operations: ops, describe: `Remove tag "${change.name}" that Camberstack added${ops.length ? "" : " (already gone)"}. Publish to take it off the site if it was published` };
+      return { ...base, operations: ops, describe: `Remove tag "${change.name}" that Camberstack added from the workspace${ops.length ? ", so a later publish doesn't bring it back" : " (already gone)"}` };
     }
     case "restore_tag": {
       const t = change.tag as any;
@@ -197,7 +197,7 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
       const live = await tm.call("GET", `${change.container}/versions:live`).catch(() => null);
       if (live?.containerVersionId === change.version_id) return { ...base, operations: [], describe: `Re-publish ${change.name} (already live)` };
       return { ...base, operations: [{ method: "POST", path: `${change.container}/versions/${change.version_id}:publish` }],
-        describe: `Re-publish ${change.name} of ${change.container}, putting the site back as it was ⚠ the workspace keeps the newer changes; they go live again at the next publish`,
+        describe: `Re-publish ${change.name} of ${change.container}, putting the site back as it was`,
         inverse: live ? { type: "publish_version", container: change.container, version_id: live.containerVersionId, name: live.name || `version ${live.containerVersionId}` } : undefined };
     }
   }
@@ -248,7 +248,8 @@ export function gtmInverseAfterApply(r: GtmResolved, res: GtmWriteResult): GtmCh
 
 export function gtmNoteAfterApply(r: GtmResolved, res: GtmWriteResult): string | undefined {
   if (res.versionId) return `Version ${res.versionId} is live. Tag Assistant (tagassistant.google.com) shows each tag firing on the site; Google Ads shows a conversion tag as recording within a few hours of its first conversion.`;
-  if (r.change.type === "publish_version") return "The earlier version is live again.";
+  if (r.change.type === "publish_version") return "The earlier version is live again. Changes still in the workspace go live at the next publish_container.";
+  if (r.change.type === "remove_added_tag") return "Removed from the workspace. If it's still on the site, a publish_container takes it off.";
   if ((r.change as { published_after?: boolean }).published_after) return undefined;
   return "Not live yet: it's in the Tag Manager workspace. publish_container makes it live (show the user what that publishes first).";
 }
