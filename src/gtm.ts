@@ -67,7 +67,7 @@ export async function workspaceOf(tm: TagManager, container: string): Promise<{ 
 
 export const TAG_TYPES: Record<string, string> = {
   googtag: "Google tag", gaawe: "GA4 event", awct: "Google Ads conversion", gclidw: "Conversion Linker", sp: "Google Ads remarketing",
-  awud: "Google Ads user-provided data", html: "Custom HTML", img: "Custom image", ua: "Universal Analytics (retired)", flc: "Floodlight counter", fls: "Floodlight sales",
+  awud: "Google Ads user-provided data", dest_mc: "Merchant Center destination", html: "Custom HTML", img: "Custom image", ua: "Universal Analytics (retired)", flc: "Floodlight counter", fls: "Floodlight sales",
 };
 const typeLabel = (t: string) => TAG_TYPES[t] ?? (t.startsWith("cvt_") ? "Community template" : t);
 export const param = (tag: any, key: string): string | undefined => (tag.parameter ?? []).find((p: any) => p.key === key)?.value;
@@ -177,6 +177,8 @@ export function routedTagManager(google: TagManager, demo: TagManager): TagManag
 
 interface DemoGtmState {
   nextId: number;
+  /** The workspace's id: like GTM, publishing replaces the workspace with a new one, and the tags' paths move with it. */
+  ws?: number;
   version: number;
   tags: any[];
   triggers: any[];
@@ -221,10 +223,10 @@ export class DemoTagManager implements TagManager {
   }
 
   async call(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: any): Promise<any> {
-    const s = this.load(), ws = `${DEMO_CONTAINER}/workspaces/1`;
+    const s = this.load(), ws = `${DEMO_CONTAINER}/workspaces/${s.ws ?? 1}`;
     const strip = (x: any) => JSON.stringify({ ...x, path: undefined });
     if (method === "GET") {
-      if (path === `${DEMO_CONTAINER}/workspaces`) return { workspace: [{ workspaceId: "1", name: "Default Workspace", path: ws }] };
+      if (path === `${DEMO_CONTAINER}/workspaces`) return { workspace: [{ workspaceId: String(s.ws ?? 1), name: "Default Workspace", path: ws }] };
       if (path === `${ws}/tags`) return { tag: s.tags };
       if (path === `${ws}/triggers`) return { trigger: s.triggers };
       if (path === `${DEMO_CONTAINER}/versions:live`) {
@@ -269,6 +271,10 @@ export class DemoTagManager implements TagManager {
     if (method === "POST" && path === `${ws}:create_version`) {
       const id = String(++s.version);
       s.versions[id] = { tags: structuredClone(s.tags), triggers: structuredClone(s.triggers) };
+      s.ws = (s.ws ?? 1) + 1;
+      const moved = (x: any) => ({ ...x, path: x.path.replace(/\/workspaces\/\d+\//, `/workspaces/${s.ws}/`) });
+      s.tags = s.tags.map(moved);
+      s.triggers = s.triggers.map(moved);
       this.save(s);
       return { containerVersion: { containerVersionId: id, path: `${DEMO_CONTAINER}/versions/${id}`, name: body?.name } };
     }

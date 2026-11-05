@@ -1655,10 +1655,12 @@ describe("OAuth + MCP end to end", () => {
     // Listed first, the publish still runs last, and isn't skipped although the workspace has nothing unpublished yet.
     const p = (await call(token, "propose_tag_manager_changes", { changes: [
       { type: "publish_container", container: C }, { type: "add_conversion_linker", container: C }] })).json;
-    expect(p.summary).toMatch(/^1\. Add a Conversion Linker to .* firing on every page\. In the workspace until publish_container makes it live\n2\. Publish .*: the changes above ⚠/);
+    // Published in the same proposal, so the add isn't called "not live yet".
+    expect(p.summary).toMatch(/^1\. Add a Conversion Linker to .* firing on every page\n2\. Publish .*: the changes above ⚠/);
     expect(p.summary).toContain("Undo re-publishes version 7");
     const a = (await call(token, "apply_changes", { proposal_id: p.proposal_id })).json;
     expect(a.status).toBe("applied");
+    expect(a.results[0].note).toBeUndefined();
     expect(a.results[1].note).toContain("Version 8 is live");
     const s1 = await setup();
     expect(s1.live_version.version_id).toBe("8");

@@ -117,7 +117,7 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
     const trig = f ? resolveTrigger(f, triggers) : { id: ALL_PAGES, describe: "on every page" };
     return { ...base,
       operations: [{ method: "POST", path: `${ws.path}/tags`, body: { ...tag, ...(trig.id ? { firingTriggerId: [trig.id] } : {}) }, ...(trig.create ? { trigger: trig.create } : {}) }],
-      describe: `${describe}, firing ${trig.describe}. In the workspace until publish_container makes it live` };
+      describe: `${describe}, firing ${trig.describe}${(change as { published_after?: boolean }).published_after ? "" : ". In the workspace until publish_container makes it live"}` };
   };
   switch (change.type) {
     case "add_google_tag": {
@@ -154,7 +154,7 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
       if (!!t.paused === pause) return { ...base, operations: [], describe: `${pause ? "Pause" : "Unpause"} ${label} (already ${pause ? "paused" : "running"})` };
       const { path, ...rest } = t;
       return { ...base, operations: [{ method: "PUT", path, body: { ...rest, paused: pause } }],
-        describe: `${pause ? "Pause" : "Unpause"} ${label}. In the workspace until publish_container makes it live`
+        describe: `${pause ? "Pause" : "Unpause"} ${label}${(change as { published_after?: boolean }).published_after ? "" : ". In the workspace until publish_container makes it live"}`
           + (pause && t.type === "awct" ? " ⚠ Google Ads stops receiving this conversion once published" : ""),
         inverse: { type: pause ? "unpause_tag" : "pause_tag", container: change.container, tag_id: change.tag_id } };
     }
@@ -181,8 +181,11 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
         inverse: live ? { type: "publish_version", container: change.container, version_id: live.containerVersionId, name: live.name || `version ${live.containerVersionId}` } : undefined };
     }
     case "remove_added_tag": {
-      const has = (p: string) => tags.some((t) => t.path === p) || triggers.some((t) => t.path === p);
-      const ops: GtmOp[] = [change.tag_path, change.trigger_path].filter((p): p is string => !!p && has(p)).map((p) => ({ method: "DELETE", path: p }));
+      // Publishing replaces the workspace with a new one (seen live 2026-11-05: tag 7 moved from workspaces/2 to a new
+      // workspace), so the paths stored at apply go stale; the ids carry over. Find each by id in today's workspace.
+      const idOf = (p?: string) => p?.split("/").at(-1);
+      const tag = tags.find((t) => t.tagId === idOf(change.tag_path)), trig = triggers.find((t) => t.triggerId === idOf(change.trigger_path));
+      const ops: GtmOp[] = [tag?.path, trig?.path].filter((p): p is string => !!p).map((p) => ({ method: "DELETE", path: p }));
       return { ...base, operations: ops, describe: `Remove tag "${change.name}" that Camberstack added${ops.length ? "" : " (already gone)"}. Publish to take it off the site if it was published` };
     }
     case "restore_tag": {
@@ -206,7 +209,9 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
  */
 export function orderGtmChanges(changes: GtmChange[]): GtmChange[] {
   const pub = changes.filter((c) => c.type === "publish_container"), rest = changes.filter((c) => c.type !== "publish_container");
-  return [...rest, ...pub.map((c) => (rest.some((r) => r.container === c.container) ? { ...c, with_changes: true } as GtmChange : c))];
+  const published = (c: GtmChange) => pub.some((p) => p.container === c.container);
+  return [...rest.map((c) => (published(c) ? { ...c, published_after: true } as unknown as GtmChange : c)),
+    ...pub.map((c) => (rest.some((r) => r.container === c.container) ? { ...c, with_changes: true } as GtmChange : c))];
 }
 
 /** Run one resolved change's writes, in order. */
@@ -244,5 +249,6 @@ export function gtmInverseAfterApply(r: GtmResolved, res: GtmWriteResult): GtmCh
 export function gtmNoteAfterApply(r: GtmResolved, res: GtmWriteResult): string | undefined {
   if (res.versionId) return `Version ${res.versionId} is live. Tag Assistant (tagassistant.google.com) shows each tag firing on the site; Google Ads shows a conversion tag as recording within a few hours of its first conversion.`;
   if (r.change.type === "publish_version") return "The earlier version is live again.";
+  if ((r.change as { published_after?: boolean }).published_after) return undefined;
   return "Not live yet: it's in the Tag Manager workspace. publish_container makes it live (show the user what that publishes first).";
 }

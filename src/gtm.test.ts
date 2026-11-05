@@ -78,7 +78,7 @@ describe("Tag Manager", () => {
   it("puts publishes last, marked to run with the changes before them", () => {
     const C = "accounts/1/containers/2";
     expect(orderGtmChanges([{ type: "publish_container", container: C }, { type: "pause_tag", container: C, tag_id: "3" }]))
-      .toEqual([{ type: "pause_tag", container: C, tag_id: "3" }, { type: "publish_container", container: C, with_changes: true }]);
+      .toEqual([{ type: "pause_tag", container: C, tag_id: "3", published_after: true }, { type: "publish_container", container: C, with_changes: true }]);
     expect(orderGtmChanges([{ type: "publish_container", container: C }])).toEqual([{ type: "publish_container", container: C }]);
   });
 
