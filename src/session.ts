@@ -15,6 +15,8 @@ import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from 
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
+import { GTM_TARGET, GtmChangeSchema, orderGtmChanges, gtmInverseAfterApply, gtmNoteAfterApply, resolveGtmChange, writeGtm, type GtmChange, type GtmOp, type GtmResolved } from "./gtm-changes.js";
+import { DemoTagManager, GtmClient, routedTagManager, type TagManager } from "./gtm.js";
 import { SC_TARGET, ScChangeSchema, resolveScChange, scNoteAfterApply, writeSc, type ScChange, type ScOp, type ScResolved } from "./search-console-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
 import { writeFileSync } from "node:fs";
@@ -118,6 +120,7 @@ export interface SessionDeps {
   scFactory?: (user: UserRow) => SearchConsole;
   gaFactory?: (user: UserRow) => Analytics;
   merchantFactory?: (user: UserRow) => Merchant;
+  gtmFactory?: (user: UserRow) => TagManager;
   /** The personal link that adds one Google service to this user's connection (grant.ts). */
   grantLink?: (kind: GrantKind, userId: string) => string | null;
 }
@@ -162,8 +165,8 @@ export const isDemo = (customerId: string | null | undefined) => bareCid(custome
 /** Spread into any result about an account, so the AI can't mistake demo data for the user's. */
 const demoNote = (customerId: string) => (isDemo(customerId) ? { note: DEMO_NOTE } : {});
 
-type AnyChange = Change | GaChange | McChange | ScChange;
-type AnyResolved = ResolvedChange | GaResolved | McResolved | ScResolved;
+type AnyChange = Change | GaChange | McChange | ScChange | GtmChange;
+type AnyResolved = ResolvedChange | GaResolved | McResolved | ScResolved | GtmResolved;
 /** `note`: something the user must do next, e.g. a new GA4 property's tag. */
 type Outcome = { describe: string; ok: boolean; error?: string; note?: string; inverse?: AnyChange };
 type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[] };
@@ -177,6 +180,7 @@ export class UserSession {
   readonly sc: SearchConsole;
   readonly ga: Analytics;
   readonly merchant: Merchant;
+  readonly gtm: TagManager;
   /** Accounts the login can see but Google refused to read, from the last accounts() call. */
   lastUnreadable: Unreadable[] = [];
 
@@ -196,6 +200,7 @@ export class UserSession {
       ?? new AnalyticsClient(() => this.googleAccessToken(), link("analytics")), new DemoAnalytics(deps.db, user.id));
     this.merchant = routedMerchant(deps.merchantFactory?.(user)
       ?? new MerchantClient(() => this.googleAccessToken(), link("merchant-center"), fetch, new OverrideStore(deps.db)), new DemoMerchant(deps.db, user.id));
+    this.gtm = routedTagManager(deps.gtmFactory?.(user) ?? new GtmClient(() => this.googleAccessToken(), link("tag-manager")), new DemoTagManager(deps.db, user.id));
   }
 
   /** The name a result should give a write tool: ChatGPT connections have per-operation tools instead (tools.ts). */
@@ -315,7 +320,7 @@ export class UserSession {
         throw new SwitchNotice(`${SERVICE_CHOICE_PREFIX} ${plan} covers one Google service at a time: ${servicesOr()}. `
           + `Nothing has run yet. Ask the user which one they want to use for the next ${ACCOUNT_WINDOW_DAYS} days, then make the call for that service: `
           + `the first one made in the next ${SERVICE_CHOICE_SECONDS / 60} minutes becomes the plan's service, and the others wait until ${ACCOUNT_WINDOW_DAYS} days after it was last used.`
-          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers all four together.` : ` Pro (${PRO_PRICE_LABEL}) covers all four together.`),
+          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers all five together.` : ` Pro (${PRO_PRICE_LABEL}) covers all five together.`),
           { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: listedServices().map((s) => SERVICE_LABELS[s]), window_days: ACCOUNT_WINDOW_DAYS,
             ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
       }
@@ -346,14 +351,14 @@ export class UserSession {
       const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
       if (plusUrl) {
         const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-        throw new SwitchNotice(`${head}${scope("the options below")} Plus (${PLUS_PRICE_LABEL}) covers all four together on 1 Google Ads account, so ${want} works right away; `
+        throw new SwitchNotice(`${head}${scope("the options below")} Plus (${PLUS_PRICE_LABEL}) covers all five together on 1 Google Ads account, so ${want} works right away; `
           + `Pro (${PRO_PRICE_LABEL}) does on up to ${this.deps.proAccounts}.`,
           { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${allServices()}, on 1 Google Ads account`, cancel: "any time",
             upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" },
             or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
       }
       const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-      throw new SwitchNotice(`${head}${scope("the options below")} Pro (${PRO_PRICE_LABEL}) covers all four together, so ${want} works right away.`,
+      throw new SwitchNotice(`${head}${scope("the options below")} Pro (${PRO_PRICE_LABEL}) covers all five together, so ${want} works right away.`,
         { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: allServices(), cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
     }
@@ -1335,9 +1340,10 @@ export class UserSession {
   // ---------------------------------------------------------------- write
 
   async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<Proposed | AlreadyInPlace> {
-    const ga = customerId === GA_TARGET, mc = isMcTarget(customerId), sc = customerId === SC_TARGET;
-    const a = ga || mc || sc ? { customerId, loginCustomerId: null } : await this.account(customerId);
-    const changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : sc ? ScChangeSchema : ChangeSchema).parse(c));
+    const ga = customerId === GA_TARGET, mc = isMcTarget(customerId), sc = customerId === SC_TARGET, gtm = customerId === GTM_TARGET;
+    const a = ga || mc || sc || gtm ? { customerId, loginCustomerId: null } : await this.account(customerId);
+    let changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : sc ? ScChangeSchema : gtm ? GtmChangeSchema : ChangeSchema).parse(c));
+    if (gtm) changes = orderGtmChanges(changes as GtmChange[]);
     // Connections from before 0.25.0 can only read, and Search Console has no dry run: ask for the scope now, not after the
     // user approved something that can't run. Scopes not on record yet (null) go through: the write itself returns the same link.
     if (sc && (changes as ScChange[]).some((c) => c.site_url !== DEMO_SITE)
@@ -1567,6 +1573,7 @@ export class UserSession {
     // Only reads, so a brief Google outage is retried once.
     return retryTransient<AnyResolved>(() => (target === GA_TARGET ? resolveGaChange(this.ga, c as GaChange)
       : target === SC_TARGET ? resolveScChange(this.sc, c as ScChange)
+      : target === GTM_TARGET ? resolveGtmChange(this.gtm, c as GtmChange)
       : isMcTarget(target) ? resolveMcChange(this.merchant, target.slice(3), c as McChange)
       : resolveChange(this.ads, target, login, c as Change, pending)), true);
   }
@@ -1587,6 +1594,12 @@ export class UserSession {
       if (validateOnly) return {};
       await retryTransient(() => writeSc(this.sc, r.operations as ScOp[]), true);
       return { inverse: r.inverse, note: scNoteAfterApply(r) };
+    }
+    if (r.service === "gtm") {
+      // No dry run: re-resolving at apply is the check. Creates and publishes aren't repeated after an outage.
+      if (validateOnly) return {};
+      const res = await retryTransient(() => writeGtm(this.gtm, r.operations as GtmOp[]), r.operations.every((o) => (o as GtmOp).method !== "POST"));
+      return { inverse: gtmInverseAfterApply(r, res), note: gtmNoteAfterApply(r, res) };
     }
     if (r.service === "ga4") {
       if (validateOnly) return {};

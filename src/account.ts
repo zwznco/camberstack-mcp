@@ -14,6 +14,7 @@ import { appPage, cmd, COPY_JS, esc, infoPage } from "./pages.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { SC_TARGET } from "./search-console-changes.js";
+import { GTM_TARGET } from "./gtm-changes.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LABELS, allServices, listedServices, planLabel } from "./plans.js";
 
 interface AccountDeps {
@@ -68,7 +69,7 @@ const DEFAULT_RANGE = 30;
 const FOLD_LINES = 3;
 const FOLD_CHARS = 280;
 /** Google's dashed form: 386-283-8095 */
-const fmtCid = (c: string) => c === DEMO_CID ? "000-000-0001 (demo, sample data)" : c === GA_TARGET ? "Google Analytics" : c === SC_TARGET ? "Search Console" : c.startsWith("mc:") ? `Merchant Center ${c.slice(3)}` : /^\d{10}$/.test(c) ? `${c.slice(0, 3)}-${c.slice(3, 6)}-${c.slice(6)}` : c;
+const fmtCid = (c: string) => c === DEMO_CID ? "000-000-0001 (demo, sample data)" : c === GA_TARGET ? "Google Analytics" : c === SC_TARGET ? "Search Console" : c === GTM_TARGET ? "Tag Manager" : c.startsWith("mc:") ? `Merchant Center ${c.slice(3)}` : /^\d{10}$/.test(c) ? `${c.slice(0, 3)}-${c.slice(3, 6)}-${c.slice(6)}` : c;
 
 export function mountAccount(app: Express, d: AccountDeps): SignIn {
   const auth = new SignIn(d, "acc_", "cs_account", "/account", 7 * 86400);
@@ -211,7 +212,7 @@ ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="bt
   ? `Every tool, with unlimited applied changes, on one Google service at a time (${listedServices().map((s) => s === "ads" || s === "merchant" ? `${SERVICE_LABELS[s]} on ${plan.accounts_included} account` : SERVICE_LABELS[s]).join(", ").replace(/, ([^,]+)$/, " or $1")}). In use: <strong style="color:var(--fg)">${esc(plan.service_in_use ?? "none yet; your AI asks which before the first")}</strong>.`
   : `Every tool, with unlimited applied changes, on ${plan.accounts_included} Google Ads account.`}
 ${used.length ? `Google Ads accounts in use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on a Google Ads account yet."}
-${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? `Plus covers all four together on 1 account; ` : ""}Pro covers ${"services_included" in plan || "plus_upgrade_url" in plan ? `all four together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
+${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? `Plus covers all five together on 1 account; ` : ""}Pro covers ${"services_included" in plan || "plus_upgrade_url" in plan ? `all five together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
 ${"free_plan_change" in plan && plan.free_plan_change ? `<p class="muted"><strong style="color:var(--fg)">${esc(plan.free_plan_change)}</strong></p>` : ""}
 <p class="muted">To move to a different account, ask your AI to switch to it: Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.</p>
 ${!by && "plus_upgrade_url" in plan && plan.plus_upgrade_url ? `<a class="btn" href="${esc(plan.plus_upgrade_url)}">Plus · ${PLUS_PRICE_LABEL}</a>` : ""}

@@ -18,6 +18,10 @@ export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readon
 export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
 /** Google Merchant Center (Merchant API), used through merchant.ts. Not in the main consent: asked for separately, by link. */
 export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
+/** Google Tag Manager (gtm.ts): read, edit tags and triggers in a workspace, make versions, publish. Asked for by link, like Merchant Center. */
+export const TAG_MANAGER_READ_SCOPE = "https://www.googleapis.com/auth/tagmanager.readonly";
+export const TAG_MANAGER_SCOPES = [TAG_MANAGER_READ_SCOPE, "https://www.googleapis.com/auth/tagmanager.edit.containers",
+  "https://www.googleapis.com/auth/tagmanager.edit.containerversions", "https://www.googleapis.com/auth/tagmanager.publish"];
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
 const ADS_API = "https://googleads.googleapis.com/v23";
 
@@ -58,11 +62,12 @@ export const GRANTS = {
   "search-console": { label: "Search Console", scopes: [SEARCH_CONSOLE_SCOPE] },
   "analytics": { label: "Google Analytics", scopes: [ANALYTICS_SCOPE, ANALYTICS_EDIT_SCOPE] },
   "merchant-center": { label: "Google Merchant Center", scopes: [MERCHANT_SCOPE] },
+  "tag-manager": { label: "Google Tag Manager", scopes: TAG_MANAGER_SCOPES },
 } as const;
 export type GrantKind = keyof typeof GRANTS;
 
 /** The scope that lets a connection read a service without changing it: holding it alone, a grant link adds edit access. */
-const READ_ONLY: Partial<Record<GrantKind, string>> = { "search-console": SEARCH_CONSOLE_READONLY_SCOPE, analytics: ANALYTICS_SCOPE };
+const READ_ONLY: Partial<Record<GrantKind, string>> = { "search-console": SEARCH_CONSOLE_READONLY_SCOPE, analytics: ANALYTICS_SCOPE, "tag-manager": TAG_MANAGER_READ_SCOPE };
 
 /** The connection can read this service but lacks the scope to change it (search-console: webmasters.readonly only). */
 export function isEditUpgrade(kind: GrantKind, scopes: string | null | undefined): boolean {
