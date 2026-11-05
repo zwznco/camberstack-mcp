@@ -42,6 +42,7 @@ accounts. Agency $49/mo: up to 25.
 | `propose_analytics_changes` | no | like `propose_changes`, for GA4 setup: `create_ga4_property` (with a web stream; the applied result gives the tag), `mark_key_event`/`unmark_key_event`, `link_google_ads`/`unlink_google_ads`. Applied and undone with `apply_changes`/`undo_changes` |
 | `analytics_landing_pages` | no | sessions, users, engagement rate, key events and key event rate per landing page, optionally for one channel (e.g. Paid Search) |
 | `analytics_report` | no | any GA4 Data API report by dimension and metric names, with a contains filter |
+| `landing_page_speed` | no | PageSpeed Insights for up to 5 pages: Core Web Vitals from real Chrome visitors (28 days), a Lighthouse score, and the fixes worth most. Any public URL, no Google service needed |
 | `merchant_accounts` | no | the Merchant Center accounts the login can read (sub-accounts included); if Merchant Center isn't granted yet, a personal link that adds it |
 | `merchant_product_issues` | no | account issues, product status counts, and each product issue with how many products it hits and examples; or one product's issues in full |
 | `merchant_report` | no | any read-only Merchant Center Query Language (MCQL) query, e.g. Shopping clicks per product from `product_performance_view` |

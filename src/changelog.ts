@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.27.0", date: "2026-11-04",
+    summary: "Landing page speed: check whether your ad landing pages are fast for real visitors, and what to fix first.",
+    items: [
+      "**`landing_page_speed`** runs Google PageSpeed Insights on up to 5 pages: Core Web Vitals from real Chrome visitors over the last 28 days, a fresh Lighthouse score, and the fixes worth most, biggest saving first. Landing-page experience is part of an ad's Quality Score.",
+      "Works on any public page and needs no Google service in your connection, so it's on every plan. Try it on the demo website, northwind-plumbing.example.",
+    ],
+  },
+  {
     version: "0.26.1", date: "2026-11-04",
     summary: "Camberstack's listings now describe all four Google services it connects: Google Ads, Search Console, Google Analytics 4 and Merchant Center. No change to tools.",
   },

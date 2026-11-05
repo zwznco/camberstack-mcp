@@ -147,6 +147,14 @@ CREATE TABLE IF NOT EXISTS announcement_sends (
   started_at  INTEGER NOT NULL,
   sent_at     INTEGER
 );
+-- landing_page_speed pages tested per user per UTC day (pagespeed.ts DAILY_PAGES): every user shares the Cloud
+-- project's PageSpeed quota, so one can't spend it for everyone. Demo pages don't count.
+CREATE TABLE IF NOT EXISTS pagespeed_usage (
+  user_id  TEXT NOT NULL,
+  day      TEXT NOT NULL,
+  pages    INTEGER NOT NULL,
+  PRIMARY KEY (user_id, day)
+);
 DROP TABLE IF EXISTS announcements;  -- the admin compose box (2709633, never used: 0 rows), replaced by presets 2026-10-14
 
 -- Each user's copy of the demo account (demo.ts): only what their changes altered, as JSON.

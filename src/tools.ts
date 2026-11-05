@@ -14,10 +14,11 @@ import { DEMO_SITE } from "./demo.js";
 import { DEMO_PROPERTY } from "./ga4.js";
 import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
+import { PageSpeedClient, type Strategy } from "./pagespeed.js";
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.26.1";
+export const SERVER_VERSION = "0.27.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -161,7 +162,7 @@ const GRANT_LINK = /\/connect\/([a-z-]+)\?t=/;
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { chatgpt?: boolean; planNote?: string | null; stuck?: (tool: string, error: string) => string | null;
+  o: { chatgpt?: boolean; planNote?: string | null; pagespeed?: PageSpeedClient; stuck?: (tool: string, error: string) => string | null;
     feedback?: (kind: FeedbackKind, message: string) => Promise<{ sent: boolean; email: string }> } = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + MERCHANT_INSTRUCTIONS + (o.planNote ? `\n${o.planNote}` : "") });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
@@ -503,6 +504,20 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     annotations: read,
   }, ({ property_id, ...o }: GaWindow & { property_id: string; dimensions: string[]; metrics: string[];
     filter?: { dimension: string; contains: string }; order_by?: string; limit: number }) => report(session().ga, property_id, o));
+
+  tool("landing_page_speed", {
+    title: "Landing page speed (PageSpeed Insights)",
+    description: "Google PageSpeed Insights: whether real visitors get a fast page (Core Web Vitals from Chrome, last 28 days), a Lighthouse "
+      + "score, and the fixes worth most. Use it on ad landing pages (from landing_page_view or analytics_landing_pages) when clicks don't convert; "
+      + "landing-page experience is part of Quality Score. Any public URL. Takes 10-40s. Changes nothing.",
+    inputSchema: {
+      urls: z.array(z.string().url().max(2000).regex(/^https?:\/\//i, "http(s) URLs only")).min(1).max(5).describe("Page URLs, up to 5"),
+      strategy: z.enum(["mobile", "desktop"]).default("mobile").describe("Device to test as"),
+      fixes: z.number().int().min(0).max(15).default(5).describe("Fixes per page"),
+    },
+    annotations: read,
+  }, ({ urls, strategy, fixes }: { urls: string[]; strategy: Strategy; fixes: number }) =>
+    (o.pagespeed ?? new PageSpeedClient(undefined)).check(urls, { strategy, fixes, token: () => session().googleAccessToken(), userId: session().user.id }));
 
   // Merchant Center.
   tool("merchant_accounts", {

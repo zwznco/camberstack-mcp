@@ -31,6 +31,7 @@ import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
 import { teeToFile } from "./logfile.js";
 import { ErrorAlerts, stuckNow, UNSUPPORTED_PREFIX } from "./alerts.js";
+import { PageSpeedClient } from "./pagespeed.js";
 const DRAIN_FILE = "/tmp/drain";
 
 /** brand/ sits beside src/ and dist/ at the package root. */
@@ -49,6 +50,7 @@ export interface Overrides extends Partial<SessionDeps> {
   adsConversionFetch?: typeof fetch;
   mailFetch?: typeof fetch;
   indexNowFetch?: typeof fetch;
+  pagespeedFetch?: typeof fetch;
 }
 
 export interface Service {
@@ -255,6 +257,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     try { return UserSession.load(deps, userId, { chatgpt, seen: false }).serviceNote(); } catch { return null; }
   };
 
+  const pagespeed = new PageSpeedClient(cfg.pagespeedApiKey, overrides.pagespeedFetch, db);
   // A fresh server per request, bound to the caller the bearer middleware verified.
   const serverFor = (auth: AuthInfo | undefined) => {
     const userId = String(auth?.extra?.userId ?? "");
@@ -264,7 +267,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     const email = (db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string } | undefined)?.email.toLowerCase();
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
       logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.serviceWanted ?? null, c.grantOffered ?? null);
-    }, [], { chatgpt, planNote: planNoteFor(userId, chatgpt),
+    }, [], { chatgpt, planNote: planNoteFor(userId, chatgpt), pagespeed,
       feedback: async (kind, message) => {
         if (!email) throw new Error("Feedback needs a connected account.");
         return { sent: await submitFeedback(feedbackDeps, email, kind, message, "sent from their AI app"), email };

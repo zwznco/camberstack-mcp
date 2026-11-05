@@ -46,6 +46,8 @@ export interface Config {
   mail?: import("./lifecycle.js").MailConfig;
   /** Glama ownership token for /.well-known/glama.json (from Glama's claim panel); unset = 404. */
   glamaClaim?: string;
+  /** PageSpeed Insights API key (pagespeed.ts); unset = each call uses the user's own Google token. */
+  pagespeedApiKey?: string;
   /** ChatGPT plugin domain-verification token for /.well-known/openai-apps-challenge (from the plugin portal); unset = 404. */
   openaiAppsChallenge?: string;
   /** Google Analytics (GA4) measurement ID for our own public pages (G-…), loaded through /e.js; unset = no GA tag. */
@@ -97,6 +99,7 @@ export function loadConfig(): Config {
     noindex: process.env.NOINDEX === "1",
     allowedEmails: emails(process.env.ALLOWED_EMAILS),
     glamaClaim: process.env.GLAMA_CLAIM || undefined,
+    pagespeedApiKey: process.env.PAGESPEED_API_KEY || undefined,
     feedbackTo: process.env.FEEDBACK_TO || undefined,
     alertTo: process.env.ALERT_TO || undefined,
     openaiAppsChallenge: process.env.OPENAI_APPS_CHALLENGE || undefined,

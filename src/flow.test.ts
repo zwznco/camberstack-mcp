@@ -672,7 +672,8 @@ describe("OAuth + MCP end to end", () => {
     // The AI sees what each change field means, and never the undo-only change type.
     // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29); +3.5K for the delete_ changes (2026-10-30).
     // Search Console changes (2026-10-31): +1K for propose_search_console_changes; +1K for send_feedback.
-    expectToolBudget(tools, { total: 108_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000 } });
+    // landing_page_speed (2026-11-04): +0.9K.
+    expectToolBudget(tools, { total: 109_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1197,7 +1198,8 @@ describe("OAuth + MCP end to end", () => {
       const names = tools.map((t) => t.name);
       // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29); +7K for the propose_delete_ tools (2026-10-30).
       // Search Console changes (2026-10-31): +3K for its four propose tools; +1K for send_feedback.
-      expectToolBudget(tools, { total: 144_000, perTool: 6_000 });
+      // landing_page_speed (2026-11-04): +0.9K.
+      expectToolBudget(tools, { total: 145_000, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
