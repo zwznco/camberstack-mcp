@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.28.0", date: "2026-11-05",
+    summary: "Merchant Center is a box on the sign-in screen.",
+    items: [
+      "**Merchant Center is a box on the sign-in screen**, next to Google Ads, Search Console and Google Analytics. Untick it if you don't sell products; you can add it later through a link Camberstack gives you. Already connected? The first time you ask about Merchant Center, you get that link; no reconnecting.",
+    ],
+  },
+  {
     version: "0.27.0", date: "2026-11-04",
     summary: "Landing page speed: check whether your ad landing pages are fast for real visitors, and what to fix first.",
     items: [

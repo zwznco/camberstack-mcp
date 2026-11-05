@@ -28,7 +28,7 @@ const paidCovers = () => (fp.kind === "accounts" ? "Everything in Free, on" : `$
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
-const PRIVACY_UPDATED = "2026-10-31";
+const PRIVACY_UPDATED = "2026-11-05"; // Merchant Center asked at sign-in
 const TERMS_UPDATED = "2026-11-04"; // Merchant Center went public
 
 const CSS = `
@@ -403,7 +403,7 @@ ${pairList([
   ["Mark or unmark an event as a key event", "Restores the previous setting"],
   ["Link or unlink a Google Ads account", "Restores the previous link"],
 ], "Undo")}
-<p class="muted small">Google Ads, Search Console and Google Analytics are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property.</p>
+<p class="muted small">Google Ads, Search Console, Google Analytics and Merchant Center are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property.</p>
 </div>
 </div></section>
 
@@ -552,7 +552,7 @@ expired proposal, are covered in <a href="/docs#troubleshooting">the documentati
 const commonQuestions = (app: string) => `<h3>Do I need a Google Ads developer token?</h3>
 <p>No. Camberstack has its own Google Ads API access. You sign in with Google and choose what to share.</p>
 <h3>Does ${app} see my whole Google account?</h3>
-<p>No. It gets Google Ads access, your email address and, if you leave them ticked, Search Console and Google Analytics (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
+<p>No. It gets Google Ads access, your email address and, if you leave them ticked, Search Console, Google Analytics and Merchant Center (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
 <h3>What does it cost?</h3>
 <p>${fp.kind === "one_service" ? `Free on ${oneServiceFree()}, with every tool and unlimited changes. <a href="/#pricing">Plus</a> covers all four together on one account for ${PLUS_PRICE_LABEL}, Pro on up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.`
   : `Free on one Google Ads account, with every tool and unlimited changes. <a href="/#pricing">Pro</a> covers up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.${soon()}`}</p>`;
@@ -698,7 +698,7 @@ ${guideTroubleshooting("ChatGPT",
 <strong>Disconnect Google Ads</strong>, or remove Camberstack at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
 <h3>Does ChatGPT see my whole Google account?</h3>
 <p>No. The Google sign-in is Camberstack's, not ChatGPT's, and it shares only Google Ads, your email address and, if you leave them
-ticked, Search Console and Google Analytics (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
+ticked, Search Console, Google Analytics and Merchant Center (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
 <h3>Does it need a paid Camberstack plan?</h3>
 <p>${fp.kind === "one_service" ? `No. Free covers ${oneServiceFree()}, with every tool; <a href="/#pricing">Plus</a> covers all four together on one account, Pro on up to ${PRO_ACCOUNTS} accounts, and Agency up to ${AGENCY_ACCOUNTS}.`
   : `No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to ${PRO_ACCOUNTS}, and Agency up to ${AGENCY_ACCOUNTS}.${soon()}`}</p>
@@ -890,10 +890,8 @@ the proposal tells you if a product is one of those.</p>
 
 <h2 id="setup">Set it up</h2>
 <p>Connect Camberstack in your AI app (<a href="/google-ads-claude">Claude</a>, <a href="/google-ads-chatgpt">ChatGPT</a>, or any MCP
-client with <code>${mcpUrl}</code>). Then ask <em>"List my Merchant Center accounts"</em>. Merchant Center isn't on the first sign-in
-screen: the first time you ask, Camberstack gives you a link that adds it to the same Google account, with no reconnecting.
-While Google finishes reviewing Camberstack's Merchant Center access, that link may show a "Google hasn't verified this app"
-screen: choose <strong>Advanced</strong>, then continue to Camberstack.</p>
+client with <code>${mcpUrl}</code>). On Google's sign-in screen, leave the <strong>Merchant Center</strong> box ticked, then ask <em>"List my Merchant Center accounts"</em>.
+Already connected without it? The first time you ask, Camberstack gives you a link that adds it to the same Google account, with no reconnecting.</p>
 <p>You don't need a Google Ads account. Without one, every Merchant Center tool works on your real store; only the one that joins
 products with ad spend needs Ads.</p>
 
@@ -1136,7 +1134,7 @@ change your Google Ads account. This policy explains what we access, why, and wh
 <li><strong>Your Google Ads data, optional</strong> (the <code>https://www.googleapis.com/auth/adwords</code> scope): account and campaign structure, performance metrics, search terms, keywords and conversion settings, read when your AI assistant calls a Camberstack tool.</li>
 <li><strong>Your Search Console data and sitemaps, optional</strong> (the <code>https://www.googleapis.com/auth/webmasters</code> scope; a connection made before 2026-10-31 may hold <code>https://www.googleapis.com/auth/webmasters.readonly</code> instead): the websites you have verified, their Google Search clicks, impressions, queries and positions, Google's index status for pages you ask about, and the sitemaps you have submitted, read when your AI assistant calls a Search Console tool, for example to compare what you pay for with where you already rank. Google Ads and Search Console are each optional: you can untick either on Google's consent screen and add it later through a link Camberstack gives you. With the same scope, Camberstack submits, resubmits and removes sitemaps and adds and removes properties, each only when you approve a specific proposal. We keep what we need to show and reverse each change (the sitemap or property, and the proposal), as for any other change.</li>
 <li><strong>Your Google Analytics data and setup, optional</strong> (the <code>https://www.googleapis.com/auth/analytics.readonly</code> and <code>https://www.googleapis.com/auth/analytics.edit</code> scopes): the names of the Google Analytics accounts and properties you can access; reports on your properties' traffic, such as sessions, users, engagement, key events (conversions), landing pages and traffic sources; and each property's setup (web streams and their measurement IDs, key events, Google Ads links), read when your AI assistant calls a Google Analytics tool, for example to see whether visitors from your ads convert. With edit access Camberstack can set up tracking for you, <strong>only</strong> when you approve a specific proposal: create a property with a web stream, mark or unmark an event as a key event, and link or unlink a Google Ads account. Every such change is logged and can be undone. Google Analytics is optional: both scopes come as one box on Google's consent screen, which you can untick and add later through a link Camberstack gives you.</li>
-<li><strong>Your Google Merchant Center data and products, optional</strong> (the <code>https://www.googleapis.com/auth/content</code> scope): the names of the Merchant Center accounts you can access; account-level issues; your products' status (eligible, limited, pending or disapproved) and the issues Google reports for each, with product IDs, titles, brands and prices; and reports on your products' Google Shopping and free-listing clicks and impressions, read when your AI assistant calls a Merchant Center tool, for example to find why products stopped showing. Camberstack can also change products for you, <strong>only</strong> when you approve a specific proposal: override a product's attributes (such as its price, GTIN or title), exclude it from Shopping ads or free listings, or create, change and delete products of its own. Overrides go through Camberstack's own supplemental data source in your account, which it creates and, the first time, places ahead of the product's feed in that feed's rules; products it creates live in its own data source, "Camberstack products". Your feed and its products are never edited, added or deleted. Every change is logged and can be undone: undoing an override lets your feed's values apply again, and undoing a deletion re-creates the product. It is not part of connecting Camberstack: we ask for it separately, only if you use a Merchant Center tool, through a link that adds it to the Google account you already connected.</li>
+<li><strong>Your Google Merchant Center data and products, optional</strong> (the <code>https://www.googleapis.com/auth/content</code> scope): the names of the Merchant Center accounts you can access; account-level issues; your products' status (eligible, limited, pending or disapproved) and the issues Google reports for each, with product IDs, titles, brands and prices; and reports on your products' Google Shopping and free-listing clicks and impressions, read when your AI assistant calls a Merchant Center tool, for example to find why products stopped showing. Camberstack can also change products for you, <strong>only</strong> when you approve a specific proposal: override a product's attributes (such as its price, GTIN or title), exclude it from Shopping ads or free listings, or create, change and delete products of its own. Overrides go through Camberstack's own supplemental data source in your account, which it creates and, the first time, places ahead of the product's feed in that feed's rules; products it creates live in its own data source, "Camberstack products". Your feed and its products are never edited, added or deleted. Every change is logged and can be undone: undoing an override lets your feed's values apply again, and undoing a deletion re-creates the product. Merchant Center is optional: it is a box on Google's consent screen, which you can untick and add later through a link Camberstack gives you.</li>
 </ul>
 <p>We request nothing else from your Google account: no Gmail, Drive, contacts or calendar.</p>
 

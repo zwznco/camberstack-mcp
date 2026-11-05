@@ -23,7 +23,7 @@ import { encrypt, randomToken, safeEqual, sha256 } from "./crypto.js";
 import { consentPage } from "./pages.js";
 import { clearGoogleCache } from "./session.js";
 import {
-  ADS_SCOPE, GRANTS, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, exchangeGoogleCode, googleAuthUrl, idTokenClaims, type GoogleCreds,
+  ADS_SCOPE, GRANTS, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, exchangeGoogleCode, googleAuthUrl, idTokenClaims, type GoogleCreds,
 } from "./google.js";
 
 export const MCP_SCOPE = "ads";
@@ -152,7 +152,7 @@ export class CamberstackProvider implements OAuthServerProvider {
       return denied(clientRedirect(p.redirectUri, p.state), "The user cancelled the connection.");
     }
     this.db.prepare("UPDATE pending_auth SET params = ? WHERE id = ?").run(JSON.stringify({ ...p, approved: true }), row.id);
-    return googleAuthUrl(this.opts.google, this.googleRedirectUri, row.id, GRANTS.analytics.scopes);
+    return googleAuthUrl(this.opts.google, this.googleRedirectUri, row.id, [...GRANTS.analytics.scopes, MERCHANT_SCOPE]);
   }
 
   /**
@@ -176,7 +176,7 @@ export class CamberstackProvider implements OAuthServerProvider {
     // À la carte: any one service is enough to connect; a tool that needs another returns a link that adds it (grant.ts).
     const granted = g.scope.split(" ");
     // The read-only scope counts too: include_granted_scopes brings it back on a reconnect with the boxes unticked.
-    const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, GRANTS.analytics.scopes[0]];
+    const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, GRANTS.analytics.scopes[0], MERCHANT_SCOPE];
     if (!enough.some((s) => granted.includes(s))) {
       return { to: denied(back, "No Google service was granted (every box was unticked).") };
     }

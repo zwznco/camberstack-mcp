@@ -179,10 +179,11 @@ describe("missingSelectFields", () => {
 describe("sign-in scopes", () => {
   const creds = { clientId: "c", clientSecret: "s" };
   const scopes = (u: string) => new URL(u).searchParams.get("scope")!.split(" ");
-  it("asks for Ads and Search Console, and Google Analytics only when passed (server.ts always passes it)", async () => {
-    const { googleAuthUrl, GRANTS, ADS_SCOPE, ANALYTICS_EDIT_SCOPE } = await import("./google.js");
+  it("asks for Ads and Search Console, and Google Analytics and Merchant Center only when passed (provider.ts always passes them)", async () => {
+    const { googleAuthUrl, GRANTS, ADS_SCOPE, ANALYTICS_EDIT_SCOPE, MERCHANT_SCOPE } = await import("./google.js");
     expect(scopes(googleAuthUrl(creds, "https://x/cb", "st"))).toContain(ADS_SCOPE);
     expect(scopes(googleAuthUrl(creds, "https://x/cb", "st"))).not.toContain(ANALYTICS_EDIT_SCOPE);
     expect(scopes(googleAuthUrl(creds, "https://x/cb", "st", GRANTS.analytics.scopes))).toEqual(expect.arrayContaining([ADS_SCOPE, ...GRANTS.analytics.scopes]));
+    expect(scopes(googleAuthUrl(creds, "https://x/cb", "st", [...GRANTS.analytics.scopes, MERCHANT_SCOPE]))).toContain(MERCHANT_SCOPE);
   });
 });

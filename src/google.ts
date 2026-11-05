@@ -2,9 +2,9 @@
  * Google OAuth (the user's consent to Google access) and a thin Google Ads REST client.
  *
  * Scopes requested at sign-in: `adwords` (the Ads API), `webmasters` (Search Console: reads, and approved changes), the Google
- * Analytics pair (provider.ts) and `openid email` (to know who the user is, so a reconnect finds the same
+ * Analytics pair and `content` (Merchant Center) (both passed by provider.ts), and `openid email` (to know who the user is, so a reconnect finds the same
  * account and change log). Each service is an untickable box and any one is enough to connect (provider.ts callback);
- * a missing one is added later by link (grant.ts), as is `content` (Merchant Center), which sign-in doesn't ask for.
+ * a missing one is added later by link (grant.ts).
  * Nothing else from the Google account is touched.
  */
 
@@ -16,7 +16,7 @@ export const SEARCH_CONSOLE_READONLY_SCOPE = "https://www.googleapis.com/auth/we
  *  sign-in (provider.ts), and by link when a connection lacks them (ga4.ts). */
 export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
-/** Google Merchant Center (Merchant API), used through merchant.ts. Not in the main consent: asked for separately, by link. */
+/** Google Merchant Center (Merchant API), used through merchant.ts. Asked at sign-in since 0.28.0 (verified 2026-11-04); before that only by link (grant.ts), which still adds it. */
 export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
 const ADS_API = "https://googleads.googleapis.com/v23";
@@ -33,7 +33,7 @@ export interface GoogleCreds {
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
 
-/** `extraScopes`: more services asked at sign-in (Google Analytics); each stays an untickable box. */
+/** `extraScopes`: more services asked at sign-in (Google Analytics, Merchant Center); each stays an untickable box. */
 export function googleAuthUrl(creds: GoogleCreds, redirectUri: string, state: string, extraScopes: readonly string[] = []): string {
   return `${GOOGLE_AUTH}?${new URLSearchParams({
     client_id: creds.clientId,
