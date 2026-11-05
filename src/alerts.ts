@@ -80,6 +80,14 @@ export function verdict(code: string, error: string, recoveredLater: boolean, re
   if (/access isn't part of this Google connection|needs its edit access/.test(error))
     return { act: true, why: "Missing Google grant. The message carries the grant link; if they never clicked it, email them the link." };
   if (code === "METRIC_ACCESS_DENIED") return { act: false, why: "Data Google doesn't give Camberstack (auction insights). Nothing we can fix." };
+  // Google's rate limit, not a bad request: a short "Retry in N seconds" is the per-account limit (Keyword Planner's is tight;
+  // a ChatGPT user retried keyword_metrics 4× inside a minute, 2026-11-05, and was mailed as "kept writing a request Google
+  // rejects"). A long wait means the developer token's daily quota, which stops every user.
+  if (code === "RESOURCE_EXHAUSTED") {
+    const wait = Number(/Retry in (\d+) seconds/.exec(error)?.[1] ?? NaN);
+    if (wait < 600) return { act: false, why: `Google's short-term rate limit (retry in ${wait}s), not a bad request. Act only if it keeps happening.` };
+    return { act: true, why: "Google's quota is exhausted for a long wait, likely the developer token's daily quota: every user is stopped. Check the Ads API Center quota." };
+  }
   if (ACCOUNT_REFUSALS.test(code)) return { act: true, why: "Google refuses this for their account; the user must fix it in Google Ads. Check our message says how, and consider emailing them." };
   if (/^[A-Z_]+$/.test(code)) return { act: true, why: "The model kept writing a request Google rejects. Check the error tells it the fix (src/gaql.ts catalog, or the hint in google.ts)." };
   if (/^(TypeError|ReferenceError|SqliteError|RangeError)|Cannot read propert|is not a function|fetch failed/.test(error))

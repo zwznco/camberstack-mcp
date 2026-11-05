@@ -98,6 +98,13 @@ describe("verdict", () => {
     expect(verdict("UNRECOGNIZED_FIELD", BAD_FIELD, true).act).toBe(false);
     expect(verdict("METRIC_ACCESS_DENIED", "", false).act).toBe(false);
   });
+  it("calls a short rate limit FYI, a long quota wait ACT", () => {
+    const short = "Google Ads API 429: RESOURCE_EXHAUSTED Too many requests. Retry in 41 seconds.";
+    expect(verdict(errorCode(short), short, false).act).toBe(false);
+    const long = "Google Ads API 429: RESOURCE_EXHAUSTED Too many requests. Retry in 36000 seconds.";
+    expect(verdict(errorCode(long), long, false).act).toBe(true);
+    expect(verdict("RESOURCE_EXHAUSTED", "Google Ads API 429: RESOURCE_EXHAUSTED Too many requests.", false).act).toBe(true);
+  });
   it("points a crash at Bugsink", () => {
     expect(verdict("TypeError", "TypeError: Cannot read properties of undefined", false).why).toMatch(/Bugsink/);
   });
