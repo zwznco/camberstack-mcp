@@ -447,6 +447,7 @@ export class UserSession {
     const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
     // switch_account spends it only after the notice: an AI that called it straight away spent a new user's switch 41
     // seconds after their first pick, locking that account for 30 days with no warning (prod, 2026-10-30).
+    let unreachable = false;
     const asked = switchAsked.get(this.user.id);
     const agreed = confirmSwitch && asked?.cid === cid && now() - asked.at <= SWITCH_ANSWER_SECONDS;
     if (isSwitch() && !agreed) {
@@ -458,7 +459,8 @@ export class UserSession {
           st = this.planState(managers, pool);
         }
         // An Ads account this login can't reach has nothing to switch to: the call fails on its own and spends nothing.
-        if (isSwitch() && (pool !== "ads" || await this.mayReach(cid))) this.noticeSwitch(cid, st, pool);
+        if (isSwitch() && pool === "ads" && !await this.mayReach(cid)) unreachable = true;
+        else if (isSwitch()) this.noticeSwitch(cid, st, pool);
       }
     }
     if (!st.allows(cid)) {
@@ -473,6 +475,10 @@ export class UserSession {
         if (!st.allows(cid)) this.refuse(cid, st, pool);
       }
     }
+    // Nor does it count as in use while its call runs. It did: a Free user's AI queried their one account and two ids from
+    // another login in parallel, the unreachable one took the slot in flight, and the third got "Plan limit: used on 2
+    // accounts" on a login that has one (prod, 2026-11-05).
+    if (unreachable && st.allows(cid)) return () => {};
     const mine = inFlight.get(this.user.id) ?? new Map<string, number>();
     inFlight.set(this.user.id, mine);
     mine.set(cid, (mine.get(cid) ?? 0) + 1);

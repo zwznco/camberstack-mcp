@@ -1292,15 +1292,45 @@ describe("OAuth + MCP end to end", () => {
     const saved = db.prepare("SELECT * FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").all(uid);
     db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
     const realSearch = ads.search.bind(ads);
-    ads.search = async (cid: string, q: string) => { await new Promise((r) => setTimeout(r, 50)); return realSearch(cid, q); };
+    // All three reachable: an account the login can't open isn't counted at all (the next test).
+    ads.search = async (cid: string, q: string) => {
+      await new Promise((r) => setTimeout(r, 50));
+      return q.includes("FROM customer_client") ? [...await realSearch(cid, q),
+        ...["9998887777", "8887776666"].map((id) => ({ customerClient: { id, descriptiveName: id, currencyCode: "USD", manager: false, level: 1 } }))]
+        : realSearch(cid, q);
+    };
     try {
-      // Free takes one account plus one switch, so of three new accounts at once exactly one is refused.
+      // Free takes one account; the switch needs the user's say-so, so of three new accounts at once one gets through.
       const all = await Promise.all(["111-222-3333", "999-888-7777", "888-777-6666"].map((c) => call(token, "switch_account", { customer_id: c })));
-      expect(all.filter((r) => r.text.includes("Plan limit:"))).toHaveLength(1);
+      expect(all.filter((r) => !/Plan limit:|Account switch:/.test(r.text))).toHaveLength(1);
     } finally {
       ads.search = realSearch;
-      // The refusal is a notice, logged with no account: remove it too, or its id collides with a saved row's.
-      db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND (customer_id IS NOT NULL OR error LIKE 'Plan limit:%')").run(uid);
+      // The stops are notices, logged with no account: remove them too, or their ids collide with a saved row's.
+      db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND (customer_id IS NOT NULL OR error LIKE 'Plan limit:%' OR error LIKE 'Account switch:%')").run(uid);
+      const put = db.prepare("INSERT INTO tool_calls (id, at, user_id, client_id, tool, customer_id, ok, error, ms, bytes) VALUES (@id, @at, @user_id, @client_id, @tool, @customer_id, @ok, @error, @ms, @bytes)");
+      for (const r of saved) put.run(r);
+    }
+  });
+
+  it("counts no unreachable account as in use while its call runs", async () => {
+    const uid = (db.prepare("SELECT id FROM users WHERE email = 'owner@example.com'").get() as { id: string }).id;
+    const saved = db.prepare("SELECT * FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").all(uid);
+    const kept = db.prepare("SELECT id FROM tool_calls WHERE customer_id IS NULL").pluck().all() as number[];
+    db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
+    const realSearch = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => { await new Promise((r) => setTimeout(r, 50)); return realSearch(cid, q); };
+    try {
+      await call(token, "switch_account", { customer_id: "111-222-3333" });
+      // The login's one account plus two ids it can't open, at once (prod, 2026-11-05): the unreachable ones fail on their
+      // own, and none of the three meets the plan gate.
+      const all = await Promise.all(["111-222-3333", "222-333-4444", "333-444-5555"].map((c) =>
+        call(token, "run_gaql", { customer_id: c, query: "SELECT customer.id FROM customer" })));
+      expect(all.map((r) => r.text).filter((t) => /Plan limit:|Account switch:/.test(t))).toEqual([]);
+      expect(all[0].isError).toBe(false);
+    } finally {
+      ads.search = realSearch;
+      // Everything this test logged, with or without an account (ids are reused after the delete above).
+      db.prepare(`DELETE FROM tool_calls WHERE customer_id IS NOT NULL AND user_id = ? OR customer_id IS NULL AND id NOT IN (${kept.join(",") || "0"})`).run(uid);
       const put = db.prepare("INSERT INTO tool_calls (id, at, user_id, client_id, tool, customer_id, ok, error, ms, bytes) VALUES (@id, @at, @user_id, @client_id, @tool, @customer_id, @ok, @error, @ms, @bytes)");
       for (const r of saved) put.run(r);
     }
