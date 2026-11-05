@@ -338,7 +338,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   tool("keyword_metrics", {
     title: "Keyword volume and bids (Keyword Planner)",
     description: "Google Keyword Planner numbers for an exact list of keywords: average monthly searches, the last 12 months, competition and the top-of-page bid range in the account's currency. Use it to size keywords before adding them or to check a trend. "
-      + "Up to 100 keywords come back as one object each; over 100, as a compact table (columns, months, rows). Changes nothing.",
+      + "Send the whole list in one call, not one per keyword: Keyword Planner rate-limits bursts. "
+      + "Up to 100 come back as objects; over 100, as a compact table (columns, months, rows). Changes nothing.",
     inputSchema: {
       customer_id: customerId,
       keywords: z.array(z.string().min(1).max(80)).min(1).max(500).describe("Keywords to look up, up to 500"),
