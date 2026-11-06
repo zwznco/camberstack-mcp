@@ -18,7 +18,7 @@ import { PageSpeedClient, type Strategy } from "./pagespeed.js";
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.29.0";
+export const SERVER_VERSION = "0.29.1";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -491,7 +491,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "Run a Google Analytics report",
     description: "Any GA4 report: dimensions and metrics by their GA4 API names, highest first. Common dimensions: date, landingPage, pagePath, "
       + "sessionDefaultChannelGroup, sessionSourceMedium, sessionCampaignName, sessionGoogleAdsCampaignName, deviceCategory, country, eventName. "
-      + "Common metrics: sessions, totalUsers, engagedSessions, engagementRate, keyEvents, sessionKeyEventRate, screenPageViews, purchaseRevenue. Changes nothing.",
+      + "Common metrics: sessions, totalUsers, engagedSessions, engagementRate, keyEvents, sessionKeyEventRate, screenPageViews, ecommercePurchases, purchaseRevenue. "
+      + "For Google search queries, clicks and positions use search_console_performance: GA4's organicGoogleSearch* fields need Search Console linked in GA4 and combine with few dimensions. Changes nothing.",
     inputSchema: { property_id: propertyId, ...gaWindowShape,
       dimensions: z.array(z.string().regex(/^[A-Za-z][\w:]*$/)).max(5).default([]).describe("GA4 dimension names; none gives totals"),
       metrics: z.array(z.string().regex(/^[A-Za-z][\w:]*$/)).min(1).max(10).describe("GA4 metric names"),

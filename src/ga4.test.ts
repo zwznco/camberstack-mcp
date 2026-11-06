@@ -44,6 +44,30 @@ describe("AnalyticsClient", () => {
     await expect(ga.runReport("9", { startDate: "a", endDate: "b", dimensions: [], metrics: ["sessions"], limit: 1 })).rejects.toBeInstanceOf(NotGrantedError);
   });
 
+  it("answers an unknown field with the property's own closest names, not only Google's spelling guess", async () => {
+    const ga = client((u) => u.endsWith("/metadata")
+      ? json({ dimensions: [{ apiName: "landingPage" }, { apiName: "customEvent:form_variant" }, { apiName: "googleAdsQuery" }],
+        metrics: [{ apiName: "sessions" }, { apiName: "purchaserRate" }, { apiName: "ecommercePurchases" }, { apiName: "purchaseRevenue" }, { apiName: "transactions" }] })
+      : json({ error: { code: 400, message: "Did you mean purchaserRate? Field purchases is not a valid metric. For a list of valid dimensions and metrics, see https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema" } }, 400));
+    const e = await report(ga, "9", { days: 7, dimensions: [], metrics: ["purchases"], limit: 10 }).catch((x: Error) => x);
+    expect((e as Error).message).toContain("Google Analytics API 400: Did you mean purchaserRate?");
+    expect((e as Error).message).toContain("Closest real metrics: ecommercePurchases, purchaserRate, purchaseRevenue.");
+    // Search Console's GA4 fields exist only on a linked property: say so, and where search queries are.
+    const ga2 = client((u) => u.endsWith("/metadata") ? json({ dimensions: [{ apiName: "landingPage" }, { apiName: "googleAdsQuery" }], metrics: [{ apiName: "sessions" }] })
+      : json({ error: { code: 400, message: "Did you mean googleAdsQuery? Field organicGoogleSearchQuery is not a valid dimension." } }, 400));
+    const e2 = await report(ga2, "9", { days: 7, dimensions: ["organicGoogleSearchQuery"], metrics: ["sessions"], limit: 10 }).catch((x: Error) => x);
+    expect((e2 as Error).message).toContain("only when Search Console is linked to the property. For search queries, use search_console_performance.");
+    // A custom field: the property's registered ones, not word matches.
+    const ga4 = client((u) => u.endsWith("/metadata") ? json({ dimensions: [{ apiName: "eventName" }, { apiName: "customEvent:form_variant" }], metrics: [{ apiName: "sessions" }] })
+      : json({ error: { code: 400, message: "Did you mean customEvent:form_variant? Field customEvent:form_id is not a valid dimension." } }, 400));
+    const e4 = await report(ga4, "9", { days: 7, dimensions: ["customEvent:form_id"], metrics: ["sessions"], limit: 10 }).catch((x: Error) => x);
+    expect((e4 as Error).message).toContain("Its registered customEvent: dimensions are: customEvent:form_variant.");
+    // Metadata unreadable: Google's message alone, unchanged.
+    const ga3 = client((u) => u.endsWith("/metadata") ? json({ error: { code: 500, message: "x" } }, 500)
+      : json({ error: { code: 400, message: "Field purchases is not a valid metric." } }, 400));
+    await expect(report(ga3, "9", { days: 7, dimensions: [], metrics: ["purchases"], limit: 10 })).rejects.toThrow(/^Google Analytics API 400: Field purchases is not a valid metric\.$/);
+  });
+
   it("passes other API errors through readably (e.g. the API not enabled)", async () => {
     const ga = client(() => json({ error: { code: 403, message: "Google Analytics Data API has not been used in project 123 before or it is disabled." } }, 403));
     await expect(ga.summaries()).rejects.toThrow(/Google Analytics API 403: Google Analytics Data API has not been used/);

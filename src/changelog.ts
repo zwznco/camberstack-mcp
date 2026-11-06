@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.29.1", date: "2026-11-06",
+    summary: "Google Analytics reports recover from a wrong field name in one step.",
+    items: [
+      "**`analytics_report`**: when GA4 rejects a metric or dimension name, the answer now lists the closest names your property really has (for `purchases`, `ecommercePurchases` first), and for a custom field, the custom definitions registered on the property. Google's own \"Did you mean\" is a spelling guess and was often wrong.",
+      "For Google search queries, clicks and positions, `analytics_report` now points to `search_console_performance`: GA4's Search Console fields need the two linked and combine with few dimensions.",
+    ],
+  },
+  {
     version: "0.29.0", date: "2026-11-06",
     summary: "A plan's Google Ads accounts no longer switch: once they're taken, another opens after one has gone 30 days unused, or on a bigger plan.",
     items: [

@@ -34,6 +34,8 @@ export type Analytics = {
   /** Every account this login can see (including ones with no property yet) and every property in them. */
   summaries(): Promise<{ accounts: GaAccount[]; properties: Property[] }>;
   runReport(propertyId: string, req: ReportRequest): Promise<Report>;
+  /** The property's own dimension and metric names (Data API getMetadata: standard ones plus its custom definitions). */
+  fields?(propertyId: string): Promise<{ dimensions: string[]; metrics: string[] }>;
   /** An Admin API call by path under v1beta, e.g. GET properties/123/keyEvents. Writes go through ga4-changes.ts only. */
   admin(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: object): Promise<any>;
 };
@@ -99,6 +101,12 @@ export class AnalyticsClient implements Analytics {
       ])),
     };
   }
+
+  async fields(propertyId: string): Promise<{ dimensions: string[]; metrics: string[] }> {
+    const r = await this.call(`${DATA_API}/properties/${propertyId}/metadata`);
+    const names = (xs?: { apiName: string }[]) => (xs ?? []).map((x) => x.apiName);
+    return { dimensions: names(r.dimensions), metrics: names(r.metrics) };
+  }
 }
 
 /** GA4 returns every metric as a string; rates and money to 4 and 2 decimals. */
@@ -115,6 +123,7 @@ export function routedAnalytics(google: Analytics, demo: Analytics): Analytics {
   return {
     summaries: () => google.summaries(),
     runReport: (id, q) => (id === DEMO_PROPERTY ? demo.runReport(id, q) : google.runReport(id, q)),
+    ...(google.fields ? { fields: (id: string) => (id === DEMO_PROPERTY ? Promise.reject(new Error("demo")) : google.fields!(id)) } : {}),
     admin: (method, path, body) => (isDemo(path) ? demo.admin(method, path, body) : google.admin(method, path, body)),
   };
 }
@@ -160,8 +169,46 @@ export async function report(ga: Analytics, propertyId: string, o: { days: numbe
       + (o.dimensions.length ? ` or dimensions (${o.dimensions.join(", ")})` : "") + ", or add it to them.");
   const w = gaWindow(o);
   const r = await ga.runReport(propertyId, { ...w, dimensions: o.dimensions, metrics: o.metrics, limit: o.limit, orderBy: o.order_by,
-    ...(o.filter ? { filter: { dimension: o.filter.dimension, value: o.filter.contains } } : {}) });
+    ...(o.filter ? { filter: { dimension: o.filter.dimension, value: o.filter.contains } } : {}) })
+    .catch(async (e: Error) => { throw new Error(e.message + await fieldHint(ga, propertyId, e.message)); });
   return { property_id: propertyId, ...(propertyId === DEMO_PROPERTY ? { note: DEMO_NOTE } : {}), window: w, ...r };
+}
+
+/**
+ * After GA4's "Field X is not a valid metric/dimension": the names this property really has that are closest to X, from its own
+ * field list. Google's "Did you mean" is a spelling guess and was wrong, and an AI sent `purchases` five times in a row on its
+ * word (it suggested purchaserRate; ecommercePurchases was meant, prod 2026-11-06). Empty when the list can't be read.
+ */
+async function fieldHint(ga: Analytics, propertyId: string, message: string): Promise<string> {
+  const m = /Field (\S+) is not a valid (metric|dimension)/.exec(message);
+  if (!m || !ga.fields) return "";
+  const [, name, kind] = m as unknown as [string, string, "metric" | "dimension"];
+  const all = await ga.fields(propertyId).catch(() => null);
+  if (!all) return "";
+  const pool = kind === "metric" ? all.metrics : all.dimensions;
+  // Words of a name (camelCase, snake_case, customEvent:...). A real name scores 2 per asked word it has whole, 1 per word it
+  // only contains a stem of: ecommercePurchases (has "purchases") ranks above purchaserRate (has "purchase").
+  const words = (n: string) => n.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
+  const asked = words(name).filter((w) => w.length >= 4);
+  const score = (n: string) => {
+    const has = words(n), low = n.toLowerCase();
+    return asked.reduce((t, w) => t + (has.includes(w) ? 2 : low.includes(w.replace(/(es|s)$/, "")) ? 1 : 0), 0);
+  };
+  const close = pool.map((n) => ({ n, hits: score(n) }))
+    .filter((x) => x.hits > 0).sort((a, b) => b.hits - a.hits || a.n.length - b.n.length).slice(0, 8).map((x) => x.n);
+  // customEvent:/customUser:/customItem: names exist only as the property's registered custom definitions: list those instead.
+  const scope = /^(custom(?:Event|User|Item)):/.exec(name)?.[1];
+  if (scope) {
+    const mine = pool.filter((n) => n.startsWith(`${scope}:`));
+    return `\nThis property's own ${kind} list (GA4 metadata): ${name} isn't in it, and Google's "Did you mean" above is only a spelling guess. `
+      + (mine.length ? `Its registered ${scope}: ${kind}s are: ${mine.slice(0, 20).join(", ")}${mine.length > 20 ? ` (and ${mine.length - 20} more)` : ""}.`
+        : `It has no ${scope}: ${kind}s registered: an event parameter is reportable only once it is registered as a custom definition in GA4 (Admin, Custom definitions).`);
+  }
+  // GA4 lists organicGoogleSearch* only on a property linked to Search Console.
+  const search = name.startsWith("organicGoogleSearch") && !all.dimensions.some((d) => d.startsWith("organicGoogleSearch"))
+    ? " This property has no organicGoogleSearch* fields: GA4 has them only when Search Console is linked to the property. For search queries, use search_console_performance." : "";
+  return `\nThis property's own ${kind} list (GA4 metadata): ${name} isn't in it, and Google's "Did you mean" above is only a spelling guess. `
+    + (close.length ? `Closest real ${kind}s: ${close.join(", ")}.` : `No ${kind} name is close.`) + search;
 }
 
 /**
