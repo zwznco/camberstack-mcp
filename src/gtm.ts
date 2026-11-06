@@ -43,6 +43,22 @@ export class GtmClient implements TagManager {
   }
 }
 
+/**
+ * Shares identical reads across one proposal's changes: each change resolves against the same workspace, and Tag
+ * Manager's per-user quota is small (four changes reading it separately hit 429 on 2026-11-06). Writes pass through.
+ */
+export function sharedReads(tm: TagManager): TagManager {
+  const seen = new Map<string, Promise<any>>();
+  return {
+    call: (method, path, body) => {
+      if (method !== "GET") return tm.call(method, path, body);
+      let p = seen.get(path);
+      if (!p) { p = tm.call(method, path); seen.set(path, p); p.catch(() => seen.delete(path)); }
+      return p;
+    },
+  };
+}
+
 /** Every page of a list call: GTM pages with nextPageToken. */
 export async function listAll(tm: TagManager, path: string, key: string): Promise<any[]> {
   const out: any[] = [];
@@ -87,10 +103,14 @@ export async function listContainers(tm: TagManager) {
         .filter((c) => (c.usageContext ?? ["web"]).includes("web") && String(c.publicId ?? "").startsWith("GTM-"))
         .map((c) => ({ container: c.path, name: c.name, public_id: c.publicId })),
     })));
-    const out = all.filter((a) => a.containers.length);
-    if (out.length) return { accounts: out };
-    // No container yet: any of its accounts can take one (create_container).
-    if (all.length) return { accounts: [...all, demo], note: "This Google login has no Tag Manager container yet: create_container makes one (in an account_id above). The demo container (sample data) is offered too. Say so plainly." };
+    // Tag Manager's own accounts (the plain list) stay listed with no container left, so create_container has somewhere
+    // to go; an account made for a Google tag is listed only for the GTM- containers it holds.
+    const own = new Set((await listAll(tm, "accounts", "account").catch(() => [])).map((a) => a.path));
+    const out = all.filter((a) => a.containers.length || own.has(a.account_id));
+    if (out.some((a) => a.containers.length)) return { accounts: out };
+    if (out.length) return { accounts: [...out, demo], note: "This Google login has no Tag Manager container yet: create_container makes one (in an account_id above). The demo container (sample data) is offered too. Say so plainly." };
+    if (all.length) return { accounts: [demo], note: "This Google login's only Tag Manager access comes through an app (such as Shopify's Google channel), which doesn't let Camberstack create containers. "
+      + "The user can create a Tag Manager account at tagmanager.google.com; meanwhile only the demo container (sample data) is offered. Say so plainly." };
     return { accounts: [demo], note: "This Google login has no web Tag Manager container, so only the demo container (sample data) is offered. Say so plainly." };
   } catch (e) {
     if (!(e instanceof NotGrantedError)) throw e;

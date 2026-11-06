@@ -16,7 +16,7 @@ import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideSt
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { GTM_TARGET, GtmChangeSchema, orderGtmChanges, gtmInverseAfterApply, gtmNoteAfterApply, resolveGtmChange, writeGtm, type GtmChange, type GtmOp, type GtmResolved } from "./gtm-changes.js";
-import { DemoTagManager, GtmClient, routedTagManager, type TagManager } from "./gtm.js";
+import { DemoTagManager, GtmClient, routedTagManager, sharedReads, type TagManager } from "./gtm.js";
 import { SC_TARGET, ScChangeSchema, resolveScChange, scNoteAfterApply, writeSc, type ScChange, type ScOp, type ScResolved } from "./search-console-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
 import { writeFileSync } from "node:fs";
@@ -1374,7 +1374,8 @@ export class UserSession {
     if (count > MAX_CHANGES) throw new Error(`At most ${MAX_CHANGES} changes per proposal (got ${count}). Split it.`);
     const pending = pendingOf(changes as Change[]);
     // Resolving only reads, and `pending` already carries what sibling changes set, so the changes resolve in parallel.
-    const resolved = await mapLimited(changes, (c) => this.resolve(a.customerId, a.loginCustomerId, c, pending))
+    const reads = sharedReads(this.gtm);  // one proposal's Tag Manager changes read the same workspace once
+    const resolved = await mapLimited(changes, (c) => this.resolve(a.customerId, a.loginCustomerId, c, pending, reads))
       .catch((e) => this.explainUnappliedGa4(e, changes));
     const live = resolved.filter((r) => r.operations.length);
     // Not an error: the account already reads as asked, and that is the answer.
@@ -1426,7 +1427,8 @@ export class UserSession {
     // All or nothing. Re-resolve (the account may have moved since the proposal was made) and validate every
     // change with Google before writing any; reads and validation run all at once, writes one at a time, in order.
     const pending = pendingOf(changes as Change[]);
-    const checked = await mapLimited(changes, (c) => this.resolve(p.customer_id, p.login_customer_id, c, pending)
+    const reads = sharedReads(this.gtm);
+    const checked = await mapLimited(changes, (c) => this.resolve(p.customer_id, p.login_customer_id, c, pending, reads)
       .then((r) => (r.operations.length ? this.write(p.customer_id, p.login_customer_id, r, true) : Promise.resolve(null))
         .then(() => ({ r }), (e: Error) => ({ e, describe: r.describe })), (e: Error) => ({ e, describe: c.type as string })));
     if (checked.some((x) => "e" in x)) {
@@ -1569,11 +1571,11 @@ export class UserSession {
   }
 
   /** Read what a change would do against the live account (Google Ads, Merchant Center) or property (Google Analytics, Search Console). */
-  private resolve(target: string, login: string | null, c: AnyChange, pending: ReturnType<typeof pendingOf>): Promise<AnyResolved> {
+  private resolve(target: string, login: string | null, c: AnyChange, pending: ReturnType<typeof pendingOf>, gtm: TagManager = this.gtm): Promise<AnyResolved> {
     // Only reads, so a brief Google outage is retried once.
     return retryTransient<AnyResolved>(() => (target === GA_TARGET ? resolveGaChange(this.ga, c as GaChange)
       : target === SC_TARGET ? resolveScChange(this.sc, c as ScChange)
-      : target === GTM_TARGET ? resolveGtmChange(this.gtm, c as GtmChange)
+      : target === GTM_TARGET ? resolveGtmChange(gtm, c as GtmChange)
       : isMcTarget(target) ? resolveMcChange(this.merchant, target.slice(3), c as McChange)
       : resolveChange(this.ads, target, login, c as Change, pending)), true);
   }

@@ -110,7 +110,7 @@ export const scopeMissing = (status: number, body: string) =>
 export class NotGrantedError extends Error {
   constructor(readonly kind: GrantKind, readonly link: string | null, readonly edit = false) {
     const { label } = GRANTS[kind];
-    super(`${edit ? `Changing ${label} needs its edit access, which this connection doesn't have.`
+    super(`${edit ? `Changing ${label} needs ${kind === "tag-manager" ? "a Tag Manager permission" : "its edit access"}, which this connection doesn't have yet.`
       : `${label} access isn't part of this Google connection yet.`} `
       + (link ? `The user adds it here (a personal link, valid 7 days): ${link} . ` : "")
       + "The other Google tools keep working either way.");
