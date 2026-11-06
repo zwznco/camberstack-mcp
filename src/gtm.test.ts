@@ -23,9 +23,9 @@ const client = (routes: Parameters<typeof fakeFetch>[0]) => {
 const insufficient: [number, unknown] = [403, { error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED" } }];
 
 describe("Tag Manager", () => {
-  it("asks Google for read, edit, version and publish access, and nothing that deletes containers or manages users", () => {
+  it("asks Google for edit, version and publish access (edit covers reads, so no readonly), and nothing that deletes containers or manages users", () => {
     expect(GRANTS["tag-manager"].scopes.map((s) => s.split("/").at(-1))).toEqual(
-      ["tagmanager.readonly", "tagmanager.edit.containers", "tagmanager.edit.containerversions", "tagmanager.publish"]);
+      ["tagmanager.edit.containers", "tagmanager.edit.containerversions", "tagmanager.publish"]);
   });
 
   it("turns a missing scope into the personal link that adds Tag Manager, and lists the demo meanwhile", async () => {

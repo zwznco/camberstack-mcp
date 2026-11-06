@@ -19,8 +19,12 @@ export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.e
 /** Google Merchant Center (Merchant API), used through merchant.ts. Not in the main consent: asked for separately, by link. */
 export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
 /** Google Tag Manager (gtm.ts): read, edit tags and triggers in a workspace, make versions, publish. Asked for by link, like Merchant Center. */
-export const TAG_MANAGER_READ_SCOPE = "https://www.googleapis.com/auth/tagmanager.readonly";
-export const TAG_MANAGER_SCOPES = [TAG_MANAGER_READ_SCOPE, "https://www.googleapis.com/auth/tagmanager.edit.containers",
+/**
+ * No tagmanager.readonly: every read method also accepts edit.containers, so asking for both is redundant (and a
+ * verification reviewer's first question). Each of the three is the only scope its methods accept: workspace edits,
+ * workspaces.create_version, versions.publish.
+ */
+export const TAG_MANAGER_SCOPES = ["https://www.googleapis.com/auth/tagmanager.edit.containers",
   "https://www.googleapis.com/auth/tagmanager.edit.containerversions", "https://www.googleapis.com/auth/tagmanager.publish"];
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
 const ADS_API = "https://googleads.googleapis.com/v23";
@@ -67,7 +71,7 @@ export const GRANTS = {
 export type GrantKind = keyof typeof GRANTS;
 
 /** The scope that lets a connection read a service without changing it: holding it alone, a grant link adds edit access. */
-const READ_ONLY: Partial<Record<GrantKind, string>> = { "search-console": SEARCH_CONSOLE_READONLY_SCOPE, analytics: ANALYTICS_SCOPE, "tag-manager": TAG_MANAGER_READ_SCOPE };
+const READ_ONLY: Partial<Record<GrantKind, string>> = { "search-console": SEARCH_CONSOLE_READONLY_SCOPE, analytics: ANALYTICS_SCOPE };
 
 /** The connection can read this service but lacks the scope to change it (search-console: webmasters.readonly only). */
 export function isEditUpgrade(kind: GrantKind, scopes: string | null | undefined): boolean {
