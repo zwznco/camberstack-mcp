@@ -469,8 +469,8 @@ Reports and query results are not stored. Details in the <a href="/privacy">priv
 tool, though some apps (ChatGPT, for one) block disconnect requests from chat.</p></div>
 ${freeFaq()}<div><h3>What counts as an account?</h3>
 <p>Each Google Ads account you actually use Camberstack on in the last ${ACCOUNT_WINDOW_DAYS} days, not every account your login can see.
-A manager (MCC) account and the demo account don't count. Free covers one account at a time, and you can switch to another once
-every ${ACCOUNT_WINDOW_DAYS} days: the new one becomes active and the old one is locked. Past that, a plan-limit error comes with a personal
+A manager (MCC) account and the demo account don't count. Free covers one account at a time: your AI asks which one first, and
+another opens once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Before that, a plan-limit error comes with a personal
 checkout link. Undo and change history always work.</p></div>
 </div>
 </div></section>
@@ -526,8 +526,8 @@ With Read only access, ask an account admin to raise it in Google Ads, under <st
 since (a budget, a status, an end date), nothing is applied and ${app} shows you an updated proposal instead. Approve that one to go ahead.
 If everything in it is already in place, there's nothing left to apply. Proposals don't expire: an older one that still matches your account applies as approved.</p>
 <h3>"Plan limit"</h3>
-<p>The Free plan covers one Google Ads account at a time, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days. Past that, it asks you
-to upgrade, with a personal checkout link, and says when your next switch opens. Undo and change history always work. <a href="/#pricing">Plans</a>.</p>${fp.kind === "one_service" ? `
+<p>The Free plan covers one Google Ads account at a time; another opens once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. On a second account, it asks you
+to upgrade, with a personal checkout link, and says when another account opens. Undo and change history always work. <a href="/#pricing">Plans</a>.</p>${fp.kind === "one_service" ? `
 <h3>"Service limit"</h3>
 <p>The Free plan covers one Google service at a time: ${servicesOr()}. The first time, your AI asks which one;
 another opens ${ACCOUNT_WINDOW_DAYS} days after the current one was last used. Plus covers all four together on one account, Pro and Agency on more. <a href="/#pricing">Plans</a>.</p>` : ""}
@@ -1094,7 +1094,6 @@ ${fp.kind === "accounts" ? "" : `<tr><td>Plus, ${PLUS_PRICE_LABEL}</td><td>${all
 `}<tr><td>Pro, ${PRO_PRICE_LABEL}</td><td>${fp.kind === "accounts" ? "The same" : allServices()}, on up to ${PRO_ACCOUNTS} Google Ads accounts. Cancel any time.</td></tr>
 <tr><td>Agency, ${AGENCY_PRICE_LABEL}</td><td>${fp.kind === "accounts" ? "The same" : allServices()}, on up to ${AGENCY_ACCOUNTS} Google Ads accounts. Cancel any time; switching from Pro is prorated.</td></tr></table>
 <p>An account counts when you use Camberstack on it; it stops counting ${ACCOUNT_WINDOW_DAYS} days after its last use. Manager (MCC) accounts and the demo don't count.
-Each plan also gets one switch every ${ACCOUNT_WINDOW_DAYS} days: a new account becomes active and the least recently used one is locked.
 Using one more account than your plan covers returns a <code>plan_limit</code> error listing the accounts in use, when one frees up, and, on Free,
 a personal upgrade link valid for 7 days. Undo, change history and billing are never limited. Ask <em>"What plan am I on?"</em> to see your usage.</p>
 
@@ -1249,8 +1248,8 @@ export function plansPage(baseUrl: string): string {
     ? `<p>Every tool, with unlimited applied changes and undo, on <strong>one Google service at a time</strong>:
 ${freeServices()}. Your AI asks which one before the first is used; another opens
 ${ACCOUNT_WINDOW_DAYS} days after the current one was last used.</p>`
-    : `<p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong> at a time, with one switch
-to another account every ${ACCOUNT_WINDOW_DAYS} days. Search Console and Google Analytics are included and don't count. Merchant Center is included too, on 1 Merchant Center account.${soon()}</p>`;
+    : `<p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong> at a time; another opens
+once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Search Console and Google Analytics are included and don't count. Merchant Center is included too, on 1 Merchant Center account.${soon()}</p>`;
   const all = paidCovers();
   return layout({
     baseUrl, path: "/plans",
@@ -1473,7 +1472,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - Merchant Center (optional): account and product issues, Shopping and free-listing reports, disapproved products joined with their ad spend; approved changes override product attributes (price, GTIN, title, …) through Camberstack's own supplemental source, exclude or include products, add Camberstack's own products, and link Merchant Center to Google Ads. The feed itself is never edited.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
 - Pricing: ${fp.kind === "one_service" ? `Free plan covers ${oneServiceFree()} (every tool, unlimited applied changes); Plus ${PLUS_PRICE_LABEL} covers all four together on 1 Google Ads account; Pro and Agency cover all four on more accounts.`
-  : `Free plan covers 1 Google Ads account (every tool, unlimited applied changes).${soon()}`} Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with one switch to another account every ${ACCOUNT_WINDOW_DAYS} days; manager (MCC) and demo accounts don't count. Undo is always free.
+  : `Free plan covers 1 Google Ads account (every tool, unlimited applied changes).${soon()}`} Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with no switching in between; manager (MCC) and demo accounts don't count. Undo is always free.
 - [Documentation](${baseUrl}/docs)
 - [Setup](${baseUrl}/#setup)
 - [Pricing](${baseUrl}/#pricing)

@@ -18,7 +18,7 @@ import { PageSpeedClient, type Strategy } from "./pagespeed.js";
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.28.0";
+export const SERVER_VERSION = "0.29.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -184,7 +184,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           release = () => { prev(); done(); };
         }
         if ((GATED.has(name) || MC_GATED.has(name)) && typeof cid === "string") {
-          // Only switch_account may spend the plan's switch: the read tools stay free of side effects.
+          // switch_account is the user's pick after an "Account choice:" notice: it takes the account without asking again.
           const done = await session().checkAccount(cid, name === "switch_account");
           const prev = release;
           release = () => { prev(); done(); };
@@ -242,7 +242,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "List Google Ads accounts",
     description: "Lists every Google Ads account this login can reach, including client accounts under a manager (MCC). Start here. "
       + "spentLast30Days says whether an account had ad spend in the last 30 days (show it when the user picks one). "
-      + "When the user's plan is at its limit, each account also says whether the plan covers it (plan_status: active, switch or locked).",
+      + "When the user's plan is at its limit, each account also says whether the plan covers it (plan_status: active or locked).",
     annotations: read,
   }, async () => {
     const s = session();
@@ -252,15 +252,12 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     // Only a plan at its limit says anything: until then every account is open, and there's nothing to explain.
     const st = s.planState(new Set(accounts.filter((a) => a.manager).map((a) => a.customerId)));
     const counted = (a: Account) => !a.manager && !isDemo(a.customerId);
-    const status = (c: string) => (st.active.includes(c) ? "active" : st.allows(c) ? "switch" : "locked");
+    const status = (c: string) => (st.active.includes(c) ? "active" : "locked");
     return {
       accounts: st.full ? accounts.map((a) => counted(a) ? { ...a, plan_status: status(a.customerId) } : a) : accounts,
       ...(st.full && accounts.some((a) => counted(a) && !st.active.includes(a.customerId)) ? { plan: {
         plan: s.planName, accounts_included: s.accountLimit, active_accounts: st.active,
-        switching: st.canSwitch
-          ? `One switch per ${ACCOUNT_WINDOW_DAYS} days: using a "switch" account makes it active and locks ${st.active.at(-1)}, `
-            + "switching back included. Nothing is spent until the user agrees and switch_account is called."
-          : `This ${ACCOUNT_WINDOW_DAYS}-day switch is used; locked accounts open up from ${st.switchOpens}`
+        switching: `None: this plan's accounts are taken. Locked accounts open up from ${st.opensOn}, once an active one has gone ${ACCOUNT_WINDOW_DAYS} days unused`
             + (s.chatgpt || s.planName === "agency" ? "." : s.planName === "plus" ? ", or on Pro or Agency, which cover more (the billing tool has the switch link)."
               : s.isPro ? ", or on Agency, which covers more (the billing tool has the switch link)."
               : ", or on Pro or Agency, which cover more (the billing tool has the upgrade links)."),
@@ -271,7 +268,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         plan: s.planName, accounts_included: s.accountLimit, active_accounts: st.active,
         choosing: `This plan covers ${s.accountLimit} Google Ads account${s.accountLimit === 1 ? "" : "s"} at a time, and the first `
           + `${s.accountLimit === 1 ? "account" : "accounts"} a tool is used on become${s.accountLimit === 1 ? "s" : ""} the plan's `
-          + `(after that, one switch per ${ACCOUNT_WINDOW_DAYS} days). This login has more, so ask the user which to work on before `
+          + `(after that, no switching until one has gone ${ACCOUNT_WINDOW_DAYS} days unused). This login has more, so ask the user which to work on before `
           + "calling any tool with a customer_id, and don't survey several. The demo account never counts.",
       } } : {}),
       ...(s.lastUnreadable.length ? { unreadable: s.lastUnreadable } : {}),
@@ -693,26 +690,24 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   }, ({ customer_id, limit }: { customer_id?: string; limit: number }) => session().history(customer_id, limit));
 
   tool("switch_account", {
-    title: "Switch the plan's active account",
-    description: "Spends the plan's one account switch per 30 days on customer_id: it becomes an active account, and the least recently used active account "
-      + "locks until the date the \"Account switch:\" notice gave, switching back included. Call it only after a tool answered \"Account switch:\" "
-      + "for this account and the user agreed, or answered \"Account choice:\" and the user picked this account (a first pick spends no switch). "
-      + "Called with neither, it answers with the \"Account switch:\" notice and spends nothing. "
+    title: "Pick the plan's account",
+    description: "Takes customer_id as one of the plan's accounts. Call it after a tool answered \"Account choice:\" and the user picked this account. "
+      + "Once the plan's accounts are taken there is no switching: another account answers \"Plan limit:\" with when it opens and the upgrade options. "
       + "Changes nothing in Google Ads; a no-op for an account that is already active."
-      + " Merchant Center accounts are a separate allowance with their own switch: pass mc:<account_id>, as the notice gives it.",
+      + " Merchant Center accounts are a separate allowance: pass mc:<account_id>, as the notice gives it.",
     inputSchema: { customer_id: customerId },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async ({ customer_id }: { customer_id: string }) => {
     const s = session(), id = customer_id.startsWith("mc:") ? customer_id : customer_id.replace(/-/g, "");
     if (id.startsWith("mc:")) {
       if (!(await s.merchant.accounts()).some((a) => a.account_id === id.slice(3)))
-        throw new Error(`${id.slice(3)} isn't a Merchant Center account this login can reach (merchant_accounts shows the ones it can). Nothing was spent.`);
+        throw new Error(`${id.slice(3)} isn't a Merchant Center account this login can reach (merchant_accounts shows the ones it can). Nothing was taken.`);
       return { switched_to: id, active_merchant_center_accounts: s.planState(new Set(), "mc").active.map((c) => c.slice(3)) };
     }
-    // Throwing logs the call as failed, which spends nothing: never spend the switch on an account the login can't use.
+    // Throwing logs the call as failed, which takes nothing: never take a plan slot for an account the login can't use.
     const reaches = (list: Account[]) => list.some((a) => a.customerId === id);
     if (!reaches(await s.accounts()) && !reaches(await s.accounts({ fresh: true })))
-      throw new Error(`${id} isn't a Google Ads account this login can reach (list_accounts shows the ones it can). Nothing was spent.`);
+      throw new Error(`${id} isn't a Google Ads account this login can reach (list_accounts shows the ones it can). Nothing was taken.`);
     return { switched_to: id, active_accounts: s.planState(new Set()).active };
   });
 

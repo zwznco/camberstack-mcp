@@ -882,17 +882,22 @@ describe("OAuth + MCP end to end", () => {
     for (const t of ["jobs", "login", "how to"]) expect((await call(token, "apply_changes", { proposal_id: await negative(t) })).json.status).toBe("applied");
     const third = (await call(token, "change_history", {})).json[0].proposal_id as string;
 
-    // This month's switch is already used (2223334444, five days ago), so a third account is refused before
-    // any Google call, with a personal upgrade link.
+    // Two accounts in use (2223334444, five days ago), so another is refused before any Google call, with a personal
+    // upgrade link. 9998887777 is one this login can reach: one it can't fails on its own, not on the plan.
     const uid = (db.prepare("SELECT id FROM users WHERE email = 'owner@example.com'").get() as { id: string }).id;
+    const realSearch875 = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
+      ? [...await realSearch875(cid, q), { customerClient: { id: "9998887777", descriptiveName: "Gamma", currencyCode: "USD", manager: false, level: 1 } }]
+      : realSearch875(cid, q);
     const switched = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes) VALUES (?, ?, 'account_overview', '2223334444', 1, 1, 1)")
       .run(Math.floor(Date.now() / 1000) - 5 * 86400, uid).lastInsertRowid;
+    try {
     const blocked = await call(token, "account_overview", { customer_id: "999-888-7777", days: 30 });
     // A notice, not an error (plans.ts SwitchNotice): errors count against the directories' reliability metrics.
     expect(blocked.isError).toBeFalsy();
     expect(blocked.text).toContain("Plan limit:");
     expect(blocked.text).toContain("2 Google Ads accounts in the last 30 days (1112223333, 2223334444)");
-    expect(blocked.text).toContain("1 at a time (active: 1112223333), with one switch per 30 days, already used");
+    expect(blocked.text).toContain("1 at a time (active: 1112223333), with no switching between them");
     // Tagged as handed out by a tool, for the paywall funnel (billing.ts track).
     const link = blocked.text.match(/https?:\/\/\S+\/upgrade\?t=[\w.-]+&src=tool/)![0];
     // The refusal is structured: facts as fields, no instructions to the assistant.
@@ -952,9 +957,11 @@ describe("OAuth + MCP end to end", () => {
     // Paid, but closed the tab before /upgraded: the gate asks Stripe first, so the very next call gets through.
     expect(db.prepare("SELECT plan FROM users WHERE email = 'owner@example.com'").get()).toEqual({ plan: "free" });
     const paidNoTab = await call(token, "account_overview", { customer_id: "999-888-7777", days: 30 });
-    expect(paidNoTab.text).not.toContain("Plan limit:");  // past the gate; this login just can't read that account
+    expect(paidNoTab.text).not.toContain("Plan limit:");  // past the gate
     expect(db.prepare("SELECT plan FROM users WHERE email = 'owner@example.com'").get()).toEqual({ plan: "pro" });
+    } finally { ads.search = realSearch875; }
     db.prepare("DELETE FROM tool_calls WHERE id = ?").run(switched);
+    db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id = '9998887777'").run(uid);
 
     // /upgraded is still fine afterwards (settling is idempotent).
     const done = await fetch(`${base}/upgraded?session_id=cs_test_1`);
@@ -1336,59 +1343,45 @@ describe("OAuth + MCP end to end", () => {
     }
   });
 
-  it("lets Free switch accounts once a month, and keeps the most recent after a downgrade", async () => {
+  it("has no account switch: a full plan refuses another account, and keeps the most recent after a downgrade", async () => {
     const uid = (db.prepare("SELECT id FROM users WHERE email = 'owner@example.com'").get() as { id: string }).id;
-    // An account this login can't reach is no switch: no notice, and nothing spent (a one-account user got one, 2026-10-30).
+    // An account this login can't reach: switch_account takes nothing, and a read fails on Google, not on the plan.
     const unreachable = await call(token, "switch_account", { customer_id: "222-333-4444" });
     expect(unreachable.isError).toBe(true);
-    expect(unreachable.text).toContain("Nothing was spent");
-    expect(unreachable.text).not.toContain("Account switch:");
-    expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).not.toContain("Account switch:");
+    expect(unreachable.text).toContain("Nothing was taken");
+    expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).not.toContain("Plan limit:");
     const realSearch = ads.search.bind(ads);
     ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
       ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
       : realSearch(cid, q);
-    // switch_account straight away stops with the same notice: an AI can't spend the switch before the user hears what it locks.
-    const direct = await call(token, "switch_account", { customer_id: "222-333-4444" });
-    expect(direct.json).toMatchObject({ status: "switch_confirmation_needed", switch_to: "2223334444", locks_account: "1112223333" });
-    expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
-    // One account in use: a new one is the switch. The first call only says what spending it would lock, and uses nothing.
-    const ask = await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 });
-    // Not an error: nothing failed, and errors count against the directory's reliability metrics.
-    expect(ask.isError).toBe(false);
-    expect(ask.text).not.toContain("Plan limit:");  // a notice, not a refusal: no limit_reached email
-    const notice = ask.json;
-    expect(notice.notice).toContain("Account switch: using 2223334444 spends this plan's one switch per 30 days. 1112223333 would lock until ");
-    expect(notice).toMatchObject({ status: "switch_confirmation_needed", switch_to: "2223334444", locks_account: "1112223333",
-      keep_both: { plan: "pro", accounts_included: 5 } });
-    // Logged as ok with no account: the notice used nothing, so it neither counts as an error nor toward the plan.
-    expect(db.prepare("SELECT tool, customer_id, ok, substr(error, 1, 15) e FROM tool_calls WHERE user_id = ? ORDER BY id DESC LIMIT 1").get(uid))
-      .toEqual({ tool: "account_overview", customer_id: null, ok: 1, e: "Account switch:" });
-    expect(notice.keep_both.upgrade_url).toContain("/upgrade?t=");
-    expect(notice.to_go_ahead).toContain("call switch_account with customer_id 2223334444");
-    // A field lookup reads Google's catalog, not the account it names: no switch, and the account isn't logged as used.
-    const look = await call(token, "run_gaql", { customer_id: "222-333-4444", query: "SELECT name, category WHERE name LIKE '%search_term%'" });
-    expect(look.isError).toBe(false);
-    expect(look.text).not.toContain("Account switch:");
-    expect(db.prepare("SELECT tool, customer_id, ok, query_shape FROM tool_calls WHERE user_id = ? ORDER BY id DESC LIMIT 1").get(uid))
-      .toEqual({ tool: "run_gaql", customer_id: null, ok: 1, query_shape: "SELECT name, category WHERE name LIKE ?" });
-    expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
-    // The account in use, the demo and the switch once confirmed all go through.
-    expect((await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).not.toContain("Account switch:");
-    expect((await call(token, "account_overview", { customer_id: "0000000001", days: 30 })).isError).toBe(false);
-    // Spending the switch is its own write tool: no read tool takes a flag that changes the plan.
     try {
-      const sw = await call(token, "switch_account", { customer_id: "222-333-4444" });
-      expect(sw.json).toMatchObject({ switched_to: "2223334444", active_accounts: ["2223334444"] });
-      const after = await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 });
-      expect(after.text).not.toContain("Plan limit:");
-      expect(after.text).not.toContain("Account switch:");
+      // One account in use on Free: a reachable second one is refused outright, by a read or by switch_account alike.
+      for (const r of [await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 }), await call(token, "switch_account", { customer_id: "222-333-4444" })]) {
+        expect(r.isError).toBeFalsy();
+        expect(r.text).toContain("Plan limit:");
+        expect(r.text).not.toContain("Account switch:");
+        expect(JSON.parse(r.text)).toMatchObject({ stop: "plan_limit", active_accounts: ["1112223333"], refused_account: "2223334444", upgrade: { plan: "pro" } });
+      }
+      expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
+      // A field lookup reads Google's catalog, not the account it names: never refused, and the account isn't logged as used.
+      const look = await call(token, "run_gaql", { customer_id: "222-333-4444", query: "SELECT name, category WHERE name LIKE '%search_term%'" });
+      expect(look.isError).toBe(false);
+      expect(look.text).not.toContain("Plan limit:");
+      expect(db.prepare("SELECT tool, customer_id, ok, query_shape FROM tool_calls WHERE user_id = ? ORDER BY id DESC LIMIT 1").get(uid))
+        .toEqual({ tool: "run_gaql", customer_id: null, ok: 1, query_shape: "SELECT name, category WHERE name LIKE ?" });
+      // The account in use and the demo go through.
+      expect((await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).not.toContain("Plan limit:");
+      expect((await call(token, "account_overview", { customer_id: "0000000001", days: 30 })).isError).toBe(false);
+      // list_accounts marks it locked, and says when it opens: 30 days after 1112223333 was last used.
+      const list = (await call(token, "list_accounts")).json;
+      expect(list.accounts.find((a: any) => a.customerId === "2223334444").plan_status).toBe("locked");
+      expect(list.plan.switching).toContain("None:");
     } finally {
       ads.search = realSearch;
       db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444'").run(uid);
     }
 
-    // As if they'd been on Pro: three accounts used, 2223334444 most recently. Free covers one, the switch is spent.
+    // As if they'd been on Pro: three accounts used, 2223334444 most recently. Free covers one, and it's taken.
     const saved = db.prepare("SELECT * FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").all(uid);
     db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
     const t = Math.floor(Date.now() / 1000);
@@ -1402,8 +1395,8 @@ describe("OAuth + MCP end to end", () => {
       // Switching back to an account used before: lead with Pro, then when it opens again.
       expect(blocked.text).toContain("Pro ($15/month) covers up to 5, so 1112223333 works right away. On Free, 1112223333 opens again on ");
       const limit = JSON.parse(blocked.text);
-      // The switch comes back when the second most recent account ages out of the window.
-      const opens = new Date((t - 3 * 86400 + 30 * 86400) * 1000).toISOString().slice(0, 10);
+      // Another opens once the plan is under its limit: when the most recent account (Free covers 1) ages out of the window.
+      const opens = new Date((t - 86400 + 30 * 86400) * 1000).toISOString().slice(0, 10);
       expect(limit).toMatchObject({ active_accounts: ["2223334444"], accounts_in_use: ["2223334444", "3334445555", "1112223333"] });
       expect(limit.switching).toContain(opens);
 
@@ -1416,11 +1409,10 @@ describe("OAuth + MCP end to end", () => {
       db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = ?").run(t, uid);
       const back = await call(token, "account_overview", { customer_id: "111-222-3333", days: 30 });
       expect(back.text).not.toContain("Plan limit:");
-      expect(back.text).not.toContain("Account switch:");
       ads.search = async (cid: string, q: string) => q.includes("FROM customer_client")
         ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
         : realSearch(cid, q);
-      expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).toContain("Account switch:");
+      expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).toContain("Plan limit:");
     } finally {
       ads.search = realSearch;
       db.prepare("UPDATE users SET plan_reset_at = NULL WHERE id = ?").run(uid);
@@ -1470,18 +1462,18 @@ describe("OAuth + MCP end to end", () => {
       expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND id > ? AND error LIKE 'Account switch:%'").get(uid, since)).toEqual({ n: 0 });
       // The demo never counts, so it stays open while choosing.
       expect((await call(fresh, "account_overview", { customer_id: "0000000001", days: 30 })).text).not.toContain("Account choice:");
-      // The user picks: switch_account takes it without spending the switch, and the plan is full from there.
+      // The user picks: switch_account takes it, and the plan is full from there.
       const pick = await call(fresh, "switch_account", { customer_id: "111-222-3333" });
       expect(pick.json).toMatchObject({ switched_to: "1112223333", active_accounts: ["1112223333"] });
       const now = await call(fresh, "account_overview", { customer_id: "111-222-3333", days: 30 });
       expect(now.text).not.toContain("Account choice:");
       expect(now.text).not.toContain("Account switch:");
-      // Another account now is the ordinary switch, which is still unspent.
-      expect((await call(fresh, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).toContain("Account switch:");
-      // Once one is in use the plan is full, and list_accounts says what a switch would cost instead.
+      // There is no switch: another account now is refused.
+      expect((await call(fresh, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).toContain("Plan limit:");
+      // Once one is in use the plan is full, and list_accounts says the others are locked, with no switch to offer.
       const after = (await call(fresh, "list_accounts")).json;
       expect(after.plan.choosing).toBeUndefined();
-      expect(after.plan.switching).toContain("One switch per 30 days");
+      expect(after.plan.switching).toContain("None:");
     } finally {
       ads.search = realSearch;
       db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
@@ -3256,7 +3248,7 @@ describe("Merchant Center changes on the demo account", () => {
 });
 
 describe("Merchant Center plan allowance", () => {
-  it("counts Merchant Center accounts in their own pool, with its own switch, apart from Google Ads", async () => {
+  it("counts Merchant Center accounts in their own pool, apart from Google Ads", async () => {
     const owner = await merchantOwner();
     // Earlier tests leave this user on Pro; the allowance is clearest on Free (1 of each).
     const was = db.prepare("SELECT plan, stripe_customer, stripe_sub FROM users WHERE email = 'owner@example.com'").get() as Record<string, unknown>;
@@ -3266,8 +3258,9 @@ describe("Merchant Center plan allowance", () => {
       expect((await report("111")).isError).toBe(false);
       // Google Ads use (earlier tests) doesn't count here, and Free covers one Merchant Center account too.
       const second = await report("222");
-      expect(second.text).toContain("Account switch: using mc:222 spends this plan's one Merchant Center switch");
-      expect(second.text).toContain("call switch_account with customer_id mc:222");
+      expect(second.text).toContain("Plan limit:");
+      expect(second.text).toContain("Merchant Center account");
+      expect(second.text).not.toContain("Account switch:");
       expect((await report("111")).isError).toBe(false);
       expect((await report("000000001")).isError).toBe(false);  // the demo never counts
       const plan = (await call(owner, "billing")).json;

@@ -213,7 +213,7 @@ ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="bt
 ${used.length ? `Google Ads accounts in use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on a Google Ads account yet."}
 ${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? `Plus covers all four together on 1 account; ` : ""}Pro covers ${"services_included" in plan || "plus_upgrade_url" in plan ? `all four together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
 ${"free_plan_change" in plan && plan.free_plan_change ? `<p class="muted"><strong style="color:var(--fg)">${esc(plan.free_plan_change)}</strong></p>` : ""}
-<p class="muted">To move to a different account, ask your AI to switch to it: Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.</p>
+<p class="muted">Another Google Ads account opens on Free once the one in use has gone ${ACCOUNT_WINDOW_DAYS} days unused.</p>
 ${!by && "plus_upgrade_url" in plan && plan.plus_upgrade_url ? `<a class="btn" href="${esc(plan.plus_upgrade_url)}">Plus · ${PLUS_PRICE_LABEL}</a>` : ""}
 ${!by && "upgrade_url" in plan && plan.upgrade_url ? `<a class="btn" href="${esc(plan.upgrade_url)}">Upgrade to Pro · ${PRO_PRICE_LABEL}</a>` : ""}
 ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="btn" href="${esc(plan.agency_upgrade_url)}">Agency · ${AGENCY_PRICE_LABEL}</a>` : ""}</div>`;

@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { SWITCH_ANSWER_SECONDS, ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -71,8 +71,6 @@ const servicesInFlight = new Map<string, Map<Service, number>>();
 const serviceAsked = new Map<string, number>();
 /** How many ads account_overview's attention block names, and how long a primary conversion can stay quiet before it says so. */
 const ATTENTION_ADS = 10, ATTENTION_CONVERSION_DAYS = 30;
-/** The account each user was last told about in an "Account switch:" notice, and when. */
-const switchAsked = new Map<string, { cid: string; at: number }>();
 
 /**
  * `fn` over `items`, at most `limit` at a time, results in input order. If any fail, throws the error of the
@@ -380,11 +378,11 @@ export class UserSession {
 
   /**
    * Which accounts the plan covers right now: the most recently used, up to the plan's limit. Calls still
-   * running count as used now. On top of the limit, a plan gets ONE switch per window: a new account is let
-   * in, becomes active, and the least recent active one locks. So someone who connected the wrong account,
-   * or moved on, isn't stuck, while rotating through clients still needs Pro. Switching back counts as
-   * another switch. Over limit + 1 (a Pro who cancelled), the rest stay locked until they age out;
-   * `switchOpens` is when the next switch (or a locked account) opens up.
+   * running count as used now. A full plan takes no new account: there is no switch (removed 2026-11-06; in the
+   * three weeks it existed, three Free users spent one, and two of them needed a reset by hand afterwards). The first
+   * pick is asked for up front (noticeChoice), and another account opens once one has gone ACCOUNT_WINDOW_DAYS unused.
+   * Over the limit (a Pro who cancelled), the least recently used stay locked until they age out.
+   * `opensOn` is when a slot (and so a locked account) opens up.
    */
   planState(managers: Set<string>, pool: Pool = "ads") {
     const running = [...(inFlight.get(this.user.id)?.keys() ?? [])].filter((c) => poolOf(c) === pool);
@@ -393,14 +391,15 @@ export class UserSession {
       .filter((u) => !managers.has(u.c) && !seen.has(u.c) && seen.add(u.c));
     const limit = this.accountLimit;
     const used = ranked.map((u) => u.c), active = used.slice(0, limit);
-    const canSwitch = ranked.length < limit + 1;
-    const oldest = ranked[limit];  // aging out of the window is what frees the switch again
+    const full = ranked.length >= limit;
+    // A slot opens when the plan drops below its limit: once the limit-th most recent account ages out (older ones go first).
+    const frees = ranked[limit - 1];
     return {
-      used, active, canSwitch,
-      /** At the limit: a new account now is (or would need) the switch. */
-      full: ranked.length >= limit,
-      allows: (cid: string) => active.includes(cid) || (canSwitch && !used.includes(cid)),
-      switchOpens: oldest ? new Date((oldest.last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10) : null,
+      used, active,
+      /** At the limit: a new account is refused. */
+      full,
+      allows: (cid: string) => active.includes(cid) || !full,
+      opensOn: full && frees ? new Date((frees.last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10) : null,
     };
   }
 
@@ -413,19 +412,18 @@ export class UserSession {
    * One user's checks run one at a time, and a passed account counts as in use until its call ends (call the
    * returned release): AI clients call tools in parallel, which otherwise let several new accounts through at once.
    *
-   * Spending the switch takes `confirmSwitch`, which only switch_account passes: any other tool stops with a notice
-   * naming what will lock and until when. Users found out only on the way back, after days of work on both (2026-10-16).
+   * `picked` (switch_account only) is the user's answer to the "Account choice:" notice: it takes that account without asking again.
    */
-  checkAccount(customerId: string, confirmSwitch = false): Promise<() => void> {
+  checkAccount(customerId: string, picked = false): Promise<() => void> {
     const prev = gateQueue.get(this.user.id) ?? Promise.resolve();
-    const run = prev.then(() => this.admit(bareCid(customerId), confirmSwitch));
+    const run = prev.then(() => this.admit(bareCid(customerId), picked));
     const tail = run.then(() => {}, () => {});
     gateQueue.set(this.user.id, tail);
     void tail.then(() => { if (gateQueue.get(this.user.id) === tail) gateQueue.delete(this.user.id); });
     return run;
   }
 
-  private async admit(cid: string, confirmSwitch: boolean): Promise<() => void> {
+  private async admit(cid: string, picked: boolean): Promise<() => void> {
     if (isDemo(cid) || cid === `mc:${DEMO_MERCHANT}`) return () => {};
     const pool = poolOf(cid);
     // Manager accounts are a Google Ads idea: Merchant Center has none to leave out.
@@ -434,7 +432,7 @@ export class UserSession {
     let st = this.planState(new Set(), pool);
     // Nothing used yet and the login has more accounts than the plan covers: the user picks, not whichever call lands
     // first (2026-10-23: a Free user's AI overviewed 3 of 5 accounts at once and the first took the plan).
-    if (!st.used.length && !confirmSwitch) {
+    if (!st.used.length && !picked) {
       if (pool === "ads") {
         const counted = (await this.accounts().catch(() => [] as Account[])).filter((a) => !a.manager && !isDemo(a.customerId));
         if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) this.noticeChoice(await this.withActivity(counted));
@@ -443,26 +441,7 @@ export class UserSession {
         if (counted.length > this.accountLimit && counted.some((a) => `mc:${a.account_id}` === cid)) this.noticeMerchantChoice(counted);
       }
     }
-    // A new account on a full plan is the switch: it passes only once the user has said yes to spending it.
-    const isSwitch = () => st.full && !st.active.includes(cid) && st.allows(cid);
-    // switch_account spends it only after the notice: an AI that called it straight away spent a new user's switch 41
-    // seconds after their first pick, locking that account for 30 days with no warning (prod, 2026-10-30).
     let unreachable = false;
-    const asked = switchAsked.get(this.user.id);
-    const agreed = confirmSwitch && asked?.cid === cid && now() - asked.at <= SWITCH_ANSWER_SECONDS;
-    if (isSwitch() && !agreed) {
-      const managers = await managerIds();
-      if (!managers.has(cid)) {
-        st = this.planState(managers, pool);
-        if (isSwitch() && !this.isPro && await this.deps.refreshPlan?.(this.user.id)) {
-          this.reloadPlan();
-          st = this.planState(managers, pool);
-        }
-        // An Ads account this login can't reach has nothing to switch to: the call fails on its own and spends nothing.
-        if (isSwitch() && pool === "ads" && !await this.mayReach(cid)) unreachable = true;
-        else if (isSwitch()) this.noticeSwitch(cid, st, pool);
-      }
-    }
     if (!st.allows(cid)) {
       const managers = await managerIds();
       if (!managers.has(cid)) {
@@ -472,13 +451,15 @@ export class UserSession {
           this.reloadPlan();
           st = this.planState(managers, pool);
         }
-        if (!st.allows(cid)) this.refuse(cid, st, pool);
+        // An Ads account this login can't reach isn't a second account: the call fails on its own, not on the plan.
+        if (!st.allows(cid) && pool === "ads" && !await this.mayReach(cid)) unreachable = true;
+        else if (!st.allows(cid)) this.refuse(cid, st, pool);
       }
     }
     // Nor does it count as in use while its call runs. It did: a Free user's AI queried their one account and two ids from
     // another login in parallel, the unreachable one took the slot in flight, and the third got "Plan limit: used on 2
     // accounts" on a login that has one (prod, 2026-11-05).
-    if (unreachable && st.allows(cid)) return () => {};
+    if (unreachable) return () => {};
     const mine = inFlight.get(this.user.id) ?? new Map<string, number>();
     inFlight.set(this.user.id, mine);
     mine.set(cid, (mine.get(cid) ?? 0) + 1);
@@ -513,7 +494,7 @@ export class UserSession {
         to_go_ahead: "once the user picks, call switch_account with mc:<that account_id>, then this tool again" });
   }
 
-  /** False only when a complete account list says no: unsure must still stop for the notice, or a read could spend the switch unasked. */
+  /** False only when a complete account list says no: unsure still refuses, rather than let a second account through. */
   private async mayReach(cid: string): Promise<boolean> {
     try {
       const reaches = (list: Account[]) => list.some((a) => a.customerId === cid);
@@ -523,33 +504,15 @@ export class UserSession {
     }
   }
 
-  /** Stop before the switch is spent: what it locks, until when, and how to go ahead. */
-  private noticeSwitch(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool): never {
-    switchAsked.set(this.user.id, { cid, at: now() });
-    const locks = st.active.at(-1)!;
-    // Once spent, the switch comes back when the account it locks ages out of the window.
-    const last = this.usage(pool).find((u) => u.c === locks)?.last ?? now();
-    const reopens = new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
-    const next = this.nextPlan();
-    throw new SwitchNotice(`${SWITCH_NOTICE_PREFIX} using ${cid} spends this plan's one ${pool === "mc" ? "Merchant Center " : ""}switch per ${ACCOUNT_WINDOW_DAYS} days. `
-      + `${locks} would lock until ${reopens}, including switching back to it. Nothing has been used yet. `
-      + `Ask the user; if they want to go ahead, call switch_account with customer_id ${cid}, then this tool again.`,
-      { status: "switch_confirmation_needed", plan: this.planName, switch_to: cid, locks_account: locks,
-        locked_until: reopens, accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS,
-        to_go_ahead: `once the user agrees, call switch_account with customer_id ${cid}, then this tool again`,
-        ...(next ? { keep_both: { ...next, pricing_page: next.upgrade_url ? null : `${this.deps.baseUrl}/#pricing` } } : {}),
-        ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
-  }
-
   // A normal result, not isError (plans.ts SwitchNotice): the plan working as designed isn't a failure, and errors count
   // against the directories' reliability metrics. lifecycle.ts limit_reached matches it on the text.
   private refuse(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool): never {
     const used = `${PLAN_LIMIT_PREFIX} Camberstack has been used on ${accountsLabel(st.used.length, pool)} in the last ${ACCOUNT_WINDOW_DAYS} days`;
-    const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with one switch per ${ACCOUNT_WINDOW_DAYS} days, `
-      + `already used; the next opens ${st.switchOpens}.`;
+    const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with no switching between them; `
+      + `the next opens ${st.opensOn}, ${ACCOUNT_WINDOW_DAYS} days after the least recently used one was last used.`;
     const common = { plan: this.planName, accounts_in_use: st.used, active_accounts: st.active,
       accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS, refused_account: cid,
-      switching: `one switch per ${ACCOUNT_WINDOW_DAYS} days, already used; the next opens ${st.switchOpens}`,
+      switching: `none: another account opens ${st.opensOn}, once an active one has gone ${ACCOUNT_WINDOW_DAYS} days unused`,
       still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"] };
     if (this.isPro) {
       const next = this.nextPlan(), name = planLabel(this.planName);
@@ -559,7 +522,7 @@ export class UserSession {
           contact: "adam@camberstack.io" });
     }
     // Lead with what gets them working again: someone refused here is working on more than one account.
-    const wait = st.used.includes(cid) ? `${cid} opens again on ${st.switchOpens}` : `the next switch opens on ${st.switchOpens}`;
+    const wait = st.used.includes(cid) ? `${cid} opens again on ${st.opensOn}` : `another account opens on ${st.opensOn}`;
     if (this.chatgpt) {
       throw new SwitchNotice(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}: the current plan ${rule} `
         + `More accounts at a time need a different plan.`, { stop: "plan_limit", ...common, plans_page: this.plansPage });

@@ -21,7 +21,7 @@ export interface Config {
     clientId: string;
     clientSecret: string;
   };
-  /** Google Ads accounts a plan covers at a time: distinct accounts used in the last 30 days, plus one switch (session.ts planState). */
+  /** Google Ads accounts a plan covers at a time: distinct accounts used in the last 30 days, with no switch (session.ts planState). */
   freeAccounts: number;
   proAccounts: number;
   agencyAccounts: number;

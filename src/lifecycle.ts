@@ -2,13 +2,12 @@
  * Lifecycle emails, each sent at most once per user, through Resend:
  *   first_steps    connected 2–14 days ago and never asked anything real → the first question to ask, and the demo
  *   limit_reached  a tool refused a second Google Ads account (the Free plan's limit), still free the next morning (6+ hours later) → one note:
- *                  when their next switch opens, what Pro covers, the upgrade link
- *   switch_wanted  a Free user's AI was stopped before spending the switch (asked about another account) and they didn't
- *                  spend it, still free the next morning (6+ hours later) → the plan that covers all their accounts
- *                  (Pro, or Agency past Pro's limit), its upgrade link. One upgrade email per user: never both this and limit_reached
+ *                  when another account opens, what Pro covers, the upgrade link
+ *   (switch_wanted, sent when a Free user was stopped before spending the account switch, went with the switch on 2026-11-06;
+ *                  its email_log rows still count as an upgrade email already sent)
  *   service_limit  the one-service gate (FREE_ONE_SERVICE) stopped a Free user's AI asking for a second Google service, still
  *                  free the next morning (6+ hours later) → which service they use, when the other opens, Pro covering all three.
- *                  Still one upgrade email per user: none of limit_reached, switch_wanted and service_limit follows another
+ *                  One upgrade email per user: none of limit_reached, switch_wanted and service_limit follows another
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on a paid plan (Plus, Pro, Agency) with a Stripe subscription → what it adds, where billing lives
@@ -16,7 +15,7 @@
  * The first five go out in the user's morning (SEND_HOURS in the time zone of their Google Ads account, or FALLBACK_TZ),
  * so being due only holds it until the next hourly run inside that window.
  * Never sent to internal accounts (ADMIN_EMAILS, PRO_EMAILS) or anyone who unsubscribed.
- * switch_wanted and limit_reached also skip Pro users and the disconnected.
+ * limit_reached also skips Pro users and the disconnected.
  *
  * Content stays generic on purpose: counts and links, never campaign names or other Google Ads data
  * (the email address comes from Google sign-in; the account page is where the details live).
@@ -27,9 +26,8 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, payingSql, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, payingSql, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
-import { GA_TARGET } from "./ga4-changes.js";
 import { DEMO_MERCHANT } from "./merchant.js";
 
 /** Send one email through Resend; throws if it refuses. */
@@ -117,8 +115,8 @@ export class Lifecycle {
       .all(t - 15 * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; created_at: number }[];
     // Refused a second account by the plan gate (session.ts checkAccount), the last refusal 6 hours to 30 days ago. A refusal
     // logs as ok since it became a notice (it was ok = 0 before), so it's matched on the text; Merchant ones by their wording.
-    // Since 0.12.0 a refusal only follows a switch the user confirmed, so they're working on more than one account
-    // now: the next morning, not days later. The 6 hours keep it from landing minutes after a refusal inside the
+    // A refusal means they're working on more than one account now (there is no switch since 2026-11-06): the next
+    // morning, not days later. The 6 hours keep it from landing minutes after a refusal inside the
     // send window. `error` is the latest refusal's (SQLite takes bare columns from the max() row). A reset by hand cancels
     // the refusals before it: this email would say the account is still locked (sent minutes after one, 2026-10-16).
     const limit = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
@@ -127,15 +125,6 @@ export class Lifecycle {
       WHERE ${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("service_limit")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
-    // Stopped by the switch notice (session.ts noticeSwitch), the last one 6 hours to 30 days ago, with no switch spent
-    // since: they wanted another account and stayed on one (2026-10-23: 5 accounts, asked about 3). Matched on the text,
-    // since 0.19.0 logs a notice as ok (it was ok = 0 before).
-    const wanted = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.ads_accounts, max(c.at) last
-      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ?
-      WHERE ${eligible} AND ${notSent("switch_wanted")} AND ${notSent("limit_reached")} AND ${notSent("service_limit")}
-        AND NOT EXISTS (SELECT 1 FROM tool_calls s WHERE s.user_id = u.id AND s.tool = 'switch_account' AND s.ok = 1 AND s.at >= c.at)
-      GROUP BY u.id HAVING last BETWEEN ? AND ?`)
-      .all(`${SWITCH_NOTICE_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; ads_accounts: number | null; last: number }[];
     // Stopped by the one-service gate (session.ts checkService), the last stop 6 hours to 30 days ago. A stop logs as ok
     // (a SwitchNotice), so it's matched on the text; `error` is the latest one's, which names both services and the open date.
     const service = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
@@ -155,24 +144,12 @@ export class Lifecycle {
     const ok = (u: { email: string; time_zone: string | null }) => !this.d.internalEmails.has(u.email.toLowerCase()) && morning(u);
     return [
       ...first.filter(ok).map((u) => ({ kind: "first_steps" as const, id: u.id, email: u.email, days: Math.floor((t - u.created_at) / DAY) })),
-      // Every refusal's text names when the next switch opens (session.ts refuse: "the next opens YYYY-MM-DD").
+      // Every refusal's text names when the next account opens (session.ts refuse: "the next opens YYYY-MM-DD").
       ...limit.filter(ok).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
         opens: /the next opens (\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
-      ...wanted.filter(ok).map((u) => ({ kind: "switch_wanted" as const, id: u.id, email: u.email, days: 0,         // All their accounts: what list_accounts last saw (managers aren't counted), or more if they asked about more since.
-        accounts: Math.max(2, u.ads_accounts ?? 0, this.askedAccounts(u.id)) })),
       ...service.filter(ok).map((u) => ({ kind: "service_limit" as const, id: u.id, email: u.email, days: 0, error: u.error })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];
-  }
-
-  /** Google Ads accounts a user has used or asked about in the window: the active ones plus every switch notice's account. */
-  private askedAccounts(userId: string): number {
-    const since = now() - ACCOUNT_WINDOW_DAYS * DAY;
-    const rows = this.d.db.prepare(`SELECT customer_id c, error FROM tool_calls WHERE user_id = ? AND at >= ?
-      AND ((ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?) AND customer_id NOT LIKE 'mc:%') OR error LIKE ?)`)
-      .all(userId, since, DEMO_CID, GA_TARGET, `${SWITCH_NOTICE_PREFIX}%`) as { c: string | null; error: string | null }[];
-    // A notice names its account in the text ("using 1234567890 spends"); before 0.19.0 it was also in customer_id.
-    return new Set(rows.map((r) => r.error?.startsWith(SWITCH_NOTICE_PREFIX) ? /using (\d+) spends/.exec(r.error)?.[1] : r.c).filter(Boolean)).size;
   }
 
   /** Hourly. */
@@ -180,14 +157,7 @@ export class Lifecycle {
     if (!this.d.mail) return 0;
     return this.deliver(this.due(), (u) => u.kind === "first_steps" ? firstSteps(u.days)
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
-      : u.kind === "switch_wanted" ? this.switchWantedFor(u.id, u.accounts ?? 2)
       : u.kind === "service_limit" ? serviceLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.error ?? "") : checkInEmail());
-  }
-
-  /** Agency only when they have more accounts than Pro covers and Agency is sold; otherwise Pro. */
-  private switchWantedFor(userId: string, accounts: number) {
-    const agency = accounts > PRO_ACCOUNTS ? this.d.agencyLink?.(userId) ?? null : null;
-    return switchWanted(this.d.baseUrl, accounts, agency ? "agency" : "pro", agency ?? this.d.upgradeLink(userId));
   }
 
   /**
@@ -253,7 +223,6 @@ export class Lifecycle {
   async preview(to: string): Promise<void> {
     await this.send(to, firstSteps(3), "preview");
     await this.send(to, limitReached(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "2026-11-13"), "preview");
-    await this.send(to, switchWanted(this.d.baseUrl, 5, "pro", `${this.d.baseUrl}/account?upgrade=1`), "preview");
     await this.send(to, serviceLimit(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=plus`, `${this.d.baseUrl}/account?upgrade=1`, "Service limit: the Free plan covers one Google service at a time "
       + "(Google Ads, Search Console or Google Analytics), and this login uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used."), "preview");
     await this.send(to, checkInEmail(), "preview");
@@ -339,7 +308,7 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
   // "November 13": the date the refusal named, in words. UTC so it's the same day the tool said.
   const when = opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
   const stopped = `Camberstack stopped when you tried it on another Google Ads account. The Free plan covers one account at a time, `
-    + `with one switch every ${ACCOUNT_WINDOW_DAYS} days, and yours was already used${when ? `; the next one opens on ${when}` : ""}.`;
+    + `and another opens once your current one has gone ${ACCOUNT_WINDOW_DAYS} days unused${when ? `: on ${when}, if you don't use it before then` : ""}.`;
   const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, `
     + `and Agency up to ${AGENCY_ACCOUNTS}, for ${AGENCY_PRICE_LABEL}; cancel any time.`;
   const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work.";
@@ -367,19 +336,6 @@ function serviceLimit(base: string, plus: string | null, upgrade: string | null,
   const link = plus ?? upgrade;
   const free = `On Free, every tool and unlimited changes keep working${have ? ` on ${have}` : ""}, and undo and history always work.`;
   return upgradeEmail({ subject: `Using ${allServices()}`, stopped, pitch: pro, link, cta: plus ? "Get Plus" : "Upgrade to Pro", free, base });
-}
-
-/** No account ids or names, only the count (see the header). `plan` is the one that covers all `accounts`. */
-function switchWanted(base: string, accounts: number, plan: "pro" | "agency", upgrade: string | null) {
-  const [name, covers, price] = plan === "agency" ? ["Agency", AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL] : ["Pro", PRO_ACCOUNTS, PRO_PRICE_LABEL];
-  const asked = "Camberstack recently stopped to check before switching you to another Google Ads account. The Free plan "
-    + "covers one at a time, and nothing was locked.";
-  const fits = `You have ${accounts} Google Ads accounts. If you want to manage all of them, try Camberstack ${name}: `
-    + `up to ${covers} accounts at once, for ${price}. Cancel any time.`;
-  // How to switch, not just that you can: the account page has no switch, only the AI does (switch_account).
-  const free = "Staying on Free is fine too: your active account keeps every tool and unlimited changes. To move to a different "
-    + `account, ask your AI to switch to it; Free allows one switch every ${ACCOUNT_WINDOW_DAYS} days.`;
-  return upgradeEmail({ subject: "Working on more than one Google Ads account?", stopped: asked, pitch: fits, link: upgrade, cta: `Upgrade to ${name}`, free, base });
 }
 
 /** Plain on purpose: it should read like Adam wrote it, and replies go straight to him. Never says how many users there are. */

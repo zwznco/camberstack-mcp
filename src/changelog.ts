@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.29.0", date: "2026-11-06",
+    summary: "A plan's Google Ads accounts no longer switch: once they're taken, another opens after one has gone 30 days unused, or on a bigger plan.",
+    items: [
+      "**No account switch.** Your AI still asks which account to use first. After that, a different account answers `Plan limit` with the date it opens and the upgrade options, instead of offering to switch and lock the one you were using.",
+      "`list_accounts` marks each account `active` or `locked` once the plan is full; `switch_account` is now only how the AI takes the account you picked.",
+    ],
+  },
+  {
     version: "0.28.0", date: "2026-11-05",
     summary: "Merchant Center is a box on the sign-in screen.",
     items: [

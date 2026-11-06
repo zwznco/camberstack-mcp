@@ -23,7 +23,7 @@ export const planLabel = (plan: string) => plan === "agency" ? "Agency" : plan =
 export const ACCOUNT_WINDOW_DAYS = 30;
 /** Error text the account gate starts with; lifecycle.ts finds blocked users by it in tool_calls. */
 export const PLAN_LIMIT_PREFIX = "Plan limit:";
-/** Text of the notice before a plan's one switch is spent (session.ts admit, SwitchNotice). Not a refusal: logged as ok, and lifecycle.ts matches it for switch_wanted. */
+/** Text of the notice that came before spending the plan's one switch (removed 2026-11-06). Still matched in old tool_calls rows (report.ts gate hits). */
 export const SWITCH_NOTICE_PREFIX = "Account switch:";
 /** Text of the notice before a plan's first account is taken (session.ts admit): a choice, not a switch, so no switch_wanted email. */
 export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
@@ -53,8 +53,6 @@ export const serviceLimitScope = (have: string, want: string, options: string) =
 export const SERVICE_CHOICE_PREFIX = "Service choice:";
 /** How long after a Service choice notice the next real call counts as the user's answer (session.ts checkService). */
 export const SERVICE_CHOICE_SECONDS = 15 * 60;
-/** How long a switch_account call counts as the user's answer to an "Account switch:" notice. */
-export const SWITCH_ANSWER_SECONDS = 60 * 60;
 
 /**
  * Which Free plan is live: by Google Ads account (FREE_ONE_SERVICE unset), one-service Free announced for a date, or on
@@ -110,7 +108,7 @@ export class PlanLimitError extends Error {
 }
 
 /**
- * The notice before a plan's switch is spent (SWITCH_NOTICE_PREFIX), and the service gate's choice and refusal
+ * The account choice notice (ACCOUNT_CHOICE_PREFIX), the plan-limit refusal, and the service gate's choice and refusal
  * (SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX). Thrown to stop the tool, but returned as a normal result, not isError:
  * nothing failed, and an error here counted against the directory's reliability metrics.
  */
