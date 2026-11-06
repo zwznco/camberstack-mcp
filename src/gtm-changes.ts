@@ -216,7 +216,9 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
       return { ...base, operations: ops, describe: `Remove tag "${change.name}" that Camberstack added from the workspace${ops.length ? ", so a later publish doesn't bring it back" : " (already gone)"}` };
     }
     case "restore_tag": {
-      const t = change.tag as any;
+      // The saved tag names the workspace it was deleted from, and a publish since replaces that workspace: Google
+      // rejects a body whose ids don't match the path (seen 2026-11-06), so it goes back with only its content.
+      const { workspaceId: _w, accountId: _a, containerId: _c, path: _p, tagId: _t, fingerprint: _f, tagManagerUrl: _u, ...t } = change.tag as any;
       return { ...base, operations: [{ method: "POST", path: `${ws.path}/tags`, body: t }],
         describe: `Add back deleted tag "${t.name}" (as a new tag). Publish to put it back on the site` };
     }
