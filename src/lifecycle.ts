@@ -144,9 +144,9 @@ export class Lifecycle {
     const ok = (u: { email: string; time_zone: string | null }) => !this.d.internalEmails.has(u.email.toLowerCase()) && morning(u);
     return [
       ...first.filter(ok).map((u) => ({ kind: "first_steps" as const, id: u.id, email: u.email, days: Math.floor((t - u.created_at) / DAY) })),
-      // Every refusal's text names when the next account opens (session.ts refuse: "the next opens YYYY-MM-DD").
+      // Every refusal's text names when another account opens (session.ts refuse: "opens on YYYY-MM-DD"; before 0.29.0 "the next opens YYYY-MM-DD").
       ...limit.filter(ok).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
-        opens: /the next opens (\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
+        opens: /opens (?:again )?(?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
       ...service.filter(ok).map((u) => ({ kind: "service_limit" as const, id: u.id, email: u.email, days: 0, error: u.error })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];

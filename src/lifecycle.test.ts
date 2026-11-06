@@ -129,7 +129,8 @@ describe("lifecycle emails", () => {
   it("sends limit_reached once, the morning after the plan gate refused a second account, with when another account opens", async () => {
     const { db, lc, sent, user, call } = setup();
     const refused = (userId: string, daysAgo: number, error = "Plan limit: Camberstack has been used on 2 Google Ads accounts; "
-      + "the Free plan covers 1 at a time (active: 1112223333), with no switching between them; the next opens 2026-11-13, 30 days after the least recently used one was last used.") =>
+      + "Pro ($15/month) covers up to 5, so 2223334444 works right away. On Free, another account opens on 2026-11-13, if 1112223333 isn't used again before then. "
+      + "The Free plan covers 1 at a time (active: 1112223333), with no switching between them.") =>
       // A refusal is a notice: logged ok, with no account (tools.ts), so it's found by its text.
       db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'account_overview', 1, ?, 10, 10)")
         .run(now() - daysAgo * DAY, userId, error);

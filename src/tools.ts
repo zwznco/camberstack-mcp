@@ -257,7 +257,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       accounts: st.full ? accounts.map((a) => counted(a) ? { ...a, plan_status: status(a.customerId) } : a) : accounts,
       ...(st.full && accounts.some((a) => counted(a) && !st.active.includes(a.customerId)) ? { plan: {
         plan: s.planName, accounts_included: s.accountLimit, active_accounts: st.active,
-        switching: `None: this plan's accounts are taken. Locked accounts open up from ${st.opensOn}, once an active one has gone ${ACCOUNT_WINDOW_DAYS} days unused`
+        switching: `None: this plan's accounts are taken. Another opens on ${st.opensOn} if ${st.active.at(-1)} isn't used again before then`
             + (s.chatgpt || s.planName === "agency" ? "." : s.planName === "plus" ? ", or on Pro or Agency, which cover more (the billing tool has the switch link)."
               : s.isPro ? ", or on Agency, which covers more (the billing tool has the switch link)."
               : ", or on Pro or Agency, which cover more (the billing tool has the upgrade links)."),

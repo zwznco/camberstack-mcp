@@ -508,29 +508,30 @@ export class UserSession {
   // against the directories' reliability metrics. lifecycle.ts limit_reached matches it on the text.
   private refuse(cid: string, st: ReturnType<UserSession["planState"]>, pool: Pool): never {
     const used = `${PLAN_LIMIT_PREFIX} Camberstack has been used on ${accountsLabel(st.used.length, pool)} in the last ${ACCOUNT_WINDOW_DAYS} days`;
-    const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with no switching between them; `
-      + `the next opens ${st.opensOn}, ${ACCOUNT_WINDOW_DAYS} days after the least recently used one was last used.`;
+    const rule = `covers ${this.accountLimit} at a time (active: ${st.active.join(", ")}), with no switching between them.`;
+    // A slot opens when the least recently used active account goes ACCOUNT_WINDOW_DAYS unused; using it again moves the date.
+    const date = `on ${st.opensOn}, if ${st.active.at(-1)} isn't used again before then`;
     const common = { plan: this.planName, accounts_in_use: st.used, active_accounts: st.active,
       accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS, refused_account: cid,
-      switching: `none: another account opens ${st.opensOn}, once an active one has gone ${ACCOUNT_WINDOW_DAYS} days unused`,
+      switching: `none: another account opens ${date}`,
       still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"] };
     if (this.isPro) {
       const next = this.nextPlan(), name = planLabel(this.planName);
-      throw new SwitchNotice(`${used}; ${name} ${rule}`
+      throw new SwitchNotice(`${used}; ${name} ${rule} Another opens ${date}.`
         + (next ? ` ${planLabel(next.plan)} (${next.price}) covers up to ${next.accounts_included}, switched to from the billing page (upgrade_url).` : ""),
         { stop: "plan_limit", ...common, ...(next ? { upgrade: { ...next, cancel: "any time", upgrade_url_expires: next.upgrade_url ? "7 days; personal to this user" : null } } : {}),
           contact: "adam@camberstack.io" });
     }
     // Lead with what gets them working again: someone refused here is working on more than one account.
-    const wait = st.used.includes(cid) ? `${cid} opens again on ${st.opensOn}` : `another account opens on ${st.opensOn}`;
+    const wait = st.used.includes(cid) ? `${cid} opens again ${date}` : `another account opens ${date}`;
     if (this.chatgpt) {
-      throw new SwitchNotice(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}: the current plan ${rule} `
+      throw new SwitchNotice(`${used} (${st.used.join(", ")}). ${wait[0].toUpperCase()}${wait.slice(1)}. The current plan ${rule} `
         + `More accounts at a time need a different plan.`, { stop: "plan_limit", ...common, plans_page: this.plansPage });
     }
     const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     const agency = this.deps.agencyAccounts ? this.deps.billingLink?.("agency", this.user.id) ?? null : null;
     throw new SwitchNotice(`${used} (${st.used.join(", ")}). Pro (${PRO_PRICE_LABEL}) covers up to ${this.deps.proAccounts}, `
-      + `so ${cid} works right away${agency ? `; Agency (${AGENCY_PRICE_LABEL}) up to ${this.deps.agencyAccounts}` : ""}. On Free, ${wait}: the Free plan ${rule}`,
+      + `so ${cid} works right away${agency ? `; Agency (${AGENCY_PRICE_LABEL}) up to ${this.deps.agencyAccounts}` : ""}. On Free, ${wait}. The Free plan ${rule}`,
       { stop: "plan_limit", ...common,
         upgrade: { plan: "pro", price: PRO_PRICE_LABEL, accounts_included: this.deps.proAccounts, cancel: "any time",
           upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null,
