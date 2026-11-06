@@ -1,6 +1,6 @@
 /**
- * Tag Manager changes: add a Google tag, a Google Ads conversion tag, a GA4 event tag or a Conversion Linker; pause,
- * unpause or delete a tag; publish the workspace. The same propose → approve → apply → undo cycle as Google Ads changes
+ * Tag Manager changes: create or delete a web container; add a Google tag, a Google Ads conversion tag, a GA4 event tag
+ * or a Conversion Linker; pause, unpause or delete a tag; publish the workspace. The same propose → approve → apply → undo cycle as Google Ads changes
  * (session.ts), stored as proposals whose customer_id is GTM_TARGET. GTM has no dry run: each change resolves against
  * the live workspace at propose and again at apply.
  *
@@ -8,7 +8,7 @@
  * makes a version and publishes it. Undoing a publish re-publishes the version that was live before.
  */
 import { z } from "zod";
-import { ALL_PAGES, CONTAINER_PATH, TAG_TYPES, listAll, param, triggerView, workspaceOf, type TagManager } from "./gtm.js";
+import { ACCOUNT_PATH, ALL_PAGES, CONTAINER_PATH, TAG_TYPES, listAll, param, triggerView, workspaceOf, type TagManager } from "./gtm.js";
 
 /** proposals.customer_id for Tag Manager proposals. */
 export const GTM_TARGET = "gtm";
@@ -23,6 +23,13 @@ const firesOn = z.object({
 type FiresOn = z.infer<typeof firesOn>;
 
 export const PUBLIC_GTM_CHANGES = [
+  z.object({ type: z.literal("create_container"),
+    account: z.string().regex(ACCOUNT_PATH, "accounts/<id>").describe("account_id from tag_manager_containers"),
+    name: z.string().min(1).max(100).describe("Usually the site's domain"),
+    domain: z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i, "a domain like example.com").optional() })
+    .describe("Create an empty web container; its install snippet comes after applying. Undo deletes it"),
+  z.object({ type: z.literal("delete_container"), container })
+    .describe("Delete a container and everything in it; Google can't restore it"),
   z.object({ type: z.literal("add_google_tag"), container,
     tag_id: z.string().regex(/^(G|AW|GT|DC)-[A-Z0-9]{4,20}$/, "a Google tag ID, e.g. G-ABC123 or AW-123456789").describe("GA4 measurement ID (G-…) or Google Ads tag ID (AW-…)") })
     .describe("Add a Google tag that loads GA4 or Google Ads on every page"),
@@ -74,7 +81,7 @@ export interface GtmResolved {
   /** Known before applying (pause, delete, publish); an add's comes from what Google returns (gtmInverseAfterApply). */
   inverse?: GtmChange;
 }
-export interface GtmWriteResult { tagPath?: string; triggerPath?: string; versionId?: string; compilerError?: boolean }
+export interface GtmWriteResult { tagPath?: string; triggerPath?: string; versionId?: string; containerPath?: string; publicId?: string }
 
 const tmpl = (key: string, value: string) => ({ type: "template", key, value });
 const bool = (key: string, value: boolean) => ({ type: "boolean", key, value: String(value) });
@@ -106,6 +113,21 @@ function resolveTrigger(f: FiresOn, triggers: any[]): { id?: string; create?: an
 
 export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promise<GtmResolved> {
   const base = { change, service: "gtm" as const };
+  if (change.type === "create_container") {
+    const have = (await listAll(tm, `${change.account}/containers`, "container")).find((c) => c.name === change.name);
+    if (have) return { ...base, operations: [], describe: `Create container "${change.name}" (already there: ${have.publicId}, ${have.path})` };
+    return { ...base, operations: [{ method: "POST", path: `${change.account}/containers`,
+      body: { name: change.name, usageContext: ["web"], ...(change.domain ? { domainName: [change.domain] } : {}) } }],
+      describe: `Create an empty web container "${change.name}" in ${change.account}. Its tags run only once the site has its snippet (given after creating) and it's published` };
+  }
+  if (change.type === "delete_container") {
+    const c = await tm.call("GET", change.container);
+    const live = await tm.call("GET", `${change.container}/versions:live`).catch(() => null);
+    return { ...base, operations: [{ method: "DELETE", path: change.container }],
+      describe: `Delete container "${c.name}" (${c.publicId}) with all its tags, triggers and versions`
+        + (live ? `. Its published version ${live.containerVersionId} stops running on any site that loads ${c.publicId}` : "")
+        + " ⚠ Google can't restore a deleted container, so undo can't bring it back" };
+  }
   const ws = await workspaceOf(tm, change.container);
   const [tags, triggers] = await Promise.all([listAll(tm, `${ws.path}/tags`, "tag"), listAll(tm, `${ws.path}/triggers`, "trigger")]);
   const tagById = (id: string) => {
@@ -209,9 +231,10 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
  */
 export function orderGtmChanges(changes: GtmChange[]): GtmChange[] {
   const pub = changes.filter((c) => c.type === "publish_container"), rest = changes.filter((c) => c.type !== "publish_container");
-  const published = (c: GtmChange) => pub.some((p) => p.container === c.container);
+  const of = (c: GtmChange) => ("container" in c ? c.container : undefined);
+  const published = (c: GtmChange) => pub.some((p) => of(p) === of(c) && c.type !== "delete_container");
   return [...rest.map((c) => (published(c) ? { ...c, published_after: true } as unknown as GtmChange : c)),
-    ...pub.map((c) => (rest.some((r) => r.container === c.container) ? { ...c, with_changes: true } as GtmChange : c))];
+    ...pub.map((c) => (rest.some((r) => of(r) === of(c)) ? { ...c, with_changes: true } as GtmChange : c))];
 }
 
 /** Run one resolved change's writes, in order. */
@@ -232,6 +255,7 @@ export async function writeGtm(tm: TagManager, ops: GtmOp[]): Promise<GtmWriteRe
     }
     const r = await tm.call(op.method, op.path, op.body);
     if (op.method === "POST" && op.path.endsWith("/tags")) out.tagPath = r.path;
+    if (op.method === "POST" && op.path.endsWith("/containers")) { out.containerPath = r.path; out.publicId = r.publicId; }
   }
   return out;
 }
@@ -239,14 +263,23 @@ export async function writeGtm(tm: TagManager, ops: GtmOp[]): Promise<GtmWriteRe
 /** What undoes an applied change, once Google has said what it created. */
 export function gtmInverseAfterApply(r: GtmResolved, res: GtmWriteResult): GtmChange | undefined {
   const c = r.change;
-  if (res.tagPath && (c.type.startsWith("add_") || c.type === "restore_tag")) {
+  if (res.containerPath) return { type: "delete_container", container: res.containerPath };
+  if (res.tagPath && "container" in c && (c.type.startsWith("add_") || c.type === "restore_tag")) {
     const name = c.type === "restore_tag" ? String((c.tag as any).name) : "name" in c ? c.name : c.type === "add_google_tag" ? `Google tag ${c.tag_id}` : "Conversion Linker";
     return { type: "remove_added_tag", container: c.container, tag_path: res.tagPath, ...(res.triggerPath ? { trigger_path: res.triggerPath } : {}), name };
   }
   return r.inverse;
 }
 
+/** The install snippet Tag Manager shows for a container (the <head> part; the <noscript> part is optional). */
+export const gtmSnippet = (publicId: string) => `<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});`
+  + `var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;`
+  + `f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','${publicId}');</script>`;
+
 export function gtmNoteAfterApply(r: GtmResolved, res: GtmWriteResult): string | undefined {
+  if (res.containerPath) return `Container ${res.publicId} (${res.containerPath}) is created and empty. Give the user this snippet to paste as high in every page's <head> as possible `
+    + `(or the site platform's Google Tag Manager setting, which takes just ${res.publicId}): ${gtmSnippet(res.publicId ?? "")} . Then add tags and publish_container.`;
+  if (r.change.type === "delete_container") return "The container is deleted. If the site still loads its snippet, remove it: it now loads nothing.";
   if (res.versionId) return `Version ${res.versionId} is live. Tag Assistant (tagassistant.google.com) shows each tag firing on the site; Google Ads shows a conversion tag as recording within a few hours of its first conversion.`;
   if (r.change.type === "publish_version") return "The earlier version is live again. Changes still in the workspace go live at the next publish_container.";
   if (r.change.type === "remove_added_tag") return "Removed from the workspace. If it's still on the site, a publish_container takes it off.";

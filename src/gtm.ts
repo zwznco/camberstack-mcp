@@ -20,6 +20,7 @@ const BUILT_IN_TRIGGERS: Record<string, string> = { [ALL_PAGES]: "All Pages", "2
 
 /** A container's path as the API names it, and as the tools take it. */
 export const CONTAINER_PATH = /^accounts\/\d+\/containers\/\d+$/;
+export const ACCOUNT_PATH = /^accounts\/\d+$/;
 
 /** One call to the Tag Manager API by path under v2, e.g. GET accounts/1/containers. */
 export type TagManager = { call(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: object): Promise<any> };
@@ -73,16 +74,19 @@ const typeLabel = (t: string) => TAG_TYPES[t] ?? (t.startsWith("cvt_") ? "Commun
 export const param = (tag: any, key: string): string | undefined => (tag.parameter ?? []).find((p: any) => p.key === key)?.value;
 
 export async function listContainers(tm: TagManager) {
-  const demo = { account: "Northwind Plumbing (sample data)", containers: [{ container: DEMO_CONTAINER, name: "northwind-plumbing.example", public_id: "GTM-DEMO01" }] };
+  const demo = { account: "Northwind Plumbing (sample data)", account_id: DEMO_GTM_ACCOUNT,
+    containers: (await listAll(tm, `${DEMO_GTM_ACCOUNT}/containers`, "container").catch(() => [{ path: DEMO_CONTAINER, name: "northwind-plumbing.example", publicId: "GTM-DEMO01" }]))
+      .map((c) => ({ container: c.path, name: c.name, public_id: c.publicId })) };
   try {
     const accounts = await listAll(tm, "accounts", "account");
     const out = await Promise.all(accounts.map(async (a) => ({
-      account: a.name,
+      account: a.name, account_id: a.path,
       containers: (await listAll(tm, `${a.path}/containers`, "container"))
         .filter((c) => (c.usageContext ?? ["web"]).includes("web"))
         .map((c) => ({ container: c.path, name: c.name, public_id: c.publicId })),
     })));
     if (out.some((a) => a.containers.length)) return { accounts: out };
+    if (out.length) return { accounts: [...out, demo], note: "This Google login's Tag Manager account has no web container yet: create_container makes one (in account_id). The demo container (sample data) is offered too. Say so plainly." };
     return { accounts: [demo], note: "This Google login has no web Tag Manager container, so only the demo container (sample data) is offered. Say so plainly." };
   } catch (e) {
     if (!(e instanceof NotGrantedError)) throw e;
@@ -185,6 +189,8 @@ interface DemoGtmState {
   /** The last published tags and triggers, to tell what's unpublished. */
   live: { id: string; tags: any[]; triggers: any[] } | null;
   versions: Record<string, { tags: any[]; triggers: any[] }>;
+  /** Containers created in the demo account: listed and deletable, but empty and not editable. */
+  created?: { path: string; name: string; publicId: string }[];
 }
 
 const P = (k: string, v: string) => ({ type: "template", key: k, value: v });
@@ -225,6 +231,24 @@ export class DemoTagManager implements TagManager {
   async call(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: any): Promise<any> {
     const s = this.load(), ws = `${DEMO_CONTAINER}/workspaces/${s.ws ?? 1}`;
     const strip = (x: any) => JSON.stringify({ ...x, path: undefined });
+    const main = { path: DEMO_CONTAINER, name: "northwind-plumbing.example", publicId: "GTM-DEMO01" };
+    const created = s.created ?? [];
+    if (path === `${DEMO_GTM_ACCOUNT}/containers` && method === "GET") return { container: [main, ...created] };
+    if (path === `${DEMO_GTM_ACCOUNT}/containers` && method === "POST") {
+      const id = String(s.nextId++), c = { path: `${DEMO_GTM_ACCOUNT}/containers/${id}`, name: String(body?.name), publicId: `GTM-DEMO${id}` };
+      s.created = [...created, c];
+      this.save(s);
+      return c;
+    }
+    const mine = created.find((c) => c.path === path);
+    if (mine && method === "GET") return mine;
+    if (mine && method === "DELETE") { s.created = created.filter((c) => c !== mine); this.save(s); return {}; }
+    if (path === DEMO_CONTAINER && method === "GET") return main;
+    if (path === DEMO_CONTAINER && method === "DELETE") throw new Error("The demo container can't be deleted (it's sample data); a container created in the demo can.");
+    if (created.some((c) => path.startsWith(`${c.path}/`))) {
+      if (method === "GET" && path.endsWith("/versions:live")) throw new Error("Tag Manager API 404: Not found");
+      throw new Error("Tag Manager API 400: a container created in the demo stays empty; try tag changes on the demo container itself.");
+    }
     if (method === "GET") {
       if (path === `${DEMO_CONTAINER}/workspaces`) return { workspace: [{ workspaceId: String(s.ws ?? 1), name: "Default Workspace", path: ws }] };
       if (path === `${ws}/tags`) return { tag: s.tags };

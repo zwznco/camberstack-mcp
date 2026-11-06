@@ -23,9 +23,9 @@ const client = (routes: Parameters<typeof fakeFetch>[0]) => {
 const insufficient: [number, unknown] = [403, { error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED" } }];
 
 describe("Tag Manager", () => {
-  it("asks Google for edit, version and publish access (edit covers reads, so no readonly), and nothing that deletes containers or manages users", () => {
+  it("asks Google for edit, version, publish and delete-container access (edit covers reads, so no readonly), and nothing that manages users, and nothing that deletes containers or manages users", () => {
     expect(GRANTS["tag-manager"].scopes.map((s) => s.split("/").at(-1))).toEqual(
-      ["tagmanager.edit.containers", "tagmanager.edit.containerversions", "tagmanager.publish"]);
+      ["tagmanager.edit.containers", "tagmanager.edit.containerversions", "tagmanager.publish", "tagmanager.delete.containers"]);
   });
 
   it("turns a missing scope into the personal link that adds Tag Manager, and lists the demo meanwhile", async () => {
@@ -43,7 +43,7 @@ describe("Tag Manager", () => {
         { name: "app", path: "accounts/1/containers/3", publicId: "GTM-BBB", usageContext: ["android"] }], nextPageToken: "p2" }],
       "GET accounts/1/containers?pageToken=p2": () => [200, { container: [{ name: "shop.test", path: "accounts/1/containers/4", publicId: "GTM-CCC" }] }],
     });
-    expect(await listContainers(tm)).toEqual({ accounts: [{ account: "Acme", containers: [
+    expect(await listContainers(tm)).toEqual({ accounts: [{ account: "Acme", account_id: "accounts/1", containers: [
       { container: "accounts/1/containers/2", name: "acme.test", public_id: "GTM-AAA" },
       { container: "accounts/1/containers/4", name: "shop.test", public_id: "GTM-CCC" }] }] });
     expect(calls).toContain("GET accounts/1/containers?pageToken=p2");
@@ -93,5 +93,25 @@ describe("Tag Manager", () => {
   it("pages through list calls", async () => {
     const { tm } = client({ "GET x": () => [200, { tag: [1], nextPageToken: "a b" }], "GET x?pageToken=a%20b": () => [200, { tag: [2] }] });
     expect(await listAll(tm, "x", "tag")).toEqual([1, 2]);
+  });
+
+  it("creates a container (undo deletes it) and warns that deleting one can't be undone", async () => {
+    const { resolveGtmChange, writeGtm, gtmInverseAfterApply, gtmNoteAfterApply } = await import("./gtm-changes.js");
+    const tm = routedTagManager(client({ "GET accounts": () => [200, {}] }).tm, new DemoTagManager());
+    const r = await resolveGtmChange(tm, { type: "create_container", account: "accounts/000000001", name: "shop.example" });
+    const res = await writeGtm(tm, r.operations);
+    expect(res.publicId).toMatch(/^GTM-/);
+    expect(gtmNoteAfterApply(r, res)).toContain(`'${res.publicId}'`);
+    const inv = gtmInverseAfterApply(r, res)!;
+    expect(inv).toEqual({ type: "delete_container", container: res.containerPath });
+    expect((await listContainers(tm)).accounts.at(-1)!.containers.map((c: any) => c.name)).toContain("shop.example");
+    const again = await resolveGtmChange(tm, { type: "create_container", account: "accounts/000000001", name: "shop.example" });
+    expect(again.operations).toEqual([]);
+    const del = await resolveGtmChange(tm, inv);
+    expect(del.describe).toContain("⚠ Google can't restore");
+    expect(del.inverse).toBeUndefined();
+    await writeGtm(tm, del.operations);
+    expect((await listContainers(tm)).accounts.at(-1)!.containers.map((c: any) => c.name)).not.toContain("shop.example");
+    await expect(resolveGtmChange(tm, { type: "delete_container", container: DEMO_CONTAINER }).then((x) => writeGtm(tm, x.operations))).rejects.toThrow(/can't be deleted/);
   });
 });

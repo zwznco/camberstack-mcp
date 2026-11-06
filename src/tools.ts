@@ -15,7 +15,7 @@ import { DEMO_PROPERTY } from "./ga4.js";
 import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
 import { PageSpeedClient, type Strategy } from "./pagespeed.js";
-import { CONTAINER_PATH, DEMO_CONTAINER, listContainers, tagManagerSetup } from "./gtm.js";
+import { CONTAINER_PATH, DEMO_GTM_ACCOUNT, listContainers, tagManagerSetup } from "./gtm.js";
 import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-changes.js";
 import { NotGrantedError, grantName } from "./google.js";
 
@@ -65,7 +65,7 @@ export function gateDemoCalls(on: boolean): void { gateDemo = on; }
 
 export function servicesOf(name: string, a: unknown): Service[] {
   const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; container?: unknown;
-    changes?: { property_id?: unknown; site_url?: unknown; type?: unknown; container?: unknown }[] };
+    account?: unknown; changes?: { property_id?: unknown; site_url?: unknown; type?: unknown; container?: unknown; account?: unknown }[] };
   const realGa = (p: unknown) => gateDemo || p !== DEMO_PROPERTY;
   const realMc = typeof x.account_id === "string" && (gateDemo || x.account_id !== DEMO_MERCHANT);
   // Reads Ads and Merchant Center together, so like paid_organic_overlap it needs a paid plan on one-service Free.
@@ -81,9 +81,10 @@ export function servicesOf(name: string, a: unknown): Service[] {
   if ((name.startsWith("search_console_") && name !== "search_console_sites") || SC_PROPOSES.has(name)) return (gateDemo || x.site_url !== DEMO_SITE) ? ["search_console"] : [];
   if (name === "propose_search_console_changes") return (x.changes ?? []).some((c) => (gateDemo || c?.site_url !== DEMO_SITE)) ? ["search_console"] : [];
   if (["analytics_report", "analytics_landing_pages", "analytics_setup"].includes(name) || GA_PROPOSES.has(name)) return realGa(x.property_id) ? ["analytics"] : [];
-  const realGtm = (c: unknown) => gateDemo || c !== DEMO_CONTAINER;
-  if (name === "tag_manager_setup" || GTM_PROPOSES.has(name)) return realGtm(x.container) ? ["tag_manager"] : [];
-  if (name === "propose_tag_manager_changes") return (x.changes ?? []).some((c) => realGtm(c?.container)) ? ["tag_manager"] : [];
+  // The demo account and everything in it (its container, and containers created there) are sample data.
+  const realGtm = (c: unknown) => gateDemo || !(typeof c === "string" && (c === DEMO_GTM_ACCOUNT || c.startsWith(`${DEMO_GTM_ACCOUNT}/`)));
+  if (name === "tag_manager_setup" || GTM_PROPOSES.has(name)) return realGtm(x.container ?? x.account) ? ["tag_manager"] : [];
+  if (name === "propose_tag_manager_changes") return (x.changes ?? []).some((c) => realGtm(c?.container ?? c?.account)) ? ["tag_manager"] : [];
   // create_ga4_property has no property_id: a new property is real.
   if (name === "propose_analytics_changes") return (x.changes ?? []).some((c) => realGa(c?.property_id)) ? ["analytics"] : [];
   return [];
@@ -530,7 +531,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   // Tag Manager.
   tool("tag_manager_containers", {
     title: "List Tag Manager containers",
-    description: "Lists the Google Tag Manager web containers this Google login can read. Use a container from here in the other Tag Manager tools. "
+    description: "Lists the Google Tag Manager web containers this Google login can read. Use a container from here in the other Tag Manager tools, "
+      + "and an account_id to create a container in (create_container). "
       + "If Tag Manager isn't part of the connection yet, says so and returns grant_url, a personal link the user opens to add it.",
     annotations: read,
   }, async () => { const s = session(); return s.withListingNote("tag_manager", await listContainers(s.gtm)); });
@@ -547,8 +549,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   if (!o.chatgpt) tool("propose_tag_manager_changes", {
     title: "Propose Tag Manager changes (applies nothing)",
     description: "Checks Tag Manager changes against the container's workspace and stores them as a proposal with a plain-English summary; nothing is "
-      + "changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). Supported: add_google_tag, "
-      + "add_ads_conversion_tag, add_ga4_event_tag, add_conversion_linker, pause_tag, unpause_tag, delete_tag, and publish_container. Tag changes stay "
+      + "changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). Supported: create_container, "
+      + "delete_container, add_google_tag, add_ads_conversion_tag, add_ga4_event_tag, add_conversion_linker, pause_tag, unpause_tag, delete_tag, and publish_container. Tag changes stay "
       + "in the workspace until publish_container makes them live: include it to put them on the site (it runs last). Point out any ⚠ line before they approve.",
     inputSchema: { changes: z.array(PublicGtmChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },

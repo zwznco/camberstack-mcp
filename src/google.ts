@@ -21,11 +21,13 @@ export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
 /** Google Tag Manager (gtm.ts): read, edit tags and triggers in a workspace, make versions, publish. Asked for by link, like Merchant Center. */
 /**
  * No tagmanager.readonly: every read method also accepts edit.containers, so asking for both is redundant (and a
- * verification reviewer's first question). Each of the three is the only scope its methods accept: workspace edits,
- * workspaces.create_version, versions.publish.
+ * verification reviewer's first question). Each is the only scope its methods accept: edit.containers for containers.create
+ * and workspace edits, edit.containerversions for workspaces.create_version, publish for versions.publish,
+ * delete.containers for containers.delete (delete_container, and undoing create_container).
  */
 export const TAG_MANAGER_SCOPES = ["https://www.googleapis.com/auth/tagmanager.edit.containers",
-  "https://www.googleapis.com/auth/tagmanager.edit.containerversions", "https://www.googleapis.com/auth/tagmanager.publish"];
+  "https://www.googleapis.com/auth/tagmanager.edit.containerversions", "https://www.googleapis.com/auth/tagmanager.publish",
+  "https://www.googleapis.com/auth/tagmanager.delete.containers"];
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
 const ADS_API = "https://googleads.googleapis.com/v23";
 
