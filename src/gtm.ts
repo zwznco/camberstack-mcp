@@ -295,7 +295,9 @@ export class DemoTagManager implements TagManager {
       throw new Error(`Tag Manager API 404: ${path} not found`);
     }
     if (method === "POST" && (path === `${ws}/tags` || path === `${ws}/triggers`)) {
-      const id = String(s.nextId++), tag = path.endsWith("/tags");
+      const tag = path.endsWith("/tags");
+      if ((tag ? s.tags : s.triggers).some((x) => x.name === body?.name)) throw new Error("Tag Manager API 400: Found entity with duplicate name.");
+      const id = String(s.nextId++);
       const x = { ...body, ...(tag ? { tagId: id } : { triggerId: id }), path: `${path}/${id}` };
       (tag ? s.tags : s.triggers).push(x);
       this.save(s);

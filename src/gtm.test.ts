@@ -114,4 +114,17 @@ describe("Tag Manager", () => {
     expect((await listContainers(tm)).accounts.at(-1)!.containers.map((c: any) => c.name)).not.toContain("shop.example");
     await expect(resolveGtmChange(tm, { type: "delete_container", container: DEMO_CONTAINER }).then((x) => writeGtm(tm, x.operations))).rejects.toThrow(/can't be deleted/);
   });
+
+  it("two tags asking for the same new trigger share it, and only the first claims it for undo", async () => {
+    const tm = new DemoTagManager();
+    const fires = { kind: "page_url_contains" as const, value: "/booked" };
+    const a = await resolveGtmChange(tm, { type: "add_ga4_event_tag", container: DEMO_CONTAINER, name: "GA4 booked", measurement_id: "G-NW0000DEMO", event_name: "booked", fires_on: fires });
+    const b = await resolveGtmChange(tm, { type: "add_ads_conversion_tag", container: DEMO_CONTAINER, name: "Ads booked", conversion_id: "100000001", conversion_label: "Booked123", fires_on: fires });
+    const ra = await writeGtm(tm, a.operations), rb = await writeGtm(tm, b.operations);
+    expect(ra.triggerPath).toBeDefined();
+    expect(rb.triggerPath).toBeUndefined();
+    const tags = (await tm.call("GET", `${DEMO_CONTAINER}/workspaces/1/tags`)).tag;
+    const fired = tags.filter((t: any) => ["GA4 booked", "Ads booked"].includes(t.name)).map((t: any) => t.firingTriggerId[0]);
+    expect(new Set(fired).size).toBe(1);
+  });
 });

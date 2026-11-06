@@ -251,9 +251,17 @@ export async function writeGtm(tm: TagManager, ops: GtmOp[]): Promise<GtmWriteRe
       continue;
     }
     if (op.trigger) {
-      const t = await tm.call("POST", op.path.replace(/\/tags$/, "/triggers"), op.trigger);
-      out.triggerPath = t.path;
-      op = { ...op, body: { ...op.body, firingTriggerId: [t.triggerId] } };
+      const triggers = op.path.replace(/\/tags$/, "/triggers");
+      // Two tags in one proposal can ask for the same new trigger: the first creates it, the second reuses it (and
+      // doesn't claim it, so undoing the second leaves the first's trigger alone).
+      const made = await tm.call("POST", triggers, op.trigger).catch(async (e: Error) => {
+        if (!/duplicate name/i.test(e.message)) throw e;
+        const same = (await listAll(tm, triggers, "trigger")).find((t) => t.name === op.trigger.name);
+        if (!same) throw e;
+        return { ...same, reused: true };
+      });
+      if (!made.reused) out.triggerPath = made.path;
+      op = { ...op, body: { ...op.body, firingTriggerId: [made.triggerId] } };
     }
     const r = await tm.call(op.method, op.path, op.body);
     if (op.method === "POST" && op.path.endsWith("/tags")) out.tagPath = r.path;
