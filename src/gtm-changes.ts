@@ -122,6 +122,8 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
   }
   if (change.type === "delete_container") {
     const c = await tm.call("GET", change.container);
+    if (!String(c.publicId ?? "").startsWith("GTM-"))
+      throw new Error(`${c.publicId} is a Google tag, not a Tag Manager container: deleting it would stop that tag's measurement. Camberstack only deletes GTM- containers.`);
     const live = await tm.call("GET", `${change.container}/versions:live`).catch(() => null);
     return { ...base, operations: [{ method: "DELETE", path: change.container }],
       describe: `Delete container "${c.name}" (${c.publicId}) with all its tags, triggers and versions`

@@ -80,14 +80,17 @@ export async function listContainers(tm: TagManager) {
   try {
     // includeGoogleTags: an account made for a Google tag (Shopify's Google app makes one) is left out without it.
     const accounts = await listAll(tm, "accounts?includeGoogleTags=true", "account");
-    const out = await Promise.all(accounts.map(async (a) => ({
+    const all = await Promise.all(accounts.map(async (a) => ({
       account: a.name, account_id: a.path,
       containers: (await listAll(tm, `${a.path}/containers`, "container"))
-        .filter((c) => (c.usageContext ?? ["web"]).includes("web"))
+        // A Google tag (G-…, AW-…, GT-…) also lists as a container here; only GTM-… ones are Tag Manager containers.
+        .filter((c) => (c.usageContext ?? ["web"]).includes("web") && String(c.publicId ?? "").startsWith("GTM-"))
         .map((c) => ({ container: c.path, name: c.name, public_id: c.publicId })),
     })));
-    if (out.some((a) => a.containers.length)) return { accounts: out };
-    if (out.length) return { accounts: [...out, demo], note: "This Google login's Tag Manager account has no web container yet: create_container makes one (in account_id). The demo container (sample data) is offered too. Say so plainly." };
+    const out = all.filter((a) => a.containers.length);
+    if (out.length) return { accounts: out };
+    // No container yet: any of its accounts can take one (create_container).
+    if (all.length) return { accounts: [...all, demo], note: "This Google login has no Tag Manager container yet: create_container makes one (in an account_id above). The demo container (sample data) is offered too. Say so plainly." };
     return { accounts: [demo], note: "This Google login has no web Tag Manager container, so only the demo container (sample data) is offered. Say so plainly." };
   } catch (e) {
     if (!(e instanceof NotGrantedError)) throw e;
