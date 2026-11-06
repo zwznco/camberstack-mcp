@@ -78,7 +78,8 @@ export async function listContainers(tm: TagManager) {
     containers: (await listAll(tm, `${DEMO_GTM_ACCOUNT}/containers`, "container").catch(() => [{ path: DEMO_CONTAINER, name: "northwind-plumbing.example", publicId: "GTM-DEMO01" }]))
       .map((c) => ({ container: c.path, name: c.name, public_id: c.publicId })) };
   try {
-    const accounts = await listAll(tm, "accounts", "account");
+    // includeGoogleTags: an account made for a Google tag (Shopify's Google app makes one) is left out without it.
+    const accounts = await listAll(tm, "accounts?includeGoogleTags=true", "account");
     const out = await Promise.all(accounts.map(async (a) => ({
       account: a.name, account_id: a.path,
       containers: (await listAll(tm, `${a.path}/containers`, "container"))

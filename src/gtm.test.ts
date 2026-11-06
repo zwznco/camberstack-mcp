@@ -29,8 +29,8 @@ describe("Tag Manager", () => {
   });
 
   it("turns a missing scope into the personal link that adds Tag Manager, and lists the demo meanwhile", async () => {
-    const { tm } = client({ "GET accounts": () => insufficient });
-    await expect(tm.call("GET", "accounts")).rejects.toBeInstanceOf(NotGrantedError);
+    const { tm } = client({ "GET accounts?includeGoogleTags=true": () => insufficient });
+    await expect(tm.call("GET", "accounts?includeGoogleTags=true")).rejects.toBeInstanceOf(NotGrantedError);
     const r = await listContainers(routedTagManager(tm, new DemoTagManager())) as any;
     expect(r.grant_url).toContain("/connect/tag-manager");
     expect(r.accounts[0].containers[0].container).toBe(DEMO_CONTAINER);
@@ -38,7 +38,7 @@ describe("Tag Manager", () => {
 
   it("lists web containers across accounts and pages", async () => {
     const { tm, calls } = client({
-      "GET accounts": () => [200, { account: [{ name: "Acme", path: "accounts/1" }] }],
+      "GET accounts?includeGoogleTags=true": () => [200, { account: [{ name: "Acme", path: "accounts/1" }] }],
       "GET accounts/1/containers": () => [200, { container: [{ name: "acme.test", path: "accounts/1/containers/2", publicId: "GTM-AAA", usageContext: ["web"] },
         { name: "app", path: "accounts/1/containers/3", publicId: "GTM-BBB", usageContext: ["android"] }], nextPageToken: "p2" }],
       "GET accounts/1/containers?pageToken=p2": () => [200, { container: [{ name: "shop.test", path: "accounts/1/containers/4", publicId: "GTM-CCC" }] }],
@@ -97,7 +97,7 @@ describe("Tag Manager", () => {
 
   it("creates a container (undo deletes it) and warns that deleting one can't be undone", async () => {
     const { resolveGtmChange, writeGtm, gtmInverseAfterApply, gtmNoteAfterApply } = await import("./gtm-changes.js");
-    const tm = routedTagManager(client({ "GET accounts": () => [200, {}] }).tm, new DemoTagManager());
+    const tm = routedTagManager(client({ "GET accounts?includeGoogleTags=true": () => [200, {}] }).tm, new DemoTagManager());
     const r = await resolveGtmChange(tm, { type: "create_container", account: "accounts/000000001", name: "shop.example" });
     const res = await writeGtm(tm, r.operations);
     expect(res.publicId).toMatch(/^GTM-/);
