@@ -127,4 +127,19 @@ describe("Tag Manager", () => {
     const fired = tags.filter((t: any) => ["GA4 booked", "Ads booked"].includes(t.name)).map((t: any) => t.firingTriggerId[0]);
     expect(new Set(fired).size).toBe(1);
   });
+
+  it("waits out a 429 (the per-minute quota) and tries again", async () => {
+    let n = 0;
+    const f = (async () => (++n === 1 ? new Response("{}", { status: 429 }) : new Response(JSON.stringify({ account: [] }), { status: 200 }))) as unknown as typeof fetch;
+    const tm = new GtmClient(async () => "tok", () => null, f, [0]);
+    expect(await tm.call("GET", "accounts")).toEqual({ account: [] });
+    expect(n).toBe(2);
+  });
+
+  it("treats Tag Manager's own destination for an ID as that ID's Google tag", async () => {
+    const tm = new DemoTagManager();
+    await tm.call("POST", `${DEMO_CONTAINER}/workspaces/1/tags`, { name: "Google Analytics G-ABCD1234", type: "dest_ga", parameter: [] });
+    const r = await resolveGtmChange(tm, { type: "add_google_tag", container: DEMO_CONTAINER, tag_id: "G-ABCD1234" });
+    expect(r.operations).toEqual([]);
+  });
 });

@@ -26,14 +26,25 @@ export const ACCOUNT_PATH = /^accounts\/\d+$/;
 export type TagManager = { call(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: object): Promise<any> };
 
 export class GtmClient implements TagManager {
-  constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null, private f: typeof fetch = fetch) {}
+  /**
+   * `waits`: Tag Manager's per-user quota is per minute and small (a dozen tool calls in a minute hit 429 on 2026-11-06),
+   * so a 429 waits for the window to turn and tries again rather than failing an apply half-way.
+   */
+  constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null, private f: typeof fetch = fetch,
+    private waits: number[] = [20_000, 40_000]) {}
 
   async call(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: object): Promise<any> {
-    const res = await this.f(`${API}/${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let res: Response, attempt = 0;
+    for (;;) {
+      res = await this.f(`${API}/${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (res.status !== 429 || attempt >= this.waits.length) break;
+      await res.text();
+      await new Promise((r) => setTimeout(r, this.waits[attempt++]));
+    }
     const text = await res.text();
     if (!res.ok) {
       if (scopeMissing(res.status, text)) throw new NotGrantedError("tag-manager", this.grantLink(), method !== "GET");
@@ -83,7 +94,7 @@ export async function workspaceOf(tm: TagManager, container: string): Promise<{ 
 }
 
 export const TAG_TYPES: Record<string, string> = {
-  googtag: "Google tag", gaawe: "GA4 event", awct: "Google Ads conversion", gclidw: "Conversion Linker", sp: "Google Ads remarketing",
+  googtag: "Google tag", dest_ga: "Google tag destination (GA4)", dest_aw: "Google tag destination (Google Ads)", gaawe: "GA4 event", awct: "Google Ads conversion", gclidw: "Conversion Linker", sp: "Google Ads remarketing",
   awud: "Google Ads user-provided data", dest_mc: "Merchant Center destination", html: "Custom HTML", img: "Custom image", ua: "Universal Analytics (retired)", flc: "Floodlight counter", fls: "Floodlight sales",
 };
 const typeLabel = (t: string) => TAG_TYPES[t] ?? (t.startsWith("cvt_") ? "Community template" : t);

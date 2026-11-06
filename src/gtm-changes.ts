@@ -145,7 +145,10 @@ export async function resolveGtmChange(tm: TagManager, change: GtmChange): Promi
   };
   switch (change.type) {
     case "add_google_tag": {
-      const have = tags.find((t) => t.type === "googtag" && param(t, "tagId") === change.tag_id);
+      // Tag Manager adds its own destination (dest_ga / dest_aw, named after the ID) once a tag sends to that ID, and a
+      // Google tag for the same ID next to it fails to publish (a compiler error, seen 2026-11-06).
+      const have = tags.find((t) => (t.type === "googtag" && param(t, "tagId") === change.tag_id)
+        || (/^dest_/.test(t.type) && (param(t, "tagId") === change.tag_id || String(t.name ?? "").endsWith(change.tag_id))));
       if (have) return { ...base, operations: [], describe: `Add a Google tag for ${change.tag_id} (already there: "${have.name}")` };
       return add({ name: `Google tag ${change.tag_id}`, type: "googtag", parameter: [tmpl("tagId", change.tag_id)] }, null,
         `Add a Google tag for ${change.tag_id} to ${change.container}`);
