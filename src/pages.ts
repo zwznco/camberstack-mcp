@@ -360,7 +360,7 @@ export function homePage(baseUrl: string): string {
 <li>Negative keywords and budgets up to whole new Search, Performance Max, Display and YouTube campaigns</li>
 <li>One URL and a Google sign-in for Claude, ChatGPT, Cursor or any MCP app. Works with manager (MCC) accounts</li>
 <li>Optional <a href="#search-console">Search Console</a>: where you already rank, which searches you may be paying for twice, and sitemaps you approve</li>
-<li>Optional <a href="#analytics">Google Analytics 4</a>: which landing pages turn ad clicks into conversions</li>
+<li>Optional <a href="/google-analytics-mcp">Google Analytics 4</a>: which landing pages turn ad clicks into conversions</li>
 <li>Optional <a href="/google-merchant-center-mcp">Merchant Center</a>: why products are disapproved or limited, what they were earning in Shopping ads, and fixes you approve</li>
 </ul>
 </div></section>
@@ -403,7 +403,7 @@ ${pairList([
   ["Mark or unmark an event as a key event", "Restores the previous setting"],
   ["Link or unlink a Google Ads account", "Restores the previous link"],
 ], "Undo")}
-<p class="muted small">Google Ads, Search Console, Google Analytics and Merchant Center are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property.</p>
+<p class="muted small">Google Ads, Search Console, Google Analytics and Merchant Center are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property. <a href="/google-analytics-mcp">More on the Google Analytics tools</a>.</p>
 </div>
 </div></section>
 
@@ -493,6 +493,10 @@ const ASK_FIRST = `<h2>What to ask first</h2>
 <li><em>"Which searches am I paying for that my site already ranks for organically?"</em></li>
 <li>Not ready to use your real account? <em>"Show me Camberstack's demo account."</em></li>
 </ul>`;
+
+/** The other Google services, for the Ads guides: each has its own page, which the guides otherwise never linked. */
+const OTHER_SERVICES = `<p>The same connection can also read <a href="/google-search-console-mcp">Search Console</a>, <a href="/google-analytics-mcp">Google Analytics 4</a>
+and <a href="/google-merchant-center-mcp">Merchant Center</a>, if you leave their boxes ticked when you sign in.</p>`;
 
 const CAN_CHANGE = `<h2>What it can change</h2>
 <p>Negative keywords, budgets and end dates, pausing and re-enabling, bids, targeting and bid strategy, conversion goals, and whole new
@@ -609,6 +613,7 @@ ${COPY_JS}
 ${ASK_FIRST}
 
 ${CAN_CHANGE}
+${OTHER_SERVICES}
 
 ${guideTroubleshooting("Claude",
   "Claude only uses a connector that's switched on for the chat. Click <strong>+</strong> at the bottom left, open <strong>Connectors</strong> and turn Camberstack on. Naming it helps too: <em>\"Use Camberstack to…\"</em>.",
@@ -687,6 +692,7 @@ and never looks at your account. Some first questions:</p>
 Approve in the chat and the change is made in Google Ads; ask <em>"@Camberstack undo that"</em> to reverse it.
 It can change negatives, budgets, bids, targeting and conversion goals, and build paused campaigns: <a href="/#changes">the full list</a>
 and <a href="/tools">every tool</a>. In the phone app, the same @-mention works once you've set it up on the web.</p>
+${OTHER_SERVICES}
 
 ${guideTroubleshooting("ChatGPT",
   "ChatGPT uses a plugin only when you mention it. Start the message with <strong>@</strong> and its name: <em>\"@Camberstack how did my campaigns do last month?\"</em>",
@@ -793,7 +799,8 @@ structured-data items and their errors, which covers the same ground one page at
 <h2>Compared with running your own</h2>
 <p>Open-source Search Console MCP servers run on your machine and need a Google Cloud project with the Search Console API enabled,
 plus an OAuth client or a service account added as a user on each property. That suits a developer on one laptop. Camberstack
-runs that part for you: one Google sign-in, and it works the same in Claude on the web, on your phone, and in ChatGPT.</p>
+runs that part for you: one Google sign-in, and it works the same in Claude on the web, on your phone, and in ChatGPT.
+The same connection reads <a href="/google-analytics-mcp">Google Analytics 4</a> and <a href="/google-merchant-center-mcp">Merchant Center</a> too.</p>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
@@ -898,7 +905,8 @@ products with ad spend needs Ads.</p>
 <h2>Compared with running your own</h2>
 <p>Google's Merchant API needs a Google Cloud project with the API enabled, registered with a Merchant Center account before any call
 works, plus an OAuth client of your own. That suits a developer on one laptop. Camberstack runs that part for you: one Google sign-in,
-and it works the same in Claude on the web, on your phone, and in ChatGPT.</p>
+and it works the same in Claude on the web, on your phone, and in ChatGPT. The same connection reads <a href="/google-search-console-mcp">Search Console</a>
+and <a href="/google-analytics-mcp">Google Analytics 4</a> too.</p>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
@@ -913,6 +921,113 @@ when your AI asks and aren't kept. Details in the <a href="/privacy">privacy pol
 `)}
 ${closer("Ask your AI why products aren't showing on Google.", fp.kind === "one_service" ? "Free for one Google service." : "Free on one Merchant Center account.",
   `<a class="btn btn-lg" href="/#setup">Connect Merchant Center</a><a class="btn btn-lg btn-ghost" href="/tools#merchant_accounts">See the tools</a>`)}
+`,
+  });
+}
+
+/**
+ * Use-case page for "google analytics mcp" (720/mo, 320 → 1,000 over the year to 2026-09), "ga4 mcp" (170) and "google
+ * analytics mcp server" (170): low competition, $5–41 top-of-page bid (Keyword Planner via the dev connector, 2026-11-06;
+ * scripts/seo/audits/camberstack.md). The GA4 tools need no Google Ads account (tools.ts gates them on Analytics only).
+ * The hero's numbers are the demo property's (ga4.ts DemoAnalytics, analytics_landing_pages, Paid Search, 30 days).
+ * Google's own server: github.com/googleanalytics/google-analytics-mcp, read 2026-11-06 (local pipx/ADC, or self-hosted on
+ * Cloud Run; writes only annotations, custom dimensions and key events, behind --allow-write).
+ */
+export function analyticsPage(baseUrl: string): string {
+  const mcpUrl = `${baseUrl}/mcp`;
+  return layout({
+    baseUrl, path: "/google-analytics-mcp", wide: true,
+    title: "Google Analytics MCP server (GA4), hosted | Camberstack",
+    description: "A hosted Google Analytics 4 MCP server for Claude, ChatGPT and Cursor. Sign in with Google: no Cloud project, credentials file or pipx. Landing pages, any GA4 report, key events and Google Ads links, changed only with your approval.",
+    jsonLd: {
+      "@context": "https://schema.org", "@type": "TechArticle",
+      headline: "Google Analytics MCP server", url: `${baseUrl}/google-analytics-mcp`, dateModified: "2026-11-06",
+      author: { "@type": "Organization", name: "Camberstack", url: baseUrl },
+      about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
+    },
+    body: `
+${guideHero({
+  kicker: "GA4, no Google Ads account needed",
+  title: "Google Analytics MCP server",
+  lede: `Ask your AI assistant which pages turn visitors into leads, and it reads your Google Analytics 4 property to answer:
+sessions, engagement and key events by landing page, channel, campaign or device. It can also fix the setup behind those numbers,
+such as marking a key event or linking Google Ads, only when you approve. Camberstack is hosted, so setup is a Google sign-in.`,
+  ctas: `<a class="btn btn-lg" href="#setup">Connect Google Analytics</a><a class="btn btn-lg btn-ghost" href="/tools#analytics_properties">See the tools</a>`,
+  aside: `<figure class="window" aria-label="An example answer, from the demo property">
+<div class="window-bar"><i></i><i></i><i></i><span>Demo property · Northwind Plumbing</span></div>
+<div class="window-body">
+<p class="said you">Which landing pages convert my Google Ads clicks?</p>
+<p class="ai">Paid Search over the last 30 days, by landing page:</p>
+<table class="mini"><tr><th>Landing page</th><th>Sessions</th><th>Key event rate</th></tr>
+<tr><td>/</td><td>538</td><td>3.9%</td></tr>
+<tr><td>/emergency-plumber</td><td>348</td><td>8.1%</td></tr>
+<tr><td>/water-heater-repair</td><td>237</td><td>8.0%</td></tr>
+<tr><td>/contact</td><td>127</td><td>11.0%</td></tr></table>
+<p class="ai">Your home page gets the most ad clicks but converts at half the rate of the service pages. Want me to check which campaigns send traffic there?</p>
+</div>
+</figure>`,
+})}
+${guideBody(`
+<h2>Questions it answers</h2>
+${pairList([
+  [`<em>"Which landing pages turn ad clicks into leads?"</em>`, "Sessions, users, engagement rate, key events and key event rate per landing page, for all traffic or one channel such as Paid Search or Organic Search"],
+  [`<em>"How did paid traffic compare with organic last month?"</em>`, "Any GA4 report by dimension and metric: channel, source and medium, campaign, page, device, country, event, revenue"],
+  [`<em>"Is my GA4 set up right for Google Ads?"</em>`, "Each property's web streams and measurement IDs, which events count as key events, and which Google Ads accounts it's linked to"],
+  [`<em>"Which of my campaigns bring visitors who never convert?"</em>`, "GA4 sessions by Google Ads campaign next to the campaign's spend in Google Ads (needs a Google Ads account)"],
+], "Reads")}
+<p>Answers come from the Google Analytics Data API, so they match GA4's own reports, with its limits: today's data is still
+processing, and very large reports can be sampled or group rare values into <code>(other)</code>.</p>
+
+<h2>Setup changes it can make</h2>
+<p>Ask for a change and your AI shows you a proposal first. Nothing changes until you approve it, and every change can be undone.</p>
+${pairList([
+  ["Create a GA4 property with a web stream for your site (the result gives the measurement ID and the tag to add)", "Moves the property to Google Analytics' trash, restorable there for 35 days"],
+  ["Mark or unmark an event as a key event, such as <code>generate_lead</code> or <code>purchase</code>", "Restores the previous setting"],
+  ["Count a key event once per event or once per session; a Google Ads conversion imported from it follows", "Restores the previous counting"],
+  ["Link or unlink a Google Ads account, so Ads can import key events and GA4 shows ad clicks and cost", "Restores the previous link"],
+], "Undo")}
+<p>With Google Ads connected too, your AI can then import a key event into Google Ads as a conversion action, in the same kind of
+proposal. That is the usual fix when Google Ads reports no conversions while GA4 shows leads.</p>
+
+<h2>Key events and Google Ads</h2>
+<p>A key event is what GA4 now calls a conversion. Google Ads can only bid on a GA4 key event if three things hold: the event is
+marked as a key event, the property is linked to the Google Ads account, and the event is imported there as a conversion action.
+Ask <em>"Why doesn't Google Ads see my GA4 conversions?"</em> and your AI checks each step and proposes the missing one. Linking needs
+you to be an admin of both the property and the Google Ads account.</p>
+
+<h2 id="setup">Set it up</h2>
+<p>Connect Camberstack in your AI app (<a href="/google-ads-claude">Claude</a>, <a href="/google-ads-chatgpt">ChatGPT</a>, or any MCP
+client with <code>${mcpUrl}</code>). On Google's sign-in screen, leave the <strong>Google Analytics</strong> box ticked, then ask
+<em>"List my Google Analytics properties"</em> and use a property from that list. Already connected without it? The first time you
+ask, Camberstack gives you a link that adds it to the same Google account, with no reconnecting.</p>
+<p>Google's screen also asks for Google Ads access, because Camberstack is a Google Ads tool too. You don't need a Google Ads account
+to use the Google Analytics tools: every one of them works on your real properties without it.</p>
+
+<h2>Compared with Google's own</h2>
+<p>Google publishes an open-source Google Analytics MCP server. You run it yourself, on your machine with Python and
+<code>pipx</code>, or deployed to your own Cloud Run: it needs a Google Cloud project with the Analytics Admin and Data APIs
+enabled, and your own OAuth client or credentials. It reads reports, and can create key events, custom dimensions and annotations once
+you turn writes on. That suits a developer on one laptop. Camberstack is hosted, so you only sign in with Google, it works the
+same in Claude on the web, on your phone and in ChatGPT, and every change is a proposal you approve, with undo. It also reads
+your Google Ads, <a href="/google-search-console-mcp">Search Console</a> and <a href="/google-merchant-center-mcp">Merchant Center</a>
+through the same connection.</p>
+
+<h2>Questions</h2>
+<h3>What does it cost?</h3>
+<p>${fp.kind === "accounts" ? `Google Analytics is included on every plan: <a href="/#pricing">Free, Pro and Agency</a>.`
+  : fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, Google Analytics is included on Free. From then, Free covers one Google service at a time, and Google Analytics can be that one. Using it together with Google Ads, for example to see campaigns next to their landing pages, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`
+  : `Free covers one Google service at a time, and Google Analytics can be that one. Using it together with Google Ads, for example to see campaigns next to their landing pages, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`}</p>
+<h3>Which Google Analytics permission do I need?</h3>
+<p>Viewer access to a property is enough to read it. Marking key events needs Marketer or Editor; linking Google Ads needs admin
+access to both. Only the properties your Google login can see are listed.</p>
+<h3>Can I try it first?</h3>
+<p>Yes. Ask for the demo property, a sample plumbing business with six landing pages and five channels. Changes there change only the demo.</p>
+<h3>Do you store my analytics data?</h3>
+<p>No. Camberstack fetches reports when your AI asks and passes them on; they aren't kept. Only the setup changes you approve are
+stored, so they can be shown and undone. Details in the <a href="/privacy">privacy policy</a>.</p>
+`)}
+${closer("Ask your AI which pages turn visitors into customers.", fp.kind === "one_service" ? "Free for one Google service." : "Free.",
+  `<a class="btn btn-lg" href="/#setup">Connect Google Analytics</a><a class="btn btn-lg btn-ghost" href="/tools#analytics_properties">See the tools</a>`)}
 `,
   });
 }
@@ -1081,6 +1196,16 @@ searches you pay for that already rank organically. It can also submit, resubmit
 proposals you approve (<code>propose_search_console_changes</code>). If you connected before this existed, your first change gives you a link that adds it.
 Camberstack can't request indexing or verify a property; you do those in Search Console.
 <a href="/google-search-console-mcp">More on the Search Console tools</a>.</p>
+
+<h2 id="analytics">Google Analytics 4</h2>
+<p>With the Google Analytics box ticked, your AI can read your GA4 properties: landing pages with engagement and key events, for all
+traffic or one channel, any report by dimension and metric, and each property's streams, key events and Google Ads links. Through
+proposals you approve (<code>propose_analytics_changes</code>) it can create a property, mark or unmark key events and link Google Ads.
+None of it needs a Google Ads account. <a href="/google-analytics-mcp">More on the Google Analytics tools</a>.</p>
+
+<h2 id="merchant-center">Merchant Center</h2>
+<p>With the Merchant Center box ticked, your AI can see why products are disapproved or limited, what they earned in Shopping ads, and
+fix prices, GTINs and titles through overrides you approve. <a href="/google-merchant-center-mcp">More on the Merchant Center tools</a>.</p>
 
 <h2 id="demo">Demo account</h2>
 <p>Account <code>000-000-0001</code> is a sample plumbing business with six months of campaigns and search terms. Every tool works on it,
@@ -1452,7 +1577,7 @@ export function robotsTxt(baseUrl: string): string {
 }
 
 /** The indexable pages, in sitemap order. */
-export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/google-search-console-mcp", "/google-merchant-center-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
+export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/google-search-console-mcp", "/google-analytics-mcp", "/google-merchant-center-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
 
 /** `lastmod`: each page's own last-changed date (lastmod.ts), never one date for the whole site. */
 export function sitemapXml(baseUrl: string, lastmod: Record<string, string>): string {
@@ -1469,6 +1594,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - Tools: ${tools.map((t) => t.name).join(", ")}
 - Writes (each one proposed, approved, then applied; almost all can be undone, and the few Google can't reverse warn first): negative keywords on campaigns and ad groups, and shared negative lists; pause/enable campaign, ad group, keyword or ad; daily budget; end date; build a Search, Display, Demand Gen (YouTube video) or Performance Max campaign (created paused); add ad groups, keywords, ads; edit a responsive search ad in place; delete keywords, ads, ad groups, campaigns, negatives and sitelinks; sitelinks, callouts, structured snippets, business name, logos and images; bids; bid strategy; ad schedules and device bids; location/language targeting; URL suffix; AI Max and Google-written text; conversion actions, goals, value, window and attribution; remarketing lists; apply or dismiss Google's recommendations.
 - Search Console (optional): site totals, query/page performance, period-over-period trends, ranking opportunities, URL Inspection (index status), sitemap status, and paid vs organic overlap with the Ads account; approved changes submit or remove sitemaps and add or remove properties.
+- Google Analytics 4 (optional): landing pages with engagement and key events by channel, any GA4 report, each property's streams, key events and Google Ads links; approved changes create a property, mark or unmark key events, and link or unlink Google Ads.
 - Merchant Center (optional): account and product issues, Shopping and free-listing reports, disapproved products joined with their ad spend; approved changes override product attributes (price, GTIN, title, …) through Camberstack's own supplemental source, exclude or include products, add Camberstack's own products, and link Merchant Center to Google Ads. The feed itself is never edited.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
 - Pricing: ${fp.kind === "one_service" ? `Free plan covers ${oneServiceFree()} (every tool, unlimited applied changes); Plus ${PLUS_PRICE_LABEL} covers all four together on 1 Google Ads account; Pro and Agency cover all four on more accounts.`
@@ -1479,6 +1605,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - [Connect Google Ads to Claude (guide with a worked example)](${baseUrl}/google-ads-claude)
 - [Connect Google Ads to ChatGPT (step-by-step guide)](${baseUrl}/google-ads-chatgpt)
 - [Google Search Console MCP (works without a Google Ads account)](${baseUrl}/google-search-console-mcp)
+- [Google Analytics MCP, GA4 (works without a Google Ads account)](${baseUrl}/google-analytics-mcp)
 - [Google Merchant Center MCP (works without a Google Ads account)](${baseUrl}/google-merchant-center-mcp)
 - [Every tool, with its parameters](${baseUrl}/tools)
 - [Source (MIT)](${SOURCE_URL})

@@ -24,7 +24,7 @@ import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
 import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
-import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, merchantCenterPage, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage, withFreePlan } from "./pages.js";
+import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, merchantCenterPage, analyticsPage, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage, withFreePlan } from "./pages.js";
 import { freePlan } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
@@ -360,6 +360,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     "/google-ads-claude": claudeGuidePage(cfg.baseUrl),
     "/google-ads-chatgpt": chatgptGuidePage(cfg.baseUrl),
     "/google-search-console-mcp": searchConsolePage(cfg.baseUrl),
+    "/google-analytics-mcp": analyticsPage(cfg.baseUrl),
     "/google-merchant-center-mcp": merchantCenterPage(cfg.baseUrl),
     "/docs": docsPage(cfg.baseUrl),
     "/tools": toolsPage(cfg.baseUrl, tools),

@@ -2797,6 +2797,18 @@ describe("OAuth + MCP end to end", () => {
     expect(await (await fetch(`${base}/`)).text()).toContain('href="/google-merchant-center-mcp"');
   });
 
+  it("serves the Google Analytics page, listed and linked from the home page and both Ads guides", async () => {
+    const r = await fetch(`${base}/google-analytics-mcp`);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toContain("<h1>Google Analytics MCP server</h1>");
+    expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/google-analytics-mcp`);
+    expect(await (await fetch(`${base}/llms.txt`)).text()).toContain(`${base}/google-analytics-mcp`);
+    for (const path of ["/", "/google-ads-claude", "/google-ads-chatgpt", "/docs"]) {
+      const html = await (await fetch(`${base}${path}`)).text();
+      for (const link of ["/google-analytics-mcp", "/google-search-console-mcp", "/google-merchant-center-mcp"]) expect(html, `${path} → ${link}`).toContain(`href="${link}"`);
+    }
+  });
+
   it("serves the Claude guide and lists it in the sitemap", async () => {
     const g = await fetch(`${base}/google-ads-claude`);
     expect(g.status).toBe(200);
