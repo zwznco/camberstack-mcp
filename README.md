@@ -12,7 +12,8 @@ YouTube campaigns, GA4 key events and Merchant Center product fixes. **Nothing c
 proposal**, and risky changes and deletions Google can't reverse are flagged first. No developer token, API keys
 or Google Cloud project. A demo account lets anyone try every tool first.
 
-![Claude proposes two negative keywords, checked with Google and waiting for approval before anything changes (demo account, sample data)](brand/carousel/3-approve.png)
+![Claude proposes two negative keywords, checked with Google and waiting for approval before anything changes (demo account, sample data)](brand/readme-approve.png)
+<sub>Demo account 000-000-0001: sample data for a fictional plumbing business.</sub>
 
 Hosted: **https://camberstack.io/mcp**. Free: every tool and unlimited changes on 1 account, with one switch a month;
 from November 15, one Google service at a time. Plus $7/mo: all four services on 1 account. Pro $15/mo: up to 5
