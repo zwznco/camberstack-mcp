@@ -47,7 +47,10 @@
     "google-analytics",
     "ga4",
     "merchant-center",
-    "google-shopping"
+    "google-shopping",
+    "mcp-server",
+    "google-search-console",
+    "google-ads-api"
   ],
   "repository": {
     "type": "git",

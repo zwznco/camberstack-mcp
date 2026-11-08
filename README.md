@@ -1,4 +1,4 @@
-# Camberstack: a Google Ads MCP server
+# Camberstack: Google Ads, Search Console, GA4 and Merchant Center MCP server for Claude and ChatGPT
 
 [![Camberstack MCP server on Glama](https://glama.ai/mcp/servers/zwznco/camberstack-mcp/badges/score.svg)](https://glama.ai/mcp/servers/zwznco/camberstack-mcp)
 
@@ -7,8 +7,8 @@ MCP client with one Google sign-in, and use them together: the searches you pay 
 clicks convert on the landing page, which disapproved products were earning in Shopping. Your AI reads with
 read-only tools and can propose changes, from negative keywords to whole Search, Performance Max, Display and
 YouTube campaigns, GA4 key events and Merchant Center product fixes. **Nothing changes until you approve a specific
-proposal**; risky changes and deletions Google can't reverse are flagged first, and the rest can be undone. A demo
-account lets anyone try every tool first.
+proposal**, and risky changes and deletions Google can't reverse are flagged first. No developer token, API keys
+or Google Cloud project. A demo account lets anyone try every tool first.
 
 Hosted: **https://camberstack.io/mcp**. Free: every tool and unlimited changes on 1 account, with one switch a month;
 from November 15, one Google service at a time. Plus $7/mo: all four services on 1 account. Pro $15/mo: up to 5
@@ -17,6 +17,15 @@ accounts. Agency $49/mo: up to 25.
 **Setup guides, with screenshots and troubleshooting:** [Connect Google Ads to Claude](https://camberstack.io/google-ads-claude) ·
 [Connect Google Ads to ChatGPT](https://camberstack.io/google-ads-chatgpt) · [every tool](https://camberstack.io/tools) ·
 [Cursor, VS Code and others](https://camberstack.io/#setup)
+
+## Ask it things like
+
+- "Which searches am I paying for that already rank in the top 3 organically?"
+- "Which landing pages get ad clicks but no conversions?"
+- "Why were my best-selling products disapproved, and what were they earning in Shopping ads?"
+- "Find search terms wasting money this month and propose negative keywords."
+- "Build a Search campaign for our new service page, paused, with 3 ad groups."
+- "Which Search Console queries on page 2 would be worth the most clicks if they moved up?"
 
 ## Tools
 
@@ -62,34 +71,6 @@ days Google is still filling in. Sitemaps and properties change through `propose
 (submit or delete a sitemap, add or remove a property). Requesting indexing has no API, and verifying a property is
 done in Search Console.
 
-The Google Analytics tools need `analytics.readonly` and `analytics.edit` (Google-verified sensitive scopes). Sign-in
-asks for them alongside Ads and Search Console; a connection made before they were added gets a personal
-`/connect/analytics` link on its first Analytics call, which adds both to the same Google account. The Cloud project
-needs the Google Analytics Data API and Admin API enabled.
-
-Merchant Center accounts are their own plan allowance, the same size as Google Ads' (Free 1, Plus 1, Pro 5, Agency 25), counted as
-`mc:<id>` in `tool_calls` with their own switch (`switch_account` takes `mc:<id>`).
-
-The Merchant Center tools need `content`, which isn't part of connecting: the first call without it
-returns a personal `/connect/merchant-center` link that adds it. Before any call works, the Cloud project needs
-the Merchant API enabled and **registered once** with a production Merchant Center account the operator administers
-(`POST https://merchantapi.googleapis.com/accounts/v1/accounts/{ID}/developerRegistration:registerGcp`); merchants
-don't register. Unregistered, calls answer 401 "not registered", which the tools report as Camberstack's to fix.
-Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Account `000000001` is the
-demo (sample data: two best sellers disapproved for a price mismatch 9 days ago; overrides there fix the issue).
-
-Products Camberstack creates live in its own primary API source ("Camberstack products"); only those can be updated in
-place or deleted (undo re-creates them from Camberstack's copy). Adding an offer_id another feed already has is refused,
-since Google would move that product into our source ("offer stealing").
-
-Merchant Center changes never edit the merchant's feed. Each is an override in Camberstack's own supplemental data source
-("Camberstack overrides"), created on the first write. Google applies a supplemental source only once it's in a primary
-source's rules, so the first override on a feed's products also patches that feed's `defaultRule` to put ours first
-(every source already there is kept): the summary shows it as a ⚠ line. Feeds made in the Merchant Center UI or by
-autofeed can't be patched, and the proposal says so. Google can't read overrides back, so `merchant_overrides` keeps
-Camberstack's copy per product; undo restores exactly that (removing the input when there was none). The Merchant API
-has no dry run: re-resolving at apply is the check, as with GA4.
-
 What a proposal can do:
 
 - **Control:** add negative keywords; pause or enable a campaign, ad group, keyword or ad; set a campaign's
@@ -129,13 +110,43 @@ PKCE). Its `/authorize` sends the user to Google for `openid email` plus `adword
 token is stored AES-256-GCM encrypted and never leaves the server. The MCP client gets
 Camberstack's own tokens, which are stored only as SHA-256 hashes.
 
+## Self-hosting and internals
+
+The Google Analytics tools need `analytics.readonly` and `analytics.edit` (Google-verified sensitive scopes). Sign-in
+asks for them alongside Ads and Search Console; a connection made before they were added gets a personal
+`/connect/analytics` link on its first Analytics call, which adds both to the same Google account. The Cloud project
+needs the Google Analytics Data API and Admin API enabled.
+
+Merchant Center accounts are their own plan allowance, the same size as Google Ads' (Free 1, Plus 1, Pro 5, Agency 25), counted as
+`mc:<id>` in `tool_calls` with their own switch (`switch_account` takes `mc:<id>`).
+
+The Merchant Center tools need `content`, which isn't part of connecting: the first call without it
+returns a personal `/connect/merchant-center` link that adds it. Before any call works, the Cloud project needs
+the Merchant API enabled and **registered once** with a production Merchant Center account the operator administers
+(`POST https://merchantapi.googleapis.com/accounts/v1/accounts/{ID}/developerRegistration:registerGcp`); merchants
+don't register. Unregistered, calls answer 401 "not registered", which the tools report as Camberstack's to fix.
+Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Account `000000001` is the
+demo (sample data: two best sellers disapproved for a price mismatch 9 days ago; overrides there fix the issue).
+
+Products Camberstack creates live in its own primary API source ("Camberstack products"); only those can be updated in
+place or deleted (undo re-creates them from Camberstack's copy). Adding an offer_id another feed already has is refused,
+since Google would move that product into our source ("offer stealing").
+
+Merchant Center changes never edit the merchant's feed. Each is an override in Camberstack's own supplemental data source
+("Camberstack overrides"), created on the first write. Google applies a supplemental source only once it's in a primary
+source's rules, so the first override on a feed's products also patches that feed's `defaultRule` to put ours first
+(every source already there is kept): the summary shows it as a ⚠ line. Feeds made in the Merchant Center UI or by
+autofeed can't be patched, and the proposal says so. Google can't read overrides back, so `merchant_overrides` keeps
+Camberstack's copy per product; undo restores exactly that (removing the input when there was none). The Merchant API
+has no dry run: re-resolving at apply is the check, as with GA4.
+
 Two MCP SDKs, on purpose: `/mcp` is served by SDK v2 (`@modelcontextprotocol/server` + `/node`), which
 answers both 2026-07-28 clients (`server/discover`) and 2025-era ones (`initialize`, kept on a
 JSON-response transport). The authorization server (`mcpAuthRouter`, `requireBearerAuth`) stays on
 `@modelcontextprotocol/sdk` 1.x, because v2 ships only the resource-server half. Don't drop 1.x
 until v2 (or a companion package) has `/authorize`, `/token` and `/register`.
 
-## Run it
+### Run it
 
 ```bash
 npm ci && npm test
