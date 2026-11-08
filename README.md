@@ -1,3 +1,5 @@
+<img src="brand/logo.svg" width="64" height="64" alt="Camberstack logo">
+
 # Camberstack: Google Ads, Search Console, GA4 and Merchant Center MCP server for Claude and ChatGPT
 
 [![Camberstack MCP server on Glama](https://glama.ai/mcp/servers/zwznco/camberstack-mcp/badges/score.svg)](https://glama.ai/mcp/servers/zwznco/camberstack-mcp)
@@ -9,6 +11,8 @@ read-only tools and can propose changes, from negative keywords to whole Search,
 YouTube campaigns, GA4 key events and Merchant Center product fixes. **Nothing changes until you approve a specific
 proposal**, and risky changes and deletions Google can't reverse are flagged first. No developer token, API keys
 or Google Cloud project. A demo account lets anyone try every tool first.
+
+![Claude proposes two negative keywords, checked with Google and waiting for approval before anything changes (demo account, sample data)](brand/carousel/3-approve.png)
 
 Hosted: **https://camberstack.io/mcp**. Free: every tool and unlimited changes on 1 account, with one switch a month;
 from November 15, one Google service at a time. Plus $7/mo: all four services on 1 account. Pro $15/mo: up to 5
