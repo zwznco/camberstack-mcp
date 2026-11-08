@@ -50,7 +50,9 @@
     "google-shopping",
     "mcp-server",
     "google-search-console",
-    "google-ads-api"
+    "google-ads-api",
+    "gsc",
+    "gmc"
   ],
   "repository": {
     "type": "git",
