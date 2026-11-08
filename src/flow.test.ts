@@ -687,9 +687,9 @@ describe("OAuth + MCP end to end", () => {
   });
 
   it("looks fields up in Google's catalog, and names the real ones when Google rejects a guessed field", async () => {
-    // gaql_fields is unlisted but still answers, for apps that hold it: a failed call would count against the listings.
-    const f = await call(token, "gaql_fields", { resource: "campaign", search: "cpc_bid_ceiling" });
-    expect(f.json.fields.names.join(" ")).toContain("campaign.target_spend.cpc_bid_ceiling_micros");
+    // gaql_fields was removed in 0.29.2 (unlisted since 0.14.0, no call in 14 days); the lookup is run_gaql with no FROM.
+    const gone = await call(token, "gaql_fields", { resource: "campaign" });
+    expect(gone.json).toBeNull();  // an unknown tool: a JSON-RPC error or an isError result, never data
     const listed = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },

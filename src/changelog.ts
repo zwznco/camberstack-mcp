@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.29.2", date: "2026-11-08",
+    summary: "Google Analytics setup reads ride out Google's brief outages.",
+    items: [
+      "**`analytics_setup`**: when Google Analytics briefly answers \"service unavailable\", Camberstack retries the read instead of failing, so your AI gets the property's streams, key events and Google Ads links in one call. Changes are never retried.",
+      "`gaql_fields` is gone: field lookups have been part of `run_gaql` (a query with no FROM) since 0.14.0, and no app has called it in two weeks.",
+    ],
+  },
+  {
     version: "0.29.1", date: "2026-11-06",
     summary: "Google Analytics reports recover from a wrong field name in one step.",
     items: [

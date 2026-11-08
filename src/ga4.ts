@@ -45,12 +45,20 @@ export class AnalyticsClient implements Analytics {
   constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null, private f: typeof fetch = fetch) {}
 
   private async call(url: string, body?: object, method = body ? "POST" : "GET"): Promise<any> {
-    const res = await this.f(url, {
-      method,
-      headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const text = await res.text();
+    // Reads retry a transient 5xx: the Admin API answers ~3% of analytics_setup's four parallel GETs with a 503 that the
+    // same call clears seconds later (prod, 2026-10-14 → 11-03: 6 of 179, each followed by a success). Writes never retry.
+    const read = method === "GET" || url.startsWith(DATA_API);
+    let res: Response, text: string;
+    for (let attempt = 0; ; attempt++) {
+      res = await this.f(url, {
+        method,
+        headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      text = await res.text();
+      if (!(read && attempt < 2 && [500, 502, 503, 504].includes(res.status))) break;
+      await new Promise((r) => setTimeout(r, 300 * 3 ** attempt));
+    }
     if (!res.ok) {
       if (scopeMissing(res.status, text)) throw new NotGrantedError("analytics", this.grantLink(), method !== "GET" && url.startsWith(ADMIN_API));  // a report is a POST too
       const msg = googleMessage(text);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { checkGaql, closest, fieldQuery, lookupFields, parseGaql, queryShape, type Catalog, type FieldMeta } from "./gaql.js";
+import { checkGaql, closest, fieldQuery, parseGaql, queryShape, type Catalog, type FieldMeta } from "./gaql.js";
 
 // A trimmed snapshot of Google's real field catalog (v23, 2026-10-14): ten resources with all their attributes,
 // and a handful of metrics and segments.
@@ -287,23 +287,7 @@ describe("run_gaql field lookups", () => {
   });
 });
 
-describe("gaql_fields lookup (unlisted; apps that hold it still call it)", () => {
-  it("lists a resource's fields, joinable resources, metrics and segments, narrowed by search", () => {
-    const r = lookupFields(cat, { resource: "campaign", search: "ceiling" }) as any;
-    expect(r.fields.names.join(" ")).toContain("campaign.target_spend.cpc_bid_ceiling_micros");
-    expect(r.also_select_from).toContain("campaign_budget");
-    const a = lookupFields(cat, { resource: "campaign_asset" }) as any;
-    expect(a.also_select_from).toEqual(expect.arrayContaining(["asset", "customer", "campaign", "ad_group"]));
-    expect(a.segments.names.every((s: string) => s.includes("."))).toBe(true);
-    expect(r.metrics.names).toEqual([]);
-  });
-  it("searches every resource with search alone", () => {
-    const r = lookupFields(cat, { search: "cpc_bid_ceiling" }) as any;
-    expect(r.matches.names.some((n: string) => n.startsWith("bidding_strategy.target_spend.cpc_bid_ceiling_micros"))).toBe(true);
-  });
-  it("suggests the resource it couldn't find", () => {
-    expect(() => lookupFields(cat, { resource: "bid_strategy" })).toThrow("Closest:");
-  });
+describe("closest()", () => {
   it("still names the field behind the usual slips (audit of 0.14.0's tightening)", () => {
     const names = [...cat.values()].filter((f) => f.category !== "RESOURCE").map((f) => f.name);
     const top = (n: string) => closest(n, names);

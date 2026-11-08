@@ -18,7 +18,7 @@ import { PageSpeedClient, type Strategy } from "./pagespeed.js";
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.29.1";
+export const SERVER_VERSION = "0.29.2";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -89,10 +89,10 @@ const isLookup = (name: string, a: unknown) => {
 };
 
 /**
- * Callable but not listed. gaql_fields moved into run_gaql (a SELECT with no FROM), since most apps never listed or
- * called it; apps that still hold it keep a working tool, because a failed call counts against the directory listings.
+ * Callable but not listed: a tool being retired stays callable for apps that still hold it, since a failed call counts
+ * against the directory listings. Empty since gaql_fields was removed (0.29.2: no call in 14 days).
  */
-const UNLISTED = new Set(["gaql_fields"]);
+const UNLISTED = new Set<string>();
 
 const customerId = z.string().describe("Google Ads customer ID, with or without dashes (from list_accounts)");
 const locationIds = z.array(z.string().regex(/^\d+$/)).min(1).max(10).default(["2840"])
@@ -303,19 +303,6 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     inputSchema: { customer_id: customerId, query: z.string().describe("A GAQL SELECT statement") },
     annotations: read,
   }, ({ customer_id, query }: { customer_id: string; query: string }) => session().runQuery(customer_id, query));
-
-  tool("gaql_fields", {
-    title: "Look up GAQL fields",
-    description: "Looks fields up in Google's own field catalog for the API version run_gaql uses, so queries name real fields. "
-      + "With resource (e.g. campaign, ad_group, keyword_view, bidding_strategy): that resource's fields, the resources whose fields can also be "
-      + "selected FROM it, and the metrics and segments it takes. With search alone: matching field names anywhere, e.g. search=\"cpc_bid_ceiling\". "
-      + "search narrows a resource's lists too (any of its words). Use it before run_gaql whenever unsure of a name. No account needed.",
-    inputSchema: {
-      resource: z.string().max(100).optional().describe("A resource to query FROM, e.g. campaign"),
-      search: z.string().max(200).optional().describe("Words that must appear in the field name, e.g. \"bidding target\""),
-    },
-    annotations: read,
-  }, ({ resource, search }: { resource?: string; search?: string }) => session().gaqlFields({ resource, search }));
 
   tool("keyword_ideas", {
     title: "Keyword ideas (Keyword Planner)",

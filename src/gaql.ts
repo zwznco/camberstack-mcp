@@ -420,32 +420,3 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length]!;
 }
 
-/**
- * gaql_fields: a resource's own fields, the resources it can also select from, and its metrics and segments; or,
- * with only `search`, matching names across the whole catalog. `search` filters by substring (any of its words).
- */
-export function lookupFields(cat: Catalog, o: { resource?: string; search?: string }) {
-  const words = (o.search ?? "").toLowerCase().split(/[\s,]+/).filter(Boolean);
-  const hit = (n: string) => !words.length || words.some((w) => n.includes(w));
-  const CAP = 200;
-  const capped = (xs: string[]) => ({ names: xs.slice(0, CAP), ...(xs.length > CAP ? { more: xs.length - CAP } : {}) });
-  if (!o.resource) {
-    if (!words.length) throw new Error("Give a resource (e.g. campaign) or search words (e.g. bid ceiling).");
-    const all = [...cat.values()].filter((f) => f.category !== "RESOURCE" && f.selectable !== false && hit(f.name));
-    return { matches: capped(all.map((f) => `${f.name} (${f.category.toLowerCase()}${f.dataType ? `, ${f.dataType}` : ""})`)),
-      tip: "Pass resource to see what one FROM can use; attributes belong to the resource named before their first dot." };
-  }
-  const r = cat.get(o.resource.toLowerCase());
-  if (!r || r.category !== "RESOURCE") {
-    const near = closest(o.resource, [...cat.values()].filter((f) => f.category === "RESOURCE").map((f) => f.name));
-    throw new Error(`No resource "${o.resource}"${near.length ? `. Closest: ${near.join(", ")}` : ""}.`);
-  }
-  const own = [...cat.values()].filter((f) => f.category === "ATTRIBUTE" && f.name.startsWith(`${r.name}.`) && hit(f.name));
-  return {
-    resource: r.name,
-    fields: capped(own.map((f) => `${f.name} ${f.dataType ?? ""}${f.isRepeated ? "[]" : ""}${f.filterable === false ? " (not filterable)" : ""}`.trim())),
-    also_select_from: [...(r.attributeResources ?? []), ...(r.segments ?? []).filter((s) => !s.includes("."))],
-    metrics: capped((r.metrics ?? []).filter(hit)),
-    segments: capped((r.segments ?? []).filter((s) => s.includes(".") && hit(s))),
-  };
-}

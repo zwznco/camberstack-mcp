@@ -10,6 +10,21 @@ const client = (f: (url: string, init?: RequestInit) => Response) =>
   new AnalyticsClient(async () => "t", () => "https://camberstack.io/connect/analytics?t=x", (async (u: string, i?: RequestInit) => f(String(u), i)) as typeof fetch);
 
 describe("AnalyticsClient", () => {
+  it("retries a read through a transient 503, and never retries a write", async () => {
+    const seen: string[] = [];
+    let n = 0;
+    const ga = client((u, i) => {
+      seen.push(`${i?.method} ${u.split("/v1beta/")[1]}`);
+      return u.includes("keyEvents") && n++ === 0 ? json({ error: { message: "The service is currently unavailable." } }, 503) : json({});
+    });
+    await gaSetup(ga, "1");
+    expect(seen.filter((x) => x.includes("keyEvents"))).toHaveLength(2);
+    let writes = 0;
+    const w = client(() => (writes++, json({ error: { message: "The service is currently unavailable." } }, 503)));
+    await expect(w.admin("POST", "properties/1/keyEvents", { eventName: "x" })).rejects.toThrow("503");
+    expect(writes).toBe(1);
+  });
+
   it("lists properties across pages of account summaries", async () => {
     const ga = client((u) => (u.includes("pageToken=p2")
       ? json({ accountSummaries: [{ account: "accounts/b2", displayName: "B", propertySummaries: [{ property: "properties/2", displayName: "Shop" }] }] })

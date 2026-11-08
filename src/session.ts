@@ -18,7 +18,7 @@ import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resol
 import { SC_TARGET, ScChangeSchema, resolveScChange, scNoteAfterApply, writeSc, type ScChange, type ScOp, type ScResolved } from "./search-console-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
 import { writeFileSync } from "node:fs";
-import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, lookupFields, queryShape } from "./gaql.js";
+import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, queryShape } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 import {
   ChangeSchema, MAX_CHANGES, inverseAfterApply, sameSummary, pendingOf, resolveChange, summarize,
@@ -903,11 +903,6 @@ export class UserSession {
     });
   }
 
-  async gaqlFields(o: { resource?: string; search?: string }) {
-    const cat = await this.fieldCatalog();
-    if (!cat) throw new Error("Google's field catalog isn't reachable right now. Try again in a few minutes.");
-    return lookupFields(cat, o);
-  }
 
   /** Keyword Planner ideas from seed keywords and/or a URL, biggest first, flagged where the account already has them. */
   async keywordIdeas(customerId: string, o: KeywordPlanOpts & { keywords?: string[]; url?: string; min_searches: number; limit: number }) {
