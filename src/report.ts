@@ -238,6 +238,15 @@ function retention(q: <T>(sql: string, ...p: unknown[]) => T[]) {
 export const ON_REQUEST_GAP = 45;
 
 /**
+ * SQL, true when tool call `c` (an alias) is "on request" (C3, UNPROMPTED-STOPS.md): it started more than ON_REQUEST_GAP
+ * seconds after the user's previous call ended, or had none before it, so a new message from the user likely asked for it.
+ * Closer than that, the AI made the call inside one answer, often on its own. `at` is logged when a call ends, so a call
+ * started at at - ms/1000. One copy for the paywall report and the service_limit email (lifecycle.ts).
+ */
+export const onRequestSql = (c: string) => `NOT EXISTS (SELECT 1 FROM tool_calls q WHERE q.user_id = ${c}.user_id AND q.id < ${c}.id
+    AND q.at >= ${c}.at - ${c}.ms / 1000.0 - ${ON_REQUEST_GAP})`;
+
+/**
  * The one-service paywall (FREE_ONE_SERVICE; projects/camberstack/PRICING-TEST.md), from switch-on: the flag's date, or the first
  * Service notice. Users split into those who signed up before it (they lost all three) and after (Free was always one service),
  * by whether they use ChatGPT, whose connections get /plans instead of an upgrade link, and by whether Merchant Center was
@@ -257,11 +266,9 @@ function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
   const merchant = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on}
     AND (coalesce(c.service, '') LIKE '%merchant%' OR coalesce(c.service_wanted, '') LIKE '%merchant%'))`;
   const stopped = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%')`;
-  // C3 (UNPROMPTED-STOPS.md): a stop "on request" started more than ON_REQUEST_GAP seconds after the user's previous call
-  // ended (or had none before it), so a new message from the user likely asked for it. Closer than that, the AI made the
-  // call inside one answer, often on its own. `at` is logged when a call ends, so a call started at at - ms/1000.
+  // C3: a stop on request (onRequestSql) likely came from a new message; the rest came inside one answer.
   const onRequest = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%'
-    AND NOT EXISTS (SELECT 1 FROM tool_calls q WHERE q.user_id = c.user_id AND q.id < c.id AND q.at >= c.at - c.ms / 1000.0 - ${ON_REQUEST_GAP}))`;
+    AND ${onRequestSql("c")})`;
   const emailed = `EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'service_limit')`;
   const offered = `(${stopped} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;
   const offeredReq = `(${onRequest} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;

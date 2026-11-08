@@ -5,7 +5,8 @@
  *                  when another account opens, what Pro covers, the upgrade link
  *   (switch_wanted, sent when a Free user was stopped before spending the account switch, went with the switch on 2026-11-06;
  *                  its email_log rows still count as an upgrade email already sent)
- *   service_limit  the one-service gate (FREE_ONE_SERVICE) stopped a Free user's AI asking for a second Google service, still
+ *   service_limit  the one-service gate (FREE_ONE_SERVICE) stopped a Free user's AI asking for a second Google service on request
+ *                  (not inside one answer: report.ts onRequestSql), still
  *                  free the next morning (6+ hours later) → which service they use, when the other opens, Pro covering all three.
  *                  One upgrade email per user: none of limit_reached, switch_wanted and service_limit follows another
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
@@ -29,6 +30,7 @@ import { deriveKey, safeEqual, sign } from "./crypto.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, payingSql, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { DEMO_MERCHANT } from "./merchant.js";
+import { onRequestSql } from "./report.js";
 
 /** Send one email through Resend; throws if it refuses. */
 export async function sendMail(apiKey: string, email: object, f: typeof fetch = fetch, idempotencyKey?: string): Promise<void> {
@@ -127,8 +129,11 @@ export class Lifecycle {
       .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // Stopped by the one-service gate (session.ts checkService), the last stop 6 hours to 30 days ago. A stop logs as ok
     // (a SwitchNotice), so it's matched on the text; `error` is the latest one's, which names both services and the open date.
+    // Only stops on request (report.ts onRequestSql): one inside an AI answer was most likely a call the AI made on its own,
+    // which the stop itself keeps quiet about (UNPROMPTED-STOPS.md C1), so an email about it is a nag for a service the user
+    // never asked for. The cost: someone who asked for both services in one message is labelled in-answer and gets none.
     const service = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
-      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ?
+      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND ${onRequestSql("c")}
       WHERE ${eligible} AND ${notSent("service_limit")} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${SERVICE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];

@@ -62,12 +62,12 @@ describe("lifecycle emails", () => {
   it("sends service_limit once, the morning after the one-service gate stopped a second service, naming both and the open date", async () => {
     const { db, lc, sent, user, call } = setup();
     // A stop is a SwitchNotice: logged ok, its text in error (tools.ts).
-    const stopped = (userId: string, daysAgo: number, error: string) =>
+    const stopped = (userId: string, daysAgo: number, error: string | null) =>
       db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'account_overview', 1, ?, 10, 10)")
         .run(now() - daysAgo * DAY, userId, error);
     const limit = "Service limit: the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and this login "
       + "uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used.";
-    user("sc", "sc@example.com", 10); call("sc", "search_console_summary"); stopped("sc", 0.3, limit);
+    user("sc", "sc@example.com", 10); stopped("sc", 1.3, null); stopped("sc", 0.3, limit);  // used Search Console a day before
     user("both", "both@example.com", 10); stopped("both", 0.3, "Service limit: the Free plan covers one Google service at a time "
       + "(Google Ads, Search Console or Google Analytics), and Search Console and Google Ads together need more than one.");
     user("recent", "recent@example.com", 10); stopped("recent", 0.2, limit);                 // under 6 hours ago
@@ -89,6 +89,29 @@ describe("lifecycle emails", () => {
     db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'sc', 'account_overview', 0, ?, 10, 10)")
       .run(now() - 0.3 * DAY, "Plan limit: Camberstack has been used on 2 Google Ads accounts; the next opens 2026-11-13.");
     expect(await lc.run()).toBe(0);
+  });
+
+  it("sends service_limit only for a stop on request, not one inside an AI answer (UNPROMPTED-STOPS.md)", async () => {
+    const { db, lc, sent, user } = setup();
+    // ms is how long the call ran; `at` is when it ended, so it started at at - ms/1000.
+    const log = (userId: string, secsAgo: number, error: string | null, ms = 10) =>
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'analytics_report', 1, ?, ?, 10)")
+        .run(now() - 0.3 * DAY - secsAgo, userId, error, ms);
+    const limit = "Service limit: the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and this login "
+      + "uses it for Google Ads. Google Analytics opens on Free on 2026-12-10, 30 days after Google Ads was last used.";
+    // The AI pulled GA4 on its own 5 s after an Ads call in the same answer: no email.
+    user("auto", "auto@example.com", 10); log("auto", 5, null); log("auto", 0, limit);
+    // A stop 2 minutes after the last call: a new message asked for it.
+    user("asked", "asked@example.com", 10); log("asked", 120, null); log("asked", 0, limit);
+    // A stop with nothing before it is on request too.
+    user("first", "first@example.com", 10); log("first", 0, limit);
+    // 40 s gap but the stopped call itself ran 10 s, so it started 30 s after the last one ended: still inside the answer.
+    user("slow", "slow@example.com", 10); log("slow", 40, null); log("slow", 0, limit, 10_000);
+    // One stop inside an answer and a later one on request: the on-request one sends, with its own text.
+    user("mixed", "mixed@example.com", 10); log("mixed", 600, null); log("mixed", 598, limit.replace("2026-12-10", "2026-12-01")); log("mixed", 0, limit);
+    expect(await lc.run()).toBe(3);
+    expect(sent.map((m) => m.to[0]).sort()).toEqual(["asked@example.com", "first@example.com", "mixed@example.com"]);
+    expect(sent.find((m) => m.to[0] === "mixed@example.com").text).toContain("Google Analytics opens on Free on December 10");
   });
 
   it("pitches Plus in service_limit when it's sold, and welcomes a Plus subscriber with what Plus adds", async () => {
