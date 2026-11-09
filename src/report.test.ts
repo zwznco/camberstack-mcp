@@ -48,20 +48,63 @@ describe("buildReport", () => {
     expect(buildReport(seed(), { days: 1, exclude: [] }).errorsInWindow).toBe(2);
   });
 
-  it("flags plan opportunities by active accounts, Pro's cap and gate hits, not by reach alone", () => {
-    const db = seed();
-    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, ads_accounts, ads_managers, ads_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    u.run("agency", "g3", "a@x.com", "free", now(), 22, 1, null);   // reach only: still Agency-sized
-    u.run("dormant", "g4", "d@x.com", "free", now(), 9, 0, 1);      // reaches 9, but 1 spends: not
-    u.run("capped", "g5", "c@x.com", "pro", now(), 15, 1, 12);
-    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes) VALUES (?, ?, 'run_gaql', ?, ?, ?, 1, 1)");
-    for (const cid of ["1", "2", "3", "4", "5"]) c.run(now() - 60, "capped", cid, 1, null);
-    c.run(now() - 60, "agency", "9", 0, "Plan limit: Camberstack has been used on 2 Google Ads accounts");
-    const o = buildReport(db, { days: 7, exclude: [] }).opportunities;
-    expect(Object.fromEntries(o.map((x) => [x.id, x.why]))).toEqual({
-      agency: ["Agency-sized: 22 reachable", "hit the account gate 1×"],
-      capped: ["Agency-sized: 12 active", "at Pro's 5"],
-    });
+  it("lists logins with several accounts trying to switch after their first day, not on day one or long ago", () => {
+    const db = seed(), t = now();
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, ads_accounts, ads_managers) VALUES (?, ?, ?, 'free', ?, ?, ?)");
+    u.run("switcher", "s1", "s@x.com", t - 30 * 86400, 4, 1);   // tries to switch this week
+    u.run("lister", "s2", "l@x.com", t - 30 * 86400, 3, 0);     // lists on two days this week
+    u.run("dayone", "s3", "d@x.com", t - 3600, 5, 0);            // switched only on its first day
+    u.run("old", "s4", "o@x.com", t - 60 * 86400, 5, 0);         // switched weeks ago
+    u.run("small", "s5", "m@x.com", t - 30 * 86400, 2, 0);       // 2 accounts: not enough to be in it
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes) VALUES (?, ?, ?, ?, ?, ?, 1, 1)");
+    for (const id of ["switcher", "lister", "old", "small"]) c.run(t - 29 * 86400, id, "list_accounts", null, 1, null);
+    c.run(t - 86400, "switcher", "switch_account", "2", 1, null);
+    c.run(t - 600, "switcher", "run_gaql", "3", 0, "Plan limit: Camberstack has been used on 1 Google Ads account");
+    c.run(t - 2 * 86400, "lister", "list_accounts", null, 1, null);
+    c.run(t - 60, "lister", "list_accounts", null, 1, null);
+    c.run(t - 3000, "dayone", "list_accounts", null, 1, null);
+    c.run(t - 2000, "dayone", "switch_account", "2", 1, null);
+    c.run(t - 20 * 86400, "old", "switch_account", "2", 1, null);
+    c.run(t - 86400, "small", "switch_account", "2", 1, null);
+    const s = buildReport(db, { days: 7, exclude: [] }).switching;
+    expect(s.map((x) => [x.id, x.switches, x.stops, x.list_days])).toEqual([["lister", 0, 0, 2], ["switcher", 1, 1, 0]]);
+  });
+
+  it("flags users quieter than both the norm and their own longest return, and clears them when they come back", () => {
+    const db = openDb(":memory:"), t = now(), today = Math.floor(t / 86400), D = 86400;
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, 'free', ?)");
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes) VALUES (?, ?, 'run_gaql', ?, 1, NULL, 1, 1)");
+    const on = (id: string, ...daysAgo: number[]) => daysAgo.forEach((n) => c.run((today - n) * D + 3600, id, "123"));
+    for (const id of ["weekly", "fortnightly", "lapsed", "back", "once", "demo"]) u.run(id, id, `${id}@x.com`, t - 90 * D);
+    on("weekly", 40, 37, 34, 31, 28, 25);               // returns every 3 days, silent 25: overdue
+    on("fortnightly", 60, 46, 32, 18, 9);              // returns every 9-14 days, silent 9: within their own longest
+    on("lapsed", 30, 29);                              // no returns of their own, silent 29: past the norm
+    on("back", 50, 47, 44, 20, 0);                     // overdue for 24 days, then came back today
+    on("once", 3);                                     // one active day: not watched
+    c.run(t - 20 * D, "demo", "0000000001"); c.run(t, "demo", "0000000001");  // never used own data: not watched
+    const ch = buildReport(db, { days: 7, exclude: [] }).churn;
+    // Returns: 3 x7, 9, 14 x3, 20, 24, so p90 is 20. Weekly is 5 days past it, lapsed 9: the fresher one first.
+    expect([ch.p50, ch.p90, ch.longest]).toEqual([3, 20, 24]);
+    expect(ch.overdue.map((o) => [o.id, o.silent, o.usual, o.longest, o.limit])).toEqual([["weekly", 25, 3, 3, 20], ["lapsed", 29, 0, 0, 20]]);
+    expect(ch.cameBack.map((b) => [b.id, b.gap])).toEqual([["back", 24]]);  // back after 24d, 20 days ago; today ends a 20d gap, within their longest
+    expect(ch.watched).toBe(4);
+  });
+
+  it("lists users who came back but never got past the demo, with their latest error", () => {
+    const db = openDb(":memory:"), t = now(), D = 86400;
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, last_seen_at, ads_accounts) VALUES (?, ?, ?, 'free', ?, ?, ?)");
+    u.run("stuck", "g1", "s@x.com", t - 5 * D, t - 60, 2);
+    u.run("firstday", "g2", "f@x.com", t - 3600, t - 60, 2);
+    u.run("real", "g3", "r@x.com", t - 5 * D, t - 60, 2);
+    u.run("gone", "g4", "g@x.com", t - 90 * D, t - 60 * D, 2);
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes, service) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)");
+    for (const id of ["stuck", "real"]) { c.run(t - 4 * D, id, "run_gaql", "0000000001", 1, null, null); c.run(t - 60, id, "list_accounts", null, 1, null, null); }
+    c.run(t - 120, "stuck", "run_gaql", "555", 0, "Google Ads API 403: USER_PERMISSION_DENIED no access", null);
+    c.run(t - 60, "real", "search_console_summary", null, 1, null, "search_console");
+    c.run(t - 3000, "firstday", "run_gaql", "0000000001", 1, null, null);
+    c.run(t - 61 * D, "gone", "run_gaql", "0000000001", 1, null, null); c.run(t - 60 * D, "gone", "run_gaql", "0000000001", 1, null, null);
+    const s = buildReport(db, { days: 7, exclude: [] }).stuck;
+    expect(s.map((x) => [x.id, x.days, x.tools.split(",").sort(), x.last_error])).toEqual([["stuck", 2, ["list_accounts", "run_gaql"], "Google Ads API 403: USER_PERMISSION_DENIED no access"]]);
   });
 
   it("reads the one-service paywall from switch-on, by existing vs new signups and ChatGPT vs other apps", () => {

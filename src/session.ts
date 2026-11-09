@@ -706,7 +706,7 @@ export class UserSession {
    * Whether each ad account spent anything in the last 30 days, so the user picks a live account rather than a dormant
    * one by name (on Free that pick holds for 30 days). Only when the user is listing or choosing accounts, one small
    * query per account (up to ACTIVITY_MAX), never more than ACTIVITY_WAIT_MS. An account Google doesn't answer for is
-   * left out, never guessed. Stores only the count (users.ads_active), for the admin site's opportunities.
+   * left out, never guessed. Stores only the count (users.ads_active; the admin's plan opportunities read it until 2026-11-09, nothing does now).
    */
   async spendActivity(list: Account[]): Promise<Map<string, boolean>> {
     const all = list.filter((a) => !a.manager && !isDemo(a.customerId));

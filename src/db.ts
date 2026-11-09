@@ -96,6 +96,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   service      TEXT              -- Google services a real (non-demo) call used, comma-joined (tools.ts servicesOf); plan gate for Option C
 );
 CREATE INDEX IF NOT EXISTS tool_calls_at ON tool_calls(at);
+-- Per-user lookups (the admin report's per-user columns, session gates): without it each one scanned the table (2.2 s a page).
+CREATE INDEX IF NOT EXISTS tool_calls_user ON tool_calls(user_id, at);
 
 -- Browser sign-ins to our own pages (signin.ts): kind = the page's state prefix, subject = an email
 -- (/admin) or a user id (/account). Tokens stored as hashes.

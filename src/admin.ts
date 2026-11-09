@@ -8,7 +8,7 @@ import type { DB } from "./db.js";
 import type { GoogleCreds } from "./google.js";
 import { SignIn } from "./signin.js";
 import { startLoginAs } from "./account.js";
-import { buildReport, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
+import { buildReport, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, SWITCH_DAYS, SWITCH_MIN_ACCOUNTS, STUCK_DAYS, CHURN_TALLY_DAYS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
 import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
@@ -277,9 +277,6 @@ table.users thead{display:none}table.users tr{display:flex;flex-wrap:wrap;align-
 table.users tr:last-child{border-bottom:0}table.users td{padding:0;border:0}table.users td:first-child{flex-basis:100%}
 table.users td:nth-child(4),table.users td:nth-child(6),table.users td:nth-child(7),table.users td:nth-child(8),table.users td:nth-child(10){display:none}
 table.users td:nth-child(5){margin-left:auto;color:var(--dim);font-size:12px}
-table.opps thead{display:none}table.opps tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:10px 14px;border-bottom:1px solid var(--line)}
-table.opps tr:last-child{border-bottom:0}table.opps td{padding:0;border:0;white-space:normal}table.opps td:first-child{flex-basis:100%}
-table.opps td:nth-child(3),table.opps td:nth-child(4),table.opps td:nth-child(5){display:none}table.opps td:nth-child(6){margin-left:auto;color:var(--dim);font-size:12px}
 table.cohorts th,table.cohorts td{padding:7px 6px}table.cohorts .ret{min-width:38px;padding:0 3px}}
 </style></head><body><div class="app">
 <aside><div class="brand">camberstack<span>/admin</span></div><nav>${nav.map(([p, l, c]) =>
@@ -310,7 +307,6 @@ ${stat(`Tool errors · ${w}`, errs ? `<span class="n bad">${errs}</span>` : num(
 </div>
 ${callsChart(v)}
 ${sharingCard(v)}
-${opportunitiesCard(v)}
 <div class="grid2">
 ${card("Funnel", table(["stage", ["all time", "r"], "", [`new · ${w}`, "r"]], stages.map((k) => [k.replace(/_/g, " "), num(r.funnel.all[k]),
     `<div class="bar"><i style="width:${Math.round((100 * r.funnel.all[k]) / top)}%"></i></div>`, num(r.funnel.window[k])])))}
@@ -406,7 +402,7 @@ function usersPage(v: View): string {
   const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
   const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
   const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
-  return signupsChart(v) + paywallCard(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
+  return stuckCard(v) + churnCard(v) + switchingCard(v) + signupsChart(v) + paywallCard(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
@@ -424,16 +420,37 @@ function sharingCard(v: View, always = false): string {
   }), "No ad or manager account is shared by two logins."), `<small>ad account: tools run by 2+ users · manager: reachable by 2+</small>`);
 }
 
-/** Users who might need a bigger plan (report.ts opportunities). On the overview only when there is one. */
-function opportunitiesCard(v: View): string {
-  const rows = v.report.opportunities;
-  if (!rows.length) return "";
-  return card("Plan opportunities", table(["user", "why", ["reachable", "r"], ["active · 30d", "r"], ["used · 30d", "r"], ["last gate hit", "r"]], rows.map((o) => [
-    `${userLink(v, o.id, o.email)} ${planBadge(o.plan, true)}`, esc(o.why.join(" · ")),
-    `<span class="r">${o.reach === null ? "?" : num(o.reach)}${o.managers ? `<span class="dim"> +${o.managers}m</span>` : ""}</span>`,
-    `<span class="r">${o.active === null ? "?" : num(o.active)}</span>`, `<span class="r">${num(o.used30)}</span>`,
-    `<span class="r">${o.last_hit ? when(o.last_hit) : "—"}</span>`]), "", "opps"),
-    `<small title="Ad accounts that spent in the last 30 days, read when the user lists or picks accounts (&quot;?&quot; until then)">active = spent · 30d</small>`);
+/** Came back after day 1 but never used their own data (report.ts stuck): what they called and the latest error usually say why. */
+function stuckCard(v: View): string {
+  return card("Stuck before first use", table(["user", "permissions", ["ads visible", "r"], ["days", "r"], ["calls", "r"], "tools called", "last error", ["signed up", "r"], ["last seen", "r"]],
+    v.report.stuck.map((s) => [`${userLink(v, s.id, s.email)} ${planBadge(s.plan, true)}`, perms(s.google_scopes, s.connected, { short: true }),
+      s.reach === null ? `<span class="dim">?</span>` : num(s.reach), num(s.days), num(s.calls), s.tools.split(",").map((t) => `<code>${esc(t)}</code>`).join(" "),
+      s.last_error ? `<span class="err">${errorText(s.last_error)}</span>` : `<span class="dim">none</span>`,
+      `<span class="r">${when(s.created_at)}</span>`, `<span class="r">${when(s.last_seen_at)}</span>`]),
+    `Nobody seen in the last ${STUCK_DAYS} days is stuck before first use.`).replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">'),
+    `<small title="Active on 2+ UTC days and seen in the last ${STUCK_DAYS} days, but no call has ever run on their own Google data (Ads, Search Console, Analytics or Merchant Center). Ads visible: at their last account list. Tools called: everything they ran, the demo included.">came back · never used own data</small>`);
+}
+
+/** Users quiet for longer than is normal for them (report.ts churn): no fixed window. */
+function churnCard(v: View): string {
+  const c = v.report.churn;
+  const back = c.cameBack.length
+    ? ` · <span title="${esc(c.cameBack.map((b) => `${b.email}: back after ${b.gap}d`).join("\n"))}">${c.cameBack.length} came back after looking overdue in ${CHURN_TALLY_DAYS}d</span>` : "";
+  return card("Quieter than usual", table(["user", ["silent", "r"], ["their usual", "r"], ["their longest", "r"], ["overdue after", "r"], ["active days", "r"], ["last active", "r"]],
+    c.overdue.map((o) => [`${userLink(v, o.id, o.email)} ${planBadge(o.plan, true)}`, `<span class="n bad">${o.silent}d</span>`,
+      o.usual ? `<span class="n">${o.usual}d</span>` : `<span class="dim">—</span>`, o.longest ? `<span class="n">${o.longest}d</span>` : `<span class="dim">—</span>`,
+      `<span class="n">${o.limit}d</span>`, num(o.active_days), `<span class="r">${when(o.last_active)}</span>`]),
+    "Everyone is within their usual gap."),
+    `<small title="Users who have used their own data and been active on 2+ days. A return is a gap of 2+ days between active days. Overdue: silent longer than both the 90th percentile of all returns and the user's own longest. Coming back clears them.">returns: median ${c.p50}d · 90% within ${c.p90}d · longest ${c.longest}d · ${c.returns} returns, ${c.watched} users${back}</small>`);
+}
+
+/** Logins with several accounts trying to move between them after their first day (report.ts switching). */
+function switchingCard(v: View): string {
+  return card("Trying to switch accounts", table(["user", ["reach", "r"], ["used", "r"], ["switch_account", "r"], ["gate stops", "r"], ["days listing", "r"], ["last", "r"]],
+    v.report.switching.map((s) => [`${userLink(v, s.id, s.email)} ${planBadge(s.plan, true)}`, num(s.reach), num(s.used),
+      s.switches ? num(s.switches) : `<span class="n dim">0</span>`, bad(s.stops), num(s.list_days), `<span class="r">${when(s.last)}</span>`]),
+    `Nobody reaching more than ${SWITCH_MIN_ACCOUNTS} accounts tried to switch in the last ${SWITCH_DAYS} days.`),
+    `<small title="Logins reaching more than ${SWITCH_MIN_ACCOUNTS} Google Ads accounts (ad + manager) that, after their first day of use, called switch_account, were stopped by the account gate, or listed their accounts on 2+ days. Reach: accounts visible at their last list. Used: real ad accounts a call ran on. Not windowed by the range above.">last ${SWITCH_DAYS}d · after day 1</small>`);
 }
 
 /** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls

@@ -8,7 +8,7 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
+import { AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
 /**
  * A paying customer: a paid plan with a live Stripe subscription. Complimentary plans (PRO_EMAILS, grandfathered Plus with no
@@ -30,6 +30,11 @@ export interface ReportOptions {
 
 /** A tool_calls row on a real Google Ads account: not the demo, not the Google Analytics or Merchant Center markers. */
 const ON_ADS = `c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}') AND c.customer_id NOT LIKE 'mc:%'`;
+/**
+ * A call that ran on the user's own Google data, not a demo: `service` names it for every service since 2026-10-28; before
+ * that only a real Ads customer_id shows it (Search Console and Analytics calls then carried none). `c` is the alias.
+ */
+const realUse = (c: string) => `${c}.ok = 1 AND (coalesce(${c}.service, '') != '' OR (${c}.customer_id IS NOT NULL AND ${ON_ADS.replaceAll("c.", `${c}.`)}))`;
 
 /**
  * Where a window of `days` starts: whole UTC days ending today, so 1 is today since 00:00 UTC and 7 is today plus the six
@@ -172,25 +177,40 @@ export function buildReport(db: DB, o: ReportOptions) {
          GROUP BY m.value HAVING count(DISTINCT u.id) > 1
        ORDER BY last DESC`),
     /**
-     * Who might need a bigger plan: reaches more ad accounts than Pro covers (Agency-sized), is using every account their
-     * plan covers, or ran into the account gate. `active` (accounts that spent in the last 30 days) beats `reach`, since a
-     * login often reaches dormant accounts (2026-10-26: of 4 users reaching 2, all used 1). Newest signal first.
+     * Who may be trying to move to another Google Ads account: logins reaching more than SWITCH_MIN_ACCOUNTS (ad + manager)
+     * that, in the last SWITCH_DAYS and after their first day of use, called switch_account, were stopped by the account gate,
+     * or listed their accounts on two or more days. The first day is left out because everyone lists and picks after
+     * connecting. Days with a list, not list calls: some AIs list on every turn, and a call count reads as intent it isn't.
      */
-    opportunities: q<{ id: string; email: string; plan: string; reach: number | null; managers: number | null; active: number | null;
-        used30: number; gate_hits: number; last_hit: number | null; last_seen: number | null }>(
-      `SELECT u.id, u.email, u.plan, u.ads_accounts reach, u.ads_managers managers, u.ads_active active, u.last_seen_at last_seen,
-         (SELECT count(DISTINCT c.customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL
-            AND ${ON_ADS} AND c.at >= ?) used30,
-         (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND (c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%')) gate_hits,
-         (SELECT max(c.at) FROM tool_calls c WHERE c.user_id = u.id AND (c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%')) last_hit
-       FROM {U} u WHERE u.plan != 'agency'`, now() - ACCOUNT_WINDOW_DAYS * 86400)
-      .map((o) => ({ ...o, why: [
-        (o.active ?? o.reach ?? 0) > PRO_ACCOUNTS ? `Agency-sized: ${o.active !== null ? `${o.active} active` : `${o.reach} reachable`}` : "",
-        o.plan === "pro" && o.used30 >= PRO_ACCOUNTS ? `at Pro's ${PRO_ACCOUNTS}` : "",
-        o.gate_hits ? `hit the account gate ${o.gate_hits}×` : "",
-      ].filter(Boolean) }))
-      .filter((o) => o.why.length)
-      .sort((a, b) => Math.max(b.last_hit ?? 0, b.last_seen ?? 0) - Math.max(a.last_hit ?? 0, a.last_seen ?? 0)),
+    switching: q<{ id: string; email: string; plan: string; reach: number; switches: number; stops: number; list_days: number;
+        used: number; last: number }>(
+      `WITH f AS (SELECT user_id, min(at) first FROM tool_calls GROUP BY user_id)
+       SELECT u.id, u.email, u.plan, coalesce(u.ads_accounts, 0) + coalesce(u.ads_managers, 0) reach,
+         sum(c.tool = 'switch_account') switches,
+         sum(coalesce(c.error, '') LIKE '${PLAN_LIMIT_PREFIX}%' OR coalesce(c.error, '') LIKE '${SWITCH_NOTICE_PREFIX}%') stops,
+         count(DISTINCT CASE WHEN c.tool = 'list_accounts' THEN date(c.at, 'unixepoch') END) list_days,
+         count(DISTINCT CASE WHEN c.ok = 1 AND c.customer_id IS NOT NULL AND ${ON_ADS} THEN c.customer_id END) used,
+         max(CASE WHEN c.tool IN ('switch_account', 'list_accounts') OR c.error LIKE '${PLAN_LIMIT_PREFIX}%'
+           OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%' THEN c.at END) last
+       FROM {U} u JOIN f ON f.user_id = u.id JOIN tool_calls c ON c.user_id = u.id
+       WHERE coalesce(u.ads_accounts, 0) + coalesce(u.ads_managers, 0) > ${SWITCH_MIN_ACCOUNTS}
+         AND c.at >= ? AND c.at >= f.first + 86400
+       GROUP BY u.id HAVING switches + stops > 0 OR list_days >= 2
+       ORDER BY last DESC`, now() - SWITCH_DAYS * 86400),
+    churn: churn(q),
+    /**
+     * Stuck before first use: came back after their first day (calls on two UTC days or more) and seen in the last STUCK_DAYS,
+     * but no call has ever run on their own Google data. On 2026-11-09 none of them had touched the demo: they list their
+     * accounts on a few days and stop. `tools` (what they did call) and their latest error usually say why.
+     */
+    stuck: q<{ id: string; email: string; plan: string; google_scopes: string | null; connected: number; reach: number | null; created_at: number;
+        last_seen_at: number; days: number; calls: number; tools: string; last_error: string | null }>(
+      `SELECT u.id, u.email, u.plan, u.google_scopes, u.enc_refresh IS NOT NULL connected, u.ads_accounts reach, u.created_at, u.last_seen_at,
+         count(DISTINCT date(c.at, 'unixepoch')) days, count(*) calls, group_concat(DISTINCT c.tool) tools,
+         (SELECT substr(e.error, 1, 300) FROM tool_calls e WHERE e.user_id = u.id AND e.ok = 0 ORDER BY e.at DESC LIMIT 1) last_error
+       FROM {U} u JOIN tool_calls c ON c.user_id = u.id
+       WHERE u.last_seen_at >= ? AND NOT EXISTS (SELECT 1 FROM tool_calls r WHERE r.user_id = u.id AND ${realUse("r")})
+       GROUP BY u.id HAVING days >= 2 ORDER BY u.last_seen_at DESC`, now() - STUCK_DAYS * 86400),
     recent: q<{ at: number; email: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
       `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id
@@ -201,6 +221,58 @@ export function buildReport(db: DB, o: ReportOptions) {
 export type Report = ReturnType<typeof buildReport>;
 
 export const RETENTION_WEEKS = 8;
+/** The switching card (report.ts switching): how far back it looks, and how many accounts a login must reach to be in it. */
+export const SWITCH_DAYS = 14;
+export const SWITCH_MIN_ACCOUNTS = 2;
+/** The stuck-before-first-use card: users seen in this many days. */
+export const STUCK_DAYS = 30;
+
+/** A return: active again after at least this many UTC days (1 is the next day, which is ongoing use, not a return). */
+export const RETURN_MIN_DAYS = 2;
+/** The churn card's tally of users who came back after looking overdue: returns in this many days. */
+export const CHURN_TALLY_DAYS = 30;
+
+/**
+ * The churn watcher, with no fixed window: nobody knows yet how often a normal user comes back. Active days are UTC days
+ * with any call that ran, for users who have used their own data at least once and been active on two days or more. Every
+ * gap of RETURN_MIN_DAYS+ between active days is a return; together they set the norm (`p50`, `p90`). A user is overdue
+ * once silent longer than both p90 and their own longest return, so someone who always comes back fortnightly isn't
+ * flagged at day 8. Coming back clears them. `cameBack` tallies returns in the last CHURN_TALLY_DAYS that came after a
+ * gap overdue by the same rule (p90 as it is now, their longest before it): the rule's false alarms, which say whether
+ * it is too tight.
+ */
+function churn(q: <T>(sql: string, ...p: unknown[]) => T[]) {
+  const today = Math.floor(now() / 86400);
+  const days = q<{ id: string; d: number }>(
+    `SELECT c.user_id id, cast(c.at / 86400 AS int) d FROM tool_calls c JOIN {U} u ON u.id = c.user_id
+     WHERE c.ok = 1 AND EXISTS (SELECT 1 FROM tool_calls r WHERE r.user_id = u.id AND ${realUse("r")}) GROUP BY 1, 2 ORDER BY 1, 2`);
+  const by = new Map<string, number[]>();
+  for (const r of days) { const l = by.get(r.id); if (l) l.push(r.d); else by.set(r.id, [r.d]); }
+  const gapsOf = (ds: number[]) => ds.slice(1).map((d, i) => d - ds[i]!).filter((g) => g >= RETURN_MIN_DAYS);
+  const all = [...by.values()].flatMap(gapsOf).sort((a, b) => a - b);
+  const pct = (p: number) => (all.length ? all[Math.min(all.length - 1, Math.ceil(p * all.length) - 1)]! : 0);
+  const p50 = pct(0.5), p90 = pct(0.9);
+  const cameBack: { id: string; gap: number; at: number }[] = [];
+  const overdue: { id: string; silent: number; usual: number; longest: number; limit: number; active_days: number; last_active: number }[] = [];
+  for (const [id, ds] of by) {
+    if (ds.length < 2) continue;
+    const gaps = gapsOf(ds);
+    let longest = 0;
+    for (let i = 1; i < ds.length; i++) {
+      const g = ds[i]! - ds[i - 1]!;
+      if (g < RETURN_MIN_DAYS) continue;
+      if (g > Math.max(p90, longest) && ds[i]! > today - CHURN_TALLY_DAYS) cameBack.push({ id, gap: g, at: ds[i]! * 86400 });
+      longest = Math.max(longest, g);
+    }
+    const silent = today - ds.at(-1)!, limit = Math.max(p90, longest);
+    const usual = gaps.length ? [...gaps].sort((a, b) => a - b)[Math.floor((gaps.length - 1) / 2)]! : 0;
+    if (all.length && silent > limit) overdue.push({ id, silent, usual, longest, limit, active_days: ds.length, last_active: ds.at(-1)! * 86400 });
+  }
+  overdue.sort((a, b) => a.silent - a.limit - (b.silent - b.limit));  // the freshly overdue first: the ones still easy to win back
+  const who = new Map(q<{ id: string; email: string; plan: string }>("SELECT u.id, u.email, u.plan FROM {U} u").map((u) => [u.id, u]));
+  const named = <T extends { id: string }>(xs: T[]) => xs.filter((x) => who.has(x.id)).map((x) => ({ ...x, email: who.get(x.id)!.email, plan: who.get(x.id)!.plan }));
+  return { returns: all.length, p50, p90, longest: all.at(-1) ?? 0, watched: [...by.values()].filter((d) => d.length >= 2).length, overdue: named(overdue), cameBack: named(cameBack) };
+}
 
 /**
  * Weekly signup cohorts (UTC weeks from Monday) over the last RETENTION_WEEKS: `applied[n]` counts the cohort's users who
