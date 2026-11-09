@@ -67,7 +67,7 @@ describe("buildReport", () => {
     expect(s[1]!.last_stop).toMatch(/^Plan limit/);
   });
 
-  it("flags users quieter than both the norm and their own longest return, and clears them when they come back", () => {
+  it("flags regular users quiet past both the norm and their own longest break, and clears them when they come back", () => {
     const db = openDb(":memory:"), t = now(), today = Math.floor(t / 86400), D = 86400;
     const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, 'free', ?)");
     const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes) VALUES (?, ?, 'run_gaql', ?, 1, NULL, 1, 1)");
@@ -78,30 +78,14 @@ describe("buildReport", () => {
     on("lapsed", 30, 29);                              // no returns of their own, silent 29: past the norm
     on("back", 50, 47, 44, 20, 0);                     // overdue for 24 days, then came back today
     on("once", 3);                                     // one active day: not watched
+    const ap = db.prepare("INSERT INTO proposals (id, user_id, customer_id, summary, changes, status, created_at, applied_at) VALUES (?, ?, '123', 's', '[]', 'applied', 0, 0)");
+    for (const id of ["weekly", "fortnightly", "back", "once"]) ap.run(`p-${id}`, id);  // lapsed: 2 calls, under the median (5), no change: not watched
     c.run(t - 20 * D, "demo", "0000000001"); c.run(t, "demo", "0000000001");  // never used own data: not watched
     const ch = buildReport(db, { days: 7, exclude: [] }).churn;
     // Returns: 3 x7, 9, 14 x3, 20, 24, so p90 is 20. Weekly is 5 days past it, lapsed 9: the fresher one first.
     expect([ch.p50, ch.p90, ch.longest]).toEqual([3, 20, 24]);
-    expect(ch.overdue.map((o) => [o.id, o.silent, o.usual, o.longest, o.limit])).toEqual([["weekly", 25, 3, 3, 20], ["lapsed", 29, 0, 0, 20]]);
-    expect(ch.cameBack.map((b) => [b.id, b.gap])).toEqual([["back", 24]]);  // back after 24d, 20 days ago; today ends a 20d gap, within their longest
-    expect(ch.watched).toBe(4);
-  });
-
-  it("lists users who came back but never got past the demo, with their latest error", () => {
-    const db = openDb(":memory:"), t = now(), D = 86400;
-    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, last_seen_at, ads_accounts) VALUES (?, ?, ?, 'free', ?, ?, ?)");
-    u.run("stuck", "g1", "s@x.com", t - 5 * D, t - 60, 2);
-    u.run("firstday", "g2", "f@x.com", t - 3600, t - 60, 2);
-    u.run("real", "g3", "r@x.com", t - 5 * D, t - 60, 2);
-    u.run("gone", "g4", "g@x.com", t - 90 * D, t - 60 * D, 2);
-    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes, service) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)");
-    for (const id of ["stuck", "real"]) { c.run(t - 4 * D, id, "run_gaql", "0000000001", 1, null, null); c.run(t - 60, id, "list_accounts", null, 1, null, null); }
-    c.run(t - 120, "stuck", "run_gaql", "555", 0, "Google Ads API 403: USER_PERMISSION_DENIED no access", null);
-    c.run(t - 60, "real", "search_console_summary", null, 1, null, "search_console");
-    c.run(t - 3000, "firstday", "run_gaql", "0000000001", 1, null, null);
-    c.run(t - 61 * D, "gone", "run_gaql", "0000000001", 1, null, null); c.run(t - 60 * D, "gone", "run_gaql", "0000000001", 1, null, null);
-    const s = buildReport(db, { days: 7, exclude: [] }).stuck;
-    expect(s.map((x) => [x.id, x.days, x.tools.split(",").sort(), x.last_error])).toEqual([["stuck", 2, ["list_accounts", "run_gaql"], "Google Ads API 403: USER_PERMISSION_DENIED no access"]]);
+    expect(ch.overdue.map((o) => [o.id, o.silent, o.longest, o.limit])).toEqual([["weekly", 25, 3, 20]]);
+    expect(ch.watched).toBe(3);
   });
 
   it("reads the one-service paywall from switch-on, by existing vs new signups and ChatGPT vs other apps", () => {

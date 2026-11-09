@@ -201,19 +201,6 @@ export function buildReport(db: DB, o: ReportOptions) {
        FROM {U} u JOIN e ON e.user_id = u.id
        GROUP BY u.id HAVING switches + stops > 0 ORDER BY last DESC`, now() - SWITCH_DAYS * 86400, now() - SWITCH_DAYS * 86400),
     churn: churn(q),
-    /**
-     * Stuck before first use: came back after their first day (calls on two UTC days or more) and seen in the last STUCK_DAYS,
-     * but no call has ever run on their own Google data. On 2026-11-09 none of them had touched the demo: they list their
-     * accounts on a few days and stop. `tools` (what they did call) and their latest error usually say why.
-     */
-    stuck: q<{ id: string; email: string; plan: string; google_scopes: string | null; connected: number; reach: number | null; created_at: number;
-        last_seen_at: number; days: number; calls: number; tools: string; last_error: string | null }>(
-      `SELECT u.id, u.email, u.plan, u.google_scopes, u.enc_refresh IS NOT NULL connected, u.ads_accounts reach, u.created_at, u.last_seen_at,
-         count(DISTINCT date(c.at, 'unixepoch')) days, count(*) calls, group_concat(DISTINCT c.tool) tools,
-         (SELECT substr(e.error, 1, 300) FROM tool_calls e WHERE e.user_id = u.id AND e.ok = 0 ORDER BY e.at DESC LIMIT 1) last_error
-       FROM {U} u JOIN tool_calls c ON c.user_id = u.id
-       WHERE u.last_seen_at >= ? AND NOT EXISTS (SELECT 1 FROM tool_calls r WHERE r.user_id = u.id AND ${realUse("r")})
-       GROUP BY u.id HAVING days >= 2 ORDER BY u.last_seen_at DESC`, now() - STUCK_DAYS * 86400),
     recent: q<{ at: number; email: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
       `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id
@@ -226,54 +213,52 @@ export type Report = ReturnType<typeof buildReport>;
 export const RETENTION_WEEKS = 8;
 /** The switching card (report.ts switching): how far back it looks. */
 export const SWITCH_DAYS = 14;
-/** The stuck-before-first-use card: users seen in this many days. */
-export const STUCK_DAYS = 30;
 
 /** A return: active again after at least this many UTC days (1 is the next day, which is ongoing use, not a return). */
 export const RETURN_MIN_DAYS = 2;
-/** The churn card's tally of users who came back after looking overdue: returns in this many days. */
-export const CHURN_TALLY_DAYS = 30;
 
 /**
  * The churn watcher, with no fixed window: nobody knows yet how often a normal user comes back. Active days are UTC days
- * with any call that ran, for users who have used their own data at least once and been active on two days or more. Every
- * gap of RETURN_MIN_DAYS+ between active days is a return; together they set the norm (`p50`, `p90`). A user is overdue
- * once silent longer than both p90 and their own longest return, so someone who always comes back fortnightly isn't
- * flagged at day 8. Coming back clears them. `cameBack` tallies returns in the last CHURN_TALLY_DAYS that came after a
- * gap overdue by the same rule (p90 as it is now, their longest before it): the rule's false alarms, which say whether
- * it is too tight.
+ * with any call that ran. Only established users are watched: active on two days or more, and either applied a real change
+ * or made more real requests than the median user with any (live, so the bar moves with the user base); on 2026-11-09 the
+ * rest were mostly one-day trials of 1-40 calls. Every gap of RETURN_MIN_DAYS+ between active days is a return; together
+ * they set the norm (`p50`, `p90`). A user is overdue once silent longer than both p90 and their own longest return, so
+ * someone who always comes back fortnightly isn't flagged at day 8. Coming back clears them.
  */
 function churn(q: <T>(sql: string, ...p: unknown[]) => T[]) {
   const today = Math.floor(now() / 86400);
   const days = q<{ id: string; d: number }>(
     `SELECT c.user_id id, cast(c.at / 86400 AS int) d FROM tool_calls c JOIN {U} u ON u.id = c.user_id
      WHERE c.ok = 1 AND EXISTS (SELECT 1 FROM tool_calls r WHERE r.user_id = u.id AND ${realUse("r")}) GROUP BY 1, 2 ORDER BY 1, 2`);
+  // Real requests and applied changes per user with any real use: the bar for being watched.
+  const use = q<{ id: string; calls: number; applied: number }>(
+    `SELECT c.user_id id, count(*) calls,
+       (SELECT count(*) FROM proposals p WHERE p.user_id = c.user_id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}') applied
+     FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE ${realUse("c")} GROUP BY 1`);
+  const sorted = use.map((x) => x.calls).sort((a, b) => a - b);
+  const medianCalls = sorted.length ? sorted[Math.floor((sorted.length - 1) / 2)]! : 0;
+  const usage = new Map(use.map((x) => [x.id, x]));
+  const established = (id: string, activeDays: number) => {
+    const x = usage.get(id);
+    return activeDays >= 2 && !!x && (x.applied > 0 || x.calls > medianCalls);
+  };
   const by = new Map<string, number[]>();
   for (const r of days) { const l = by.get(r.id); if (l) l.push(r.d); else by.set(r.id, [r.d]); }
   const gapsOf = (ds: number[]) => ds.slice(1).map((d, i) => d - ds[i]!).filter((g) => g >= RETURN_MIN_DAYS);
   const all = [...by.values()].flatMap(gapsOf).sort((a, b) => a - b);
   const pct = (p: number) => (all.length ? all[Math.min(all.length - 1, Math.ceil(p * all.length) - 1)]! : 0);
   const p50 = pct(0.5), p90 = pct(0.9);
-  const cameBack: { id: string; gap: number; at: number }[] = [];
-  const overdue: { id: string; silent: number; usual: number; longest: number; limit: number; active_days: number; last_active: number }[] = [];
+  const overdue: { id: string; silent: number; longest: number; limit: number }[] = [];
   for (const [id, ds] of by) {
-    if (ds.length < 2) continue;
-    const gaps = gapsOf(ds);
-    let longest = 0;
-    for (let i = 1; i < ds.length; i++) {
-      const g = ds[i]! - ds[i - 1]!;
-      if (g < RETURN_MIN_DAYS) continue;
-      if (g > Math.max(p90, longest) && ds[i]! > today - CHURN_TALLY_DAYS) cameBack.push({ id, gap: g, at: ds[i]! * 86400 });
-      longest = Math.max(longest, g);
-    }
+    if (!established(id, ds.length)) continue;
+    const longest = Math.max(0, ...gapsOf(ds));
     const silent = today - ds.at(-1)!, limit = Math.max(p90, longest);
-    const usual = gaps.length ? [...gaps].sort((a, b) => a - b)[Math.floor((gaps.length - 1) / 2)]! : 0;
-    if (all.length && silent > limit) overdue.push({ id, silent, usual, longest, limit, active_days: ds.length, last_active: ds.at(-1)! * 86400 });
+    if (all.length && silent > limit) overdue.push({ id, silent, longest, limit });
   }
   overdue.sort((a, b) => a.silent - a.limit - (b.silent - b.limit));  // the freshly overdue first: the ones still easy to win back
   const who = new Map(q<{ id: string; email: string; plan: string }>("SELECT u.id, u.email, u.plan FROM {U} u").map((u) => [u.id, u]));
   const named = <T extends { id: string }>(xs: T[]) => xs.filter((x) => who.has(x.id)).map((x) => ({ ...x, email: who.get(x.id)!.email, plan: who.get(x.id)!.plan }));
-  return { returns: all.length, p50, p90, longest: all.at(-1) ?? 0, watched: [...by.values()].filter((d) => d.length >= 2).length, overdue: named(overdue), cameBack: named(cameBack) };
+  return { returns: all.length, p50, p90, longest: all.at(-1) ?? 0, watched: [...by].filter(([id, d]) => established(id, d.length)).length, medianCalls, overdue: named(overdue) };
 }
 
 /**
