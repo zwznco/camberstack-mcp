@@ -177,26 +177,29 @@ export function buildReport(db: DB, o: ReportOptions) {
          GROUP BY m.value HAVING count(DISTINCT u.id) > 1
        ORDER BY last DESC`),
     /**
-     * Who may be trying to move to another Google Ads account: logins reaching more than SWITCH_MIN_ACCOUNTS (ad + manager)
-     * that, in the last SWITCH_DAYS and after their first day of use, called switch_account, were stopped by the account gate,
-     * or listed their accounts on two or more days. The first day is left out because everyone lists and picks after
-     * connecting. Days with a list, not list calls: some AIs list on every turn, and a call count reads as intent it isn't.
+     * Who tried to move to another Google Ads account after their first day, in the last SWITCH_DAYS: a switch_account to
+     * a different account than the one they last ran a call on, or a stop by the account gate (Plan limit, and the old
+     * Account switch notice). Not a first pick after the Account choice notice, a re-pick of the current account, or
+     * listing accounts (2026-11-09: listing marked users who simply reach more accounts than they use). Not filtered by
+     * users.ads_accounts either: it is only as fresh as their last list, and read 1 for two users who did try.
      */
-    switching: q<{ id: string; email: string; plan: string; reach: number; switches: number; stops: number; list_days: number;
-        used: number; last: number }>(
-      `WITH f AS (SELECT user_id, min(at) first FROM tool_calls GROUP BY user_id)
-       SELECT u.id, u.email, u.plan, coalesce(u.ads_accounts, 0) + coalesce(u.ads_managers, 0) reach,
-         sum(c.tool = 'switch_account') switches,
-         sum(coalesce(c.error, '') LIKE '${PLAN_LIMIT_PREFIX}%' OR coalesce(c.error, '') LIKE '${SWITCH_NOTICE_PREFIX}%') stops,
-         count(DISTINCT CASE WHEN c.tool = 'list_accounts' THEN date(c.at, 'unixepoch') END) list_days,
-         count(DISTINCT CASE WHEN c.ok = 1 AND c.customer_id IS NOT NULL AND ${ON_ADS} THEN c.customer_id END) used,
-         max(CASE WHEN c.tool IN ('switch_account', 'list_accounts') OR c.error LIKE '${PLAN_LIMIT_PREFIX}%'
-           OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%' THEN c.at END) last
-       FROM {U} u JOIN f ON f.user_id = u.id JOIN tool_calls c ON c.user_id = u.id
-       WHERE coalesce(u.ads_accounts, 0) + coalesce(u.ads_managers, 0) > ${SWITCH_MIN_ACCOUNTS}
-         AND c.at >= ? AND c.at >= f.first + 86400
-       GROUP BY u.id HAVING switches + stops > 0 OR list_days >= 2
-       ORDER BY last DESC`, now() - SWITCH_DAYS * 86400),
+    switching: q<{ id: string; email: string; plan: string; switches: number; stops: number; used: number; last: number; last_stop: string | null }>(
+      `WITH f AS (SELECT user_id, min(at) first FROM tool_calls GROUP BY user_id),
+       e AS (
+         SELECT c.user_id, c.at, c.error,
+           c.tool = 'switch_account' AND c.ok = 1 AND c.error IS NULL AND c.customer_id IS NOT NULL AND ${ON_ADS}
+             AND c.customer_id != coalesce((SELECT p.customer_id FROM tool_calls p WHERE p.user_id = c.user_id AND p.id < c.id AND p.ok = 1
+               AND p.error IS NULL AND p.customer_id IS NOT NULL AND ${ON_ADS.replaceAll("c.", "p.")} ORDER BY p.id DESC LIMIT 1), c.customer_id) switched,
+           coalesce(c.error, '') LIKE '${PLAN_LIMIT_PREFIX}%' OR coalesce(c.error, '') LIKE '${SWITCH_NOTICE_PREFIX}%' stopped
+         FROM tool_calls c JOIN f ON f.user_id = c.user_id
+         WHERE c.at >= ? AND c.at >= f.first + 86400 AND (c.tool = 'switch_account' OR c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%'))
+       SELECT u.id, u.email, u.plan, sum(e.switched) switches, sum(e.stopped) stops,
+         (SELECT count(DISTINCT c.customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.error IS NULL AND c.customer_id IS NOT NULL
+            AND ${ON_ADS} AND c.at >= ?) used,
+         max(CASE WHEN e.switched OR e.stopped THEN e.at END) last,
+         (SELECT substr(x.error, 1, 300) FROM e x WHERE x.user_id = u.id AND x.stopped ORDER BY x.at DESC LIMIT 1) last_stop
+       FROM {U} u JOIN e ON e.user_id = u.id
+       GROUP BY u.id HAVING switches + stops > 0 ORDER BY last DESC`, now() - SWITCH_DAYS * 86400, now() - SWITCH_DAYS * 86400),
     churn: churn(q),
     /**
      * Stuck before first use: came back after their first day (calls on two UTC days or more) and seen in the last STUCK_DAYS,
@@ -221,9 +224,8 @@ export function buildReport(db: DB, o: ReportOptions) {
 export type Report = ReturnType<typeof buildReport>;
 
 export const RETENTION_WEEKS = 8;
-/** The switching card (report.ts switching): how far back it looks, and how many accounts a login must reach to be in it. */
+/** The switching card (report.ts switching): how far back it looks. */
 export const SWITCH_DAYS = 14;
-export const SWITCH_MIN_ACCOUNTS = 2;
 /** The stuck-before-first-use card: users seen in this many days. */
 export const STUCK_DAYS = 30;
 

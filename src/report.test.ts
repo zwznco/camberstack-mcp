@@ -48,26 +48,23 @@ describe("buildReport", () => {
     expect(buildReport(seed(), { days: 1, exclude: [] }).errorsInWindow).toBe(2);
   });
 
-  it("lists logins with several accounts trying to switch after their first day, not on day one or long ago", () => {
-    const db = seed(), t = now();
-    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, ads_accounts, ads_managers) VALUES (?, ?, ?, 'free', ?, ?, ?)");
-    u.run("switcher", "s1", "s@x.com", t - 30 * 86400, 4, 1);   // tries to switch this week
-    u.run("lister", "s2", "l@x.com", t - 30 * 86400, 3, 0);     // lists on two days this week
-    u.run("dayone", "s3", "d@x.com", t - 3600, 5, 0);            // switched only on its first day
-    u.run("old", "s4", "o@x.com", t - 60 * 86400, 5, 0);         // switched weeks ago
-    u.run("small", "s5", "m@x.com", t - 30 * 86400, 2, 0);       // 2 accounts: not enough to be in it
+  it("lists real switch attempts after the first day: a different account or a gate stop, not a first pick, a re-pick or listing", () => {
+    const db = seed(), t = now(), D = 86400;
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, ads_accounts) VALUES (?, ?, ?, 'free', ?, ?)");
+    for (const id of ["mover", "stopped", "repick", "firstpick", "lister", "dayone", "old"]) u.run(id, id, `${id}@x.com`, t - 30 * D, 1);
     const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes) VALUES (?, ?, ?, ?, ?, ?, 1, 1)");
-    for (const id of ["switcher", "lister", "old", "small"]) c.run(t - 29 * 86400, id, "list_accounts", null, 1, null);
-    c.run(t - 86400, "switcher", "switch_account", "2", 1, null);
-    c.run(t - 600, "switcher", "run_gaql", "3", 0, "Plan limit: Camberstack has been used on 1 Google Ads account");
-    c.run(t - 2 * 86400, "lister", "list_accounts", null, 1, null);
-    c.run(t - 60, "lister", "list_accounts", null, 1, null);
-    c.run(t - 3000, "dayone", "list_accounts", null, 1, null);
-    c.run(t - 2000, "dayone", "switch_account", "2", 1, null);
-    c.run(t - 20 * 86400, "old", "switch_account", "2", 1, null);
-    c.run(t - 86400, "small", "switch_account", "2", 1, null);
+    const call = (id: string, ago: number, tool: string, cid: string | null, error: string | null = null) => c.run(t - ago, id, tool, cid, 1, error);
+    for (const id of ["mover", "stopped", "repick", "firstpick", "lister", "old"]) call(id, 29 * D, "list_accounts", null);
+    call("mover", 5 * D, "run_gaql", "111"); call("mover", 2 * D, "switch_account", "222");               // to another account
+    call("stopped", 3 * D, "run_gaql", null, "Plan limit: Camberstack has been used on 1 Google Ads account");
+    call("repick", 5 * D, "run_gaql", "111"); call("repick", 2 * D, "switch_account", "111");             // the one it's on
+    call("firstpick", 2 * D, "run_gaql", null, "Account choice: this plan covers 1 Google Ads account"); call("firstpick", 2 * D - 60, "switch_account", "111");
+    call("lister", 3 * D, "list_accounts", null); call("lister", 60, "list_accounts", null);
+    call("dayone", 3000, "run_gaql", "111"); call("dayone", 2000, "switch_account", "222");               // first day
+    call("old", 25 * D, "run_gaql", "111"); call("old", 20 * D, "switch_account", "222");                 // weeks ago
     const s = buildReport(db, { days: 7, exclude: [] }).switching;
-    expect(s.map((x) => [x.id, x.switches, x.stops, x.list_days])).toEqual([["lister", 0, 0, 2], ["switcher", 1, 1, 0]]);
+    expect(s.map((x) => [x.id, x.switches, x.stops, x.used])).toEqual([["mover", 1, 0, 2], ["stopped", 0, 1, 0]]);
+    expect(s[1]!.last_stop).toMatch(/^Plan limit/);
   });
 
   it("flags users quieter than both the norm and their own longest return, and clears them when they come back", () => {

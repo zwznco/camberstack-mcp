@@ -8,7 +8,7 @@ import type { DB } from "./db.js";
 import type { GoogleCreds } from "./google.js";
 import { SignIn } from "./signin.js";
 import { startLoginAs } from "./account.js";
-import { buildReport, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, SWITCH_DAYS, SWITCH_MIN_ACCOUNTS, STUCK_DAYS, CHURN_TALLY_DAYS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
+import { buildReport, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, SWITCH_DAYS, STUCK_DAYS, CHURN_TALLY_DAYS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
 import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
@@ -444,13 +444,14 @@ function churnCard(v: View): string {
     `<small title="Users who have used their own data and been active on 2+ days. A return is a gap of 2+ days between active days. Overdue: silent longer than both the 90th percentile of all returns and the user's own longest. Coming back clears them.">returns: median ${c.p50}d · 90% within ${c.p90}d · longest ${c.longest}d · ${c.returns} returns, ${c.watched} users${back}</small>`);
 }
 
-/** Logins with several accounts trying to move between them after their first day (report.ts switching). */
+/** Users who tried to move to another Google Ads account after their first day (report.ts switching). */
 function switchingCard(v: View): string {
-  return card("Trying to switch accounts", table(["user", ["reach", "r"], ["used", "r"], ["switch_account", "r"], ["gate stops", "r"], ["days listing", "r"], ["last", "r"]],
-    v.report.switching.map((s) => [`${userLink(v, s.id, s.email)} ${planBadge(s.plan, true)}`, num(s.reach), num(s.used),
-      s.switches ? num(s.switches) : `<span class="n dim">0</span>`, bad(s.stops), num(s.list_days), `<span class="r">${when(s.last)}</span>`]),
-    `Nobody reaching more than ${SWITCH_MIN_ACCOUNTS} accounts tried to switch in the last ${SWITCH_DAYS} days.`),
-    `<small title="Logins reaching more than ${SWITCH_MIN_ACCOUNTS} Google Ads accounts (ad + manager) that, after their first day of use, called switch_account, were stopped by the account gate, or listed their accounts on 2+ days. Reach: accounts visible at their last list. Used: real ad accounts a call ran on. Not windowed by the range above.">last ${SWITCH_DAYS}d · after day 1</small>`);
+  return card("Trying to switch accounts", table(["user", ["switched", "r"], ["gate stops", "r"], ["accounts used", "r"], "last stop", ["last", "r"]],
+    v.report.switching.map((s) => [`${userLink(v, s.id, s.email)} ${planBadge(s.plan, true)}`,
+      s.switches ? num(s.switches) : `<span class="n dim">0</span>`, bad(s.stops), num(s.used),
+      s.last_stop ? `<span class="err">${errorText(s.last_stop)}</span>` : `<span class="dim">—</span>`, `<span class="r">${when(s.last)}</span>`]),
+    `Nobody tried to switch accounts in the last ${SWITCH_DAYS} days.`).replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">'),
+    `<small title="After their first day of use: switch_account to a different Google Ads account than the one they last used, or stopped by the plan's account limit. A first pick after the Account choice notice doesn't count. Accounts used: real ad accounts a call ran on in the same ${SWITCH_DAYS} days. Not windowed by the range above.">last ${SWITCH_DAYS}d · after day 1</small>`);
 }
 
 /** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls
