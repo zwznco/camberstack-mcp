@@ -431,12 +431,10 @@ function churnCard(v: View): string {
 
 /** Users who tried to move to another Google Ads account after their first day (report.ts switching). */
 function switchingCard(v: View): string {
-  return card("Trying to switch accounts", table(["user", ["switched", "r"], ["gate stops", "r"], ["accounts used", "r"], "last stop", ["last", "r"]],
-    v.report.switching.map((s) => [`${userLink(v, s.id, s.email)} ${planBadge(s.plan, true)}`,
-      s.switches ? num(s.switches) : `<span class="n dim">0</span>`, bad(s.stops), num(s.used),
-      s.last_stop ? `<span class="err">${errorText(s.last_stop)}</span>` : `<span class="dim">—</span>`, `<span class="r">${when(s.last)}</span>`]),
-    `Nobody tried to switch accounts in the last ${SWITCH_DAYS} days.`).replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">'),
-    `<small title="After their first day of use: switch_account to a different Google Ads account than the one they last used, or stopped by the plan's account limit. A first pick after the Account choice notice doesn't count. Accounts used: real ad accounts a call ran on in the same ${SWITCH_DAYS} days. Not windowed by the range above.">last ${SWITCH_DAYS}d · after day 1</small>`);
+  return card("Tried to switch accounts", table(["user", ["last tried", "r"]],
+    v.report.switching.map((s) => [`${userLink(v, s.id, s.email)} ${planBadge(s.plan, true)}`, `<span class="r">${when(s.last)}</span>`]),
+    "Nobody tried to switch accounts."),
+    `<small title="After their first day: switch_account to a different Google Ads account than the one their plan covers, or stopped by the account limit. A first pick doesn't count.">last ${SWITCH_DAYS}d</small>`);
 }
 
 /** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls

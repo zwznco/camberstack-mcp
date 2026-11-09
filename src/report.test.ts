@@ -51,10 +51,14 @@ describe("buildReport", () => {
   it("lists real switch attempts after the first day: a different account or a gate stop, not a first pick, a re-pick or listing", () => {
     const db = seed(), t = now(), D = 86400;
     const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, ads_accounts) VALUES (?, ?, ?, 'free', ?, ?)");
-    for (const id of ["mover", "stopped", "repick", "firstpick", "lister", "dayone", "old"]) u.run(id, id, `${id}@x.com`, t - 30 * D, 1);
+    for (const id of ["mover", "stopped", "repick", "firstpick", "lister", "dayone", "old", "reset", "onlyone"]) u.run(id, id, `${id}@x.com`, t - 30 * D, id === "onlyone" ? 1 : 3);
+    db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = 'reset'").run(t - 10 * D);
     const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes) VALUES (?, ?, ?, ?, ?, ?, 1, 1)");
     const call = (id: string, ago: number, tool: string, cid: string | null, error: string | null = null) => c.run(t - ago, id, tool, cid, 1, error);
-    for (const id of ["mover", "stopped", "repick", "firstpick", "lister", "old"]) call(id, 29 * D, "list_accounts", null);
+    for (const id of ["mover", "stopped", "repick", "firstpick", "lister", "old", "reset"]) call(id, 29 * D, "list_accounts", null);
+    call("onlyone", 29 * D, "list_accounts", null);
+    call("onlyone", 3 * D, "run_gaql", null, "Plan limit: Camberstack has been used on 2 Google Ads accounts");  // sees 1: not a switch
+    call("reset", 20 * D, "run_gaql", "111"); call("reset", 2 * D, "switch_account", "222");             // first pick after a reset by hand
     call("mover", 5 * D, "run_gaql", "111"); call("mover", 2 * D, "switch_account", "222");               // to another account
     call("stopped", 3 * D, "run_gaql", null, "Plan limit: Camberstack has been used on 1 Google Ads account");
     call("repick", 5 * D, "run_gaql", "111"); call("repick", 2 * D, "switch_account", "111");             // the one it's on
@@ -64,7 +68,6 @@ describe("buildReport", () => {
     call("old", 25 * D, "run_gaql", "111"); call("old", 20 * D, "switch_account", "222");                 // weeks ago
     const s = buildReport(db, { days: 7, exclude: [] }).switching;
     expect(s.map((x) => [x.id, x.switches, x.stops, x.used])).toEqual([["mover", 1, 0, 2], ["stopped", 0, 1, 0]]);
-    expect(s[1]!.last_stop).toMatch(/^Plan limit/);
   });
 
   it("flags regular users quiet past both the norm and their own longest break, and clears them when they come back", () => {
