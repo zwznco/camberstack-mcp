@@ -798,6 +798,17 @@ describe("OAuth + MCP end to end", () => {
     }
   });
 
+  it("names the account a mistyped id was most likely meant to be", async () => {
+    const q = { query: "SELECT campaign.name FROM campaign" };
+    for (const typo of ["1112223334", "1112232333"]) {  // one digit off; two neighbours swapped
+      const t = await call(token, "run_gaql", { customer_id: typo, ...q });
+      expect(t.isError).toBe(true);
+      expect(t.text).toContain("close to Acme (1112223333), which it can: most likely a typo");
+    }
+    const far = await call(token, "run_gaql", { customer_id: "4445556666", ...q });
+    expect(far.text).toContain("most likely belongs to a different Google login");
+  });
+
   it("lists accounts once across requests, not once per tool call", async () => {
     const real = ads.listAccessibleCustomers.bind(ads);
     let lists = 0;

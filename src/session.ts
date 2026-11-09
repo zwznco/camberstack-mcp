@@ -126,6 +126,16 @@ export class NotConnectedError extends Error {}
 type Ads = Pick<AdsClient, "listAccessibleCustomers" | "search" | "mutate" | "keywordPlan" | "searchFields">;
 
 /** Sends the demo account's calls to the demo and everything else to Google. */
+/** Edits between two ids: insert, delete, change a digit, or swap two neighbouring digits, each counting 1. */
+export function digitEdits(a: string, b: string): number {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i]![j] = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i]![j] = Math.min(d[i]![j]!, d[i - 2]![j - 2]! + 1);
+  }
+  return d[a.length]![b.length]!;
+}
+
 function routed(google: Ads, demo: DemoAds): Ads {
   return {
     listAccessibleCustomers: () => google.listAccessibleCustomers(),
@@ -741,11 +751,19 @@ export class UserSession {
     const a = (await this.accounts()).find((x) => x.customerId === cid)
       ?? (await this.accounts({ fresh: true })).find((x) => x.customerId === cid);
     // "Call list_accounts" alone sent a model that had already called it back in a loop, and the user gave up (2026-10-27).
-    // A user-typed id usually belongs to another Google login, so say which login this is and how to get access.
-    if (!a) throw new Error(`Account ${customerId} isn't one that ${this.user.email}, the Google login connected to Camberstack, can open. `
-      + `If the user gave this id, it most likely belongs to a different Google login: give ${this.user.email} access to it in Google Ads `
-      + "(Admin, then Access and security), or disconnect and connect again with the Google login that has it. "
-      + `list_accounts lists the accounts ${this.user.email} can open.`);
+    if (!a) {
+      // A mistyped id (one digit off) read as "another login", and the model retried it 5 times (99222daa, 2026-11-09):
+      // name the near match, so the next call uses the right id.
+      const near = (await this.accounts()).filter((x) => !x.manager && !isDemo(x.customerId) && digitEdits(cid, x.customerId) <= 2);
+      if (near.length) throw new Error(`Account ${customerId} isn't one that ${this.user.email} can open, but it is close to `
+        + `${near.map((x) => `${x.name} (${x.customerId})`).join(", ")}, which it can: most likely a typo. `
+        + `Use ${near.length === 1 ? "that id" : "the right one of those ids"} (ask the user if unsure), not ${customerId} again.`);
+      // A user-typed id usually belongs to another Google login, so say which login this is and how to get access.
+      throw new Error(`Account ${customerId} isn't one that ${this.user.email}, the Google login connected to Camberstack, can open. `
+        + `If the user gave this id, it most likely belongs to a different Google login: give ${this.user.email} access to it in Google Ads `
+        + "(Admin, then Access and security), or disconnect and connect again with the Google login that has it. "
+        + `list_accounts lists the accounts ${this.user.email} can open.`);
+    }
     if (a.manager) throw new Error(`${a.name} (${cid}) is a manager account; pick one of the client accounts under it.`);
     // The account they actually work on sets their time zone (lifecycle emails go out in their morning).
     if (a.timeZone) this.deps.db.prepare("UPDATE users SET time_zone = ? WHERE id = ? AND time_zone IS NOT ?").run(a.timeZone, this.user.id, a.timeZone);
