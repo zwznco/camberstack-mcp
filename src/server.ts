@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { loadConfig, type Config } from "./config.js";
 import { now, openDb, sweep, type DB } from "./db.js";
 import { deriveKey } from "./crypto.js";
-import { CamberstackProvider, MCP_SCOPE, consentCookie } from "./provider.js";
+import { CamberstackProvider, MCP_SCOPE, consentCookie, isGeminiClient } from "./provider.js";
 import { UserSession, clearGoogleCache, type SessionDeps } from "./session.js";
 import { Grants } from "./grant.js";
 import { buildServer, gateDemoCalls, SERVER_VERSION, toolCatalog } from "./tools.js";
@@ -37,8 +37,6 @@ const DRAIN_FILE = "/tmp/drain";
 /** brand/ sits beside src/ and dist/ at the package root. */
 const BRAND_DIR = join(fileURLToPath(new URL(".", import.meta.url)), "..", "brand");
 const RESOURCE_NAME = "Camberstack Google Ads";
-/** Gemini's OAuth relay; it registers its /r/ and /a/ paths on all three hosts. */
-const GEMINI_REDIRECT = /^https:\/\/oauth-redirect(-sandbox|-test)?\.googleusercontent\.com\//;
 const HOUR = 3600_000;
 /** POST /mcp slower than this gets a diagnostic log line (traefik saw 240–295s Claude requests; tools never exceed ~14s). */
 const SLOW_MCP_MS = 10_000;
@@ -128,8 +126,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   // clients whose every redirect is Google's relay get this; everyone else keeps the SDK default.
   app.post("/register", express.json({ limit: "100kb" }), (req, _res, next) => {
     const uris = (req.body as { redirect_uris?: unknown })?.redirect_uris;
-    if (Array.isArray(uris) && uris.length > 0
-      && uris.every((u) => typeof u === "string" && GEMINI_REDIRECT.test(u))) {
+    if (isGeminiClient(Array.isArray(uris) ? uris : undefined)) {
       req.body.token_endpoint_auth_method = "none";
     }
     next();
@@ -172,6 +169,10 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     app.get("/.well-known/glama.json", (_q, r) => {
       r.json({ $schema: "https://glama.ai/mcp/schemas/connector.json", claim: cfg.glamaClaim });
     });
+  }
+  if (cfg.googleConnectedAppsTokens?.length) {
+    // Google Connected Console's domain check: JSON, 200, no redirect (developers.google.com/connected-apps/gpc/prerequisites).
+    app.get("/.well-known/google-connected-apps", (_q, r) => { r.json({ verification_tokens: cfg.googleConnectedAppsTokens }); });
   }
   if (cfg.openaiAppsChallenge) {
     // ChatGPT's plugin portal wants the bare token as plain text, not JSON.

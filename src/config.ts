@@ -50,6 +50,8 @@ export interface Config {
   pagespeedApiKey?: string;
   /** ChatGPT plugin domain-verification token for /.well-known/openai-apps-challenge (from the plugin portal); unset = 404. */
   openaiAppsChallenge?: string;
+  /** GOOGLE_CONNECTED_APPS_TOKENS (comma-separated, from Google Connected Console) for /.well-known/google-connected-apps; unset = 404. */
+  googleConnectedAppsTokens?: string[];
   /** Google Analytics (GA4) measurement ID for our own public pages (G-…), loaded through /e.js; unset = no GA tag. */
   ga4MeasurementId?: string;
   /** ALLOWED_EMAILS: the only Google accounts that may connect (dev.camberstack.io); empty = anyone. */
@@ -103,6 +105,7 @@ export function loadConfig(): Config {
     feedbackTo: process.env.FEEDBACK_TO || undefined,
     alertTo: process.env.ALERT_TO || undefined,
     openaiAppsChallenge: process.env.OPENAI_APPS_CHALLENGE || undefined,
+    googleConnectedAppsTokens: (process.env.GOOGLE_CONNECTED_APPS_TOKENS ?? "").split(",").map((t) => t.trim()).filter(Boolean),
     ga4MeasurementId: /^G-[A-Z0-9]{4,20}$/.test(process.env.GA4_MEASUREMENT_ID ?? "") ? process.env.GA4_MEASUREMENT_ID : undefined,
     mail: process.env.RESEND_API_KEY
       ? { apiKey: process.env.RESEND_API_KEY, from: process.env.RESEND_FROM || "Adam at Camberstack <adam@camberstack.io>", replyTo: "adam@camberstack.io",

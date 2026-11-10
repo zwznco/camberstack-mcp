@@ -428,7 +428,7 @@ beforeAll(async () => {
   base = `http://localhost:${(server.address() as AddressInfo).port}`;
   server.close();
   server = await new Promise<Server>((resolve) => {
-    ({ app, billing, grants, deps } = createApp({ ...cfg, baseUrl: base, adminUrl: base.replace("localhost", "127.0.0.1"), openaiAppsChallenge: "tok_test_123",
+    ({ app, billing, grants, deps } = createApp({ ...cfg, baseUrl: base, adminUrl: base.replace("localhost", "127.0.0.1"), openaiAppsChallenge: "tok_test_123", googleConnectedAppsTokens: ["gca_test_1"],
       conversions: { opsUrl: "http://operations.test/v1/conversions", opsKey: "crk_ours", actionId: "555" } }, db, { fetch: googleFetch, analyticsFetch, stripeFetch, adsConversionFetch, adsFactory: () => ads as any, scFactory: () => sc, gaFactory: (u) => ({ summaries: () => ga.summaries(u.id), runReport: () => ga.runReport(), admin: (m, p, b) => ga.admin(m, p, b) }),
         merchantFactory: (u) => ({ accounts: async () => { throw new NotGrantedError("merchant-center", grants.link("merchant-center", u.id)); },
           accountIssues: async () => [], search: async () => ({ rows: [], truncated: false }) }) }));
@@ -438,14 +438,23 @@ beforeAll(async () => {
 afterAll(() => { server?.close(); });
 
 async function connect(cookie?: string, state = "xyz"): Promise<string> {
-  const redirect = "http://localhost:9999/callback";
-  const reg = await fetch(`${base}/register`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ redirect_uris: [redirect], client_name: "Test AI", token_endpoint_auth_method: "none",
-      grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }),
-  });
-  expect(reg.status).toBe(201);
-  const client = await reg.json();
+  return (await connectTokens(cookie, state)).access_token;
+}
+
+/** The whole connect flow for a client registered with `redirect`; returns its tokens and client. */
+async function connectTokens(cookie?: string, state = "xyz", redirect = "http://localhost:9999/callback", registered?: { client_id: string }):
+  Promise<{ access_token: string; refresh_token: string; client_id: string }> {
+  // /register allows ~20 per hour per IP (the SDK's limit), and this file is close to it: reuse a client where one exists.
+  let client = registered;
+  if (!client) {
+    const reg = await fetch(`${base}/register`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ redirect_uris: [redirect], client_name: "Test AI", token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }),
+    });
+    expect(reg.status).toBe(201);
+    client = await reg.json() as { client_id: string };
+  }
 
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
@@ -471,7 +480,8 @@ async function connect(cookie?: string, state = "xyz"): Promise<string> {
       client_id: client.client_id, redirect_uri: redirect }),
   });
   expect(tok.status).toBe(200);
-  return (await tok.json()).access_token;
+  const t = await tok.json();
+  return { access_token: t.access_token, refresh_token: t.refresh_token, client_id: client.client_id };
 }
 
 /** /authorize → our consent page → "Continue to Google". Returns Google's URL and the browser's consent cookie. */
@@ -2900,12 +2910,22 @@ describe("OAuth + MCP end to end", () => {
     expect(await (await fetch(`${base}/google-ads-gemini`)).text()).toContain('<meta name="robots" content="noindex">');
   });
 
-  it("hands back a Gemini-sized state (~1.4k chars, base64url) byte for byte", async () => {
-    const state = randomBytes(1050).toString("base64url");
-    expect(await connect(undefined, state)).toBeTruthy();
+  const refresh = (t: { refresh_token: string; client_id: string }) => fetch(`${base}/token`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: t.client_id }),
   });
 
-  it("registers Gemini's relay as a public client, everyone else with a secret", async () => {
+  it("hands back a Gemini-sized state (~1.4k chars, base64url) byte for byte; other clients' refresh tokens rotate", async () => {
+    const state = randomBytes(1050).toString("base64url");
+    const c = await connectTokens(undefined, state);
+    expect(c.access_token).toBeTruthy();
+    const d = await refresh(c);
+    expect(d.status).toBe(200);
+    expect((await d.json()).refresh_token).not.toBe(c.refresh_token);
+    expect((await refresh(c)).status).toBe(400);
+  });
+
+  it("registers Gemini's relay as a public client, everyone else with a secret; Gemini's refresh token never rotates", async () => {
     const reg = (redirect_uris: string[]) => fetch(`${base}/register`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ redirect_uris, client_name: "Google", token_endpoint_auth_method: "client_secret_post",
@@ -2916,11 +2936,30 @@ describe("OAuth + MCP end to end", () => {
     expect(g.status).toBe(201);
     expect(g.body.token_endpoint_auth_method).toBe("none");
     expect(g.body.client_secret).toBeUndefined();
+
+    // Connected Apps' Persistent Linking: the same refresh token comes back on every refresh.
+    const t = await connectTokens(undefined, "gem", g.body.redirect_uris[0], g.body);
+    const a = await (await refresh(t)).json();
+    const b = await (await refresh(t)).json();
+    expect(a.refresh_token).toBe(t.refresh_token);
+    expect(b.refresh_token).toBe(t.refresh_token);
+    expect(b.access_token).not.toBe(a.access_token);
+    const mcp = await fetch(`${base}/mcp`, {
+      method: "POST", headers: { Authorization: `Bearer ${b.access_token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } }),
+    });
+    expect(mcp.status).toBe(200);
     const other = await reg(["https://claude.ai/api/mcp/auth_callback"]);
     expect(other.body.token_endpoint_auth_method).toBe("client_secret_post");
     expect(other.body.client_secret).toBeTruthy();
     const mixed = await reg(["https://oauth-redirect.googleusercontent.com/r/x", "https://evil.example/cb"]);
     expect(mixed.body.client_secret).toBeTruthy();
+  });
+
+  it("serves Google Connected Console's domain verification file", async () => {
+    const r = await fetch(`${base}/.well-known/google-connected-apps`, { redirect: "manual" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ verification_tokens: ["gca_test_1"] });
   });
 
   it("serves the pages Google's brand verification reads", async () => {

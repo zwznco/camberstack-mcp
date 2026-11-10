@@ -27,8 +27,15 @@ import {
 } from "./google.js";
 
 export const MCP_SCOPE = "ads";
+/** Gemini's OAuth relay; it registers its /r/ and /a/ paths on all three hosts. */
+export const GEMINI_REDIRECT = /^https:\/\/oauth-redirect(-sandbox|-test)?\.googleusercontent\.com\//;
+/** A client whose every redirect is Gemini's relay (Connected Apps, Spark custom apps). */
+export function isGeminiClient(redirectUris: readonly unknown[] | undefined): boolean {
+  return Array.isArray(redirectUris) && redirectUris.length > 0
+    && redirectUris.every((u) => typeof u === "string" && GEMINI_REDIRECT.test(u));
+}
 const ACCESS_TTL = 3600;              // 1 hour
-const REFRESH_TTL = 90 * 24 * 3600;   // 90 days, rotated on every use
+const REFRESH_TTL = 90 * 24 * 3600;   // 90 days, rotated on every use (except Gemini's, below)
 const CODE_TTL = 600;                 // 10 minutes
 
 /** Where the MCP client asked to come back to, carrying its state. */
@@ -251,9 +258,20 @@ export class CamberstackProvider implements OAuthServerProvider {
     const user = this.db.prepare("SELECT enc_refresh FROM users WHERE id = ?").get(row.user_id) as
       { enc_refresh: string | null } | undefined;
     if (!user?.enc_refresh) throw new InvalidGrantError("Google Ads is disconnected; connect again");
-    this.db.prepare("DELETE FROM tokens WHERE token_hash = ?").run(sha256(refreshToken)); // rotate
     const granted = row.scopes.split(" ");
     const want = scopes?.length ? scopes.filter((s) => granted.includes(s)) : granted;
+    // Google's Connected Apps (Persistent Linking) require the same refresh token back on every refresh: "you must
+    // avoid rotating the Refresh Token" (developers.google.com/connected-apps/mcp/oauth, read 2026-11-09). Its
+    // expiry slides instead, so a link in use never lapses.
+    if (isGeminiClient(client.redirect_uris)) {
+      this.db.prepare("UPDATE tokens SET expires_at = ? WHERE token_hash = ?").run(now() + REFRESH_TTL, sha256(refreshToken));
+      const access = randomToken();
+      this.db.prepare(`INSERT INTO tokens (token_hash, kind, client_id, user_id, scopes, resource, expires_at)
+        VALUES (?, 'access', ?, ?, ?, ?, ?)`).run(sha256(access), client.client_id, row.user_id, want.join(" "),
+        resource?.href ?? row.resource, now() + ACCESS_TTL);
+      return { access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL, refresh_token: refreshToken, scope: want.join(" ") };
+    }
+    this.db.prepare("DELETE FROM tokens WHERE token_hash = ?").run(sha256(refreshToken)); // rotate
     return this.issue(client.client_id, row.user_id, want, resource?.href ?? row.resource);
   }
 
