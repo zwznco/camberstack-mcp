@@ -40,7 +40,17 @@ export interface Account {
 
 const tokenCache = new Map<string, { token: string; exp: number }>();
 /** An account (or the whole login) Google refused to read, and why; `grant_url` when Google Ads isn't granted yet. */
-type Unreadable = { customerId: string; error: string; grant_url?: string };
+type Unreadable = { customerId: string; error: string; grant_url?: string; transient?: boolean };
+/**
+ * A failure that says nothing about the account: no answer (network down, timeout) or Google erroring on its side.
+ * 2026-11-10: a box-wide network outage made listAccessibleCustomers fail, and the account-is-gone message told the model
+ * to stop calling an account the user had used 40 minutes earlier.
+ */
+function isTransient(e: unknown): boolean {
+  if (e instanceof AdsApiError) return e.status >= 500 || e.status === 429;
+  const err = e as { name?: string; message?: string; cause?: { code?: string; name?: string } };
+  return err?.name === "TimeoutError" || err?.name === "AbortError" || /fetch failed|timed? ?out|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket/i.test(`${err?.message} ${err?.cause?.code} ${err?.cause?.name}`);
+}
 /**
  * Each user's account list, shared across requests. A UserSession lives for one MCP request, so a cache on the
  * instance never hit and every account-scoped tool paid ~1s re-listing accounts before doing its own work.
@@ -664,7 +674,8 @@ export class UserSession {
     } catch (e) {
       // A login with no Google Ads at all (NOT_ADS_USER), or that didn't grant Google Ads, gets the demo account instead of a dead end.
       if (e instanceof NotConnectedError) throw e;
-      unreadable.push({ customerId: "this Google login", error: (e as Error).message, ...(e instanceof NotGrantedError && e.link ? { grant_url: e.link } : {}) });
+      unreadable.push({ customerId: "this Google login", error: (e as Error).message, ...(e instanceof NotGrantedError && e.link ? { grant_url: e.link } : {}),
+        ...(isTransient(e) ? { transient: true } : {}) });
     }
     // All roots at once; merged below in Google's order, so the result is the same as reading them one by one.
     // Every level, not just direct clients: a manager under a manager has its own clients, which a level <= 1 read never
@@ -672,13 +683,13 @@ export class UserSession {
     const perRoot = await Promise.all(roots.map((root) => this.ads.search(root, `SELECT customer_client.id, customer_client.descriptive_name,
         customer_client.currency_code, customer_client.time_zone, customer_client.manager, customer_client.status
       FROM customer_client WHERE customer_client.status = 'ENABLED'`, root)
-      .then((rows) => ({ rows }), (e: Error) => ({ error: e.message }))));
+      .then((rows) => ({ rows }), (e: Error) => ({ error: e.message, transient: isTransient(e) }))));
     for (const [i, root] of roots.entries()) {
       const got = perRoot[i]!;
       if ("error" in got) {
         // One cancelled account shouldn't hide the rest, but the reason must never be swallowed:
         // an empty list that is really an API refusal reads as "you have no accounts".
-        unreadable.push({ customerId: root, error: got.error });
+        unreadable.push({ customerId: root, error: got.error, ...(got.transient ? { transient: true } : {}) });
         continue;
       }
       for (const r of got.rows) {
@@ -697,8 +708,10 @@ export class UserSession {
       }
     }
     const list = [...out.values()].sort((a, b) => Number(a.manager) - Number(b.manager) || a.name.localeCompare(b.name));
+    // A list missing accounts only because Google didn't answer is neither counted nor cached: the next call asks again.
+    const partial = unreadable.some((u) => u.transient);
     // Only when something was readable or nothing failed: a refusal would otherwise overwrite a real count with 0.
-    if (out.size || !unreadable.length) {
+    if (!partial && (out.size || !unreadable.length)) {
       const managers = list.filter((a) => a.manager).map((a) => a.customerId);
       this.deps.db.prepare("UPDATE users SET ads_accounts = ?, ads_managers = ?, ads_manager_ids = ?, ads_accounts_at = ? WHERE id = ?")
         .run(list.length - managers.length, managers.length, JSON.stringify(managers), now(), this.user.id);
@@ -710,7 +723,7 @@ export class UserSession {
     const tz = list.find((a) => !a.manager && a.timeZone)?.timeZone;
     if (tz) this.deps.db.prepare("UPDATE users SET time_zone = ? WHERE id = ? AND time_zone IS NULL").run(tz, this.user.id);
     this.lastUnreadable = unreadable;
-    accountsCache.set(this.user.id, { at: Date.now(), list, unreadable });
+    if (!partial) accountsCache.set(this.user.id, { at: Date.now(), list, unreadable });
     return list;
   }
 
@@ -754,6 +767,11 @@ export class UserSession {
       ?? (await this.accounts({ fresh: true })).find((x) => x.customerId === cid);
     // "Call list_accounts" alone sent a model that had already called it back in a loop, and the user gave up (2026-10-27).
     if (!a) {
+      // Google didn't answer part of the listing: the account may well be fine, so say retry, never "gone" or "another login".
+      const down = this.lastUnreadable.find((u) => u.transient);
+      if (down) throw new Error(`Couldn't check account ${customerId}: Google didn't answer when Camberstack listed this login's `
+        + `accounts (${down.error.slice(0, 200)}). This is a temporary error, not a sign the account is gone or on another login: `
+        + "try the same call again in a minute.");
       // A mistyped id (one digit off) read as "another login", and the model retried it 5 times (99222daa, 2026-11-09):
       // name the near match, so the next call uses the right id.
       const near = (await this.accounts()).filter((x) => !x.manager && !isDemo(x.customerId) && digitEdits(cid, x.customerId) <= 2);

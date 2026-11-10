@@ -23,6 +23,7 @@ import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage,
 import { allServices, freePlan, oneServiceFree, parseDateFlag, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
+import { clearGoogleCache } from "./session.js";
 
 vi.mock("./sentry.js", async (orig) => ({ ...(await orig<typeof import("./sentry.js")>()), reportBug: vi.fn() }));
 
@@ -838,6 +839,29 @@ describe("OAuth + MCP end to end", () => {
     }
   });
 
+
+  it("says retry, not gone, when Google doesn't answer the account listing", async () => {
+    const q = { query: "SELECT campaign.name FROM campaign" };
+    const uid = (db.prepare("SELECT user_id FROM tool_calls ORDER BY id DESC LIMIT 1").get() as any).user_id;
+    clearGoogleCache(uid);  // the 10-minute account list has expired, so this call has to ask Google
+    const realList = ads.listAccessibleCustomers.bind(ads);
+    // 2026-11-10: the box's outbound network was down; undici gives up connecting with "fetch failed".
+    ads.listAccessibleCustomers = async () => { throw new TypeError("fetch failed", { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }); };
+    try {
+      // The user's own account, used minutes ago.
+      const down = await call(token, "run_gaql", { customer_id: "1112223333", ...q });
+      expect(down.isError).toBe(true);
+      expect(down.text).toContain("temporary error");
+      expect(down.text).toContain("try the same call again");
+      expect(down.text).not.toContain("worked for");
+      expect(down.text).not.toContain("different Google login");
+    } finally {
+      ads.listAccessibleCustomers = realList;
+    }
+    // The failed listing wasn't cached: the next list is the real one, not the demo fallback.
+    const { accounts } = (await call(token, "list_accounts")).json as { accounts: { customerId: string }[] };
+    expect(accounts.map((a) => a.customerId)).toContain("1112223333");
+  });
   it("lists accounts once across requests, not once per tool call", async () => {
     const real = ads.listAccessibleCustomers.bind(ads);
     let lists = 0;
