@@ -34,13 +34,13 @@ accounts. Agency $49/mo: up to 25.
 
 ## What it does
 
-- **Google Ads:** account overview with what needs attention, any read-only GAQL query, Keyword Planner ideas and
+- **[Google Ads](https://camberstack.io/):** account overview with what needs attention, any read-only GAQL query, Keyword Planner ideas and
   metrics, and proposals that add negatives, change budgets, bids and targeting, edit ads, or build whole Search,
   Performance Max, Display and YouTube (Demand Gen) campaigns, always created paused.
-- **Search Console:** site summary, performance by query, page, country or device, rising and falling queries,
+- **[Search Console](https://camberstack.io/google-search-console-mcp):** site summary, performance by query, page, country or device, rising and falling queries,
   page-2 opportunities, URL inspection, sitemaps.
-- **GA4:** landing-page and custom reports, properties and streams, key events and Google Ads links.
-- **Merchant Center:** product issues, disapproved products joined with what they earned in Shopping ads, and
+- **[GA4](https://camberstack.io/google-analytics-mcp):** landing-page and custom reports, properties and streams, key events and Google Ads links.
+- **[Merchant Center](https://camberstack.io/google-merchant-center-mcp):** product issues, disapproved products joined with what they earned in Shopping ads, and
   product fixes as overrides that never touch your feed.
 - **Across them:** searches you pay for that already rank organically, and landing-page speed from real Chrome users.
 
