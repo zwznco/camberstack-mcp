@@ -809,6 +809,35 @@ describe("OAuth + MCP end to end", () => {
     expect(far.text).toContain("most likely belongs to a different Google login");
   });
 
+  it("says an account this login used to open is closed, not on another login", async () => {
+    const q = { query: "SELECT campaign.name FROM campaign" };
+    const uid = (db.prepare("SELECT user_id FROM tool_calls ORDER BY id DESC LIMIT 1").get() as any).user_id;
+    db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, ms, bytes) VALUES (?, ?, 'x', 'run_gaql', '9998887777', 1, 1, 1)")
+      .run(Date.UTC(2026, 10, 6) / 1000, uid);
+    try {
+      const gone = await call(token, "run_gaql", { customer_id: "9998887777", ...q });
+      expect(gone.isError).toBe(true);
+      expect(gone.text).toContain("worked for");
+      expect(gone.text).toContain("until 2026-11-06");
+      expect(gone.text).toContain("Use Acme (1112223333) instead");
+      expect(gone.text).not.toContain("different Google login");
+      // A root Google refuses (a cancelled account is still returned by listAccessibleCustomers): quote its reason.
+      const realList = ads.listAccessibleCustomers.bind(ads), realSearch = ads.search.bind(ads);
+      ads.listAccessibleCustomers = async () => ["1112223333", "5554443333"];
+      ads.search = async (cid: string, qq: string, ...rest: any[]) => {
+        if (cid === "5554443333") throw new Error("Google Ads API 403: CUSTOMER_NOT_ENABLED The customer account can't be accessed because it is not yet enabled or has been deactivated.");
+        return (realSearch as any)(cid, qq, ...rest);
+      };
+      try {
+        const closed = await call(token, "run_gaql", { customer_id: "5554443333", ...q });
+        expect(closed.text).toContain("CUSTOMER_NOT_ENABLED");
+        expect(closed.text).toContain("most likely closed or cancelled");
+      } finally { ads.listAccessibleCustomers = realList; ads.search = realSearch; }
+    } finally {
+      db.prepare("DELETE FROM tool_calls WHERE customer_id IN ('9998887777', '5554443333')").run();
+    }
+  });
+
   it("lists accounts once across requests, not once per tool call", async () => {
     const real = ads.listAccessibleCustomers.bind(ads);
     let lists = 0;

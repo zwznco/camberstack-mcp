@@ -508,7 +508,9 @@ export class UserSession {
   private async mayReach(cid: string): Promise<boolean> {
     try {
       const reaches = (list: Account[]) => list.some((a) => a.customerId === cid);
-      return reaches(await this.accounts()) || reaches(await this.accounts({ fresh: true })) || this.lastUnreadable.length > 0;
+      if (reaches(await this.accounts()) || reaches(await this.accounts({ fresh: true }))) return true;
+      // A root Google refused (a closed account is still listed as one) is known unreachable: say why, not "plan limit".
+      return this.lastUnreadable.length > 0 && !this.lastUnreadable.some((u) => bareCid(u.customerId) === cid);
     } catch {
       return true;
     }
@@ -758,6 +760,18 @@ export class UserSession {
       if (near.length) throw new Error(`Account ${customerId} isn't one that ${this.user.email} can open, but it is close to `
         + `${near.map((x) => `${x.name} (${x.customerId})`).join(", ")}, which it can: most likely a typo. `
         + `Use ${near.length === 1 ? "that id" : "the right one of those ids"} (ask the user if unsure), not ${customerId} again.`);
+      // An account this login used to open, now closed or its access removed, read as "another login": the model kept
+      // coming back to it from memory, days apart (99222daa, 7343518086, 2026-11-06..10). Say what happened to it.
+      const others = (await this.accounts()).filter((x) => !x.manager && !isDemo(x.customerId));
+      const useInstead = others.length ? ` Use ${others.map((x) => `${x.name} (${x.customerId})`).join(", ")} instead, or ask the user which account they mean.` : "";
+      const why = this.lastUnreadable.find((u) => bareCid(u.customerId) === cid);
+      if (why) throw new Error(`Account ${customerId} can't be read: Google says ${why.error.slice(0, 300)} `
+        + `It is most likely closed or cancelled; don't call it again unless the user reopens it.${useInstead}`);
+      const used = this.deps.db.prepare("SELECT max(at) last FROM tool_calls WHERE user_id = ? AND customer_id = ? AND ok = 1")
+        .get(this.user.id, cid) as { last: number | null };
+      if (used.last) throw new Error(`Account ${customerId} worked for ${this.user.email} until `
+        + `${new Date(used.last * 1000).toISOString().slice(0, 10)}, but Google no longer lists it for this login: it was closed, `
+        + `cancelled, or this login's access to it was removed. Don't call it again unless the user says it is back.${useInstead}`);
       // A user-typed id usually belongs to another Google login, so say which login this is and how to get access.
       throw new Error(`Account ${customerId} isn't one that ${this.user.email}, the Google login connected to Camberstack, can open. `
         + `If the user gave this id, it most likely belongs to a different Google login: give ${this.user.email} access to it in Google Ads `
