@@ -28,8 +28,8 @@ const paidCovers = () => (fp.kind === "accounts" ? "Everything in Free, on" : `$
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
-const PRIVACY_UPDATED = "2026-11-05"; // Merchant Center asked at sign-in
-const TERMS_UPDATED = "2026-11-04"; // Merchant Center went public
+const PRIVACY_UPDATED = "2026-11-11"; // Tag Manager
+const TERMS_UPDATED = "2026-11-11"; // Tag Manager went public
 
 const CSS = `
 .linkish{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
@@ -314,7 +314,7 @@ const closer = (title: string, sub: string, ctas: string) =>
 
 /** The homepage's "What does Free cover?" once one-service Free is announced; nothing before. */
 const freeFaq = () => fp.kind === "accounts" ? "" : `<div><h3>What does Free cover?</h3>
-<p>${fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, every tool on 1 Google Ads account, with Search Console, Google Analytics and Merchant Center (1 account) included. From then, one` : "One"} Google service at a time: ${freeServices()}, with every tool and unlimited
+<p>${fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, every tool on 1 Google Ads account, with Search Console, Google Analytics, Merchant Center (1 account) and Tag Manager included. From then, one` : "One"} Google service at a time: ${freeServices()}, with every tool and unlimited
 changes. The first time, your AI asks which one; another opens ${ACCOUNT_WINDOW_DAYS} days after the current one was last used.${plusLine()} Pro and Agency cover all five on more accounts.</p></div>`;
 
 export function homePage(baseUrl: string): string {
@@ -326,7 +326,7 @@ export function homePage(baseUrl: string): string {
     jsonLd: {
       "@context": "https://schema.org", "@type": "SoftwareApplication", name: "Camberstack",
       applicationCategory: "BusinessApplication", operatingSystem: "Web", url: baseUrl,
-      description: "Hosted Google Ads MCP server for Claude, ChatGPT and other MCP apps: read-only queries, optional Search Console and Google Analytics 4 data, and approved changes with undo.",
+      description: "Hosted Google Ads MCP server for Claude, ChatGPT and other MCP apps: read-only queries, optional Search Console, Google Analytics 4, Merchant Center and Tag Manager, and approved changes with undo.",
       offers: [
         { "@type": "Offer", name: "Free", price: "0", priceCurrency: "USD",
           description: fp.kind === "one_service" ? `Every tool, with unlimited applied changes, on ${oneServiceFree()}.` : "Every tool, with unlimited applied changes, on 1 Google Ads account." },
@@ -362,6 +362,7 @@ export function homePage(baseUrl: string): string {
 <li>Optional <a href="#search-console">Search Console</a>: where you already rank, which searches you may be paying for twice, and sitemaps you approve</li>
 <li>Optional <a href="/google-analytics-mcp">Google Analytics 4</a>: which landing pages turn ad clicks into conversions</li>
 <li>Optional <a href="/google-merchant-center-mcp">Merchant Center</a>: why products are disapproved or limited, what they were earning in Shopping ads, and fixes you approve</li>
+<li>Optional <a href="/google-tag-manager-mcp">Tag Manager</a>: conversion tracking mistakes in your container, and the tags and publishes you approve to fix them</li>
 </ul>
 </div></section>
 
@@ -370,7 +371,8 @@ export function homePage(baseUrl: string): string {
 <p class="muted">Every change is a proposal you approve, and all but a few have an undo: the ones Google can't reverse warn you first. A new campaign is always created paused, so building it and letting it spend are two separate approvals.</p></div>
 ${pairList(CHANGES, "Undo")}
 <p class="muted small">Besides the warnings above, a proposal also warns before removing a campaign's last location.
-It deletes only what you approve, and it cannot touch billing or edit anything outside Google Ads, the <a href="#analytics">Google Analytics setup changes</a> and the <a href="#search-console">Search Console sitemaps and properties</a> below.
+It deletes only what you approve, and it cannot touch billing or edit anything outside Google Ads, the <a href="#analytics">Google Analytics setup changes</a> and the <a href="#search-console">Search Console sitemaps and properties</a> below,
+and the <a href="/google-merchant-center-mcp">Merchant Center</a> and <a href="/google-tag-manager-mcp">Tag Manager</a> changes on their pages.
 Any question beyond these tools is answered with read-only queries. <a href="/tools">Every tool and what it can do</a>;
 the code is <a href="${SOURCE_URL}">open source</a>.</p>
 </div></section>
@@ -403,7 +405,7 @@ ${pairList([
   ["Mark or unmark an event as a key event", "Restores the previous setting"],
   ["Link or unlink a Google Ads account", "Restores the previous link"],
 ], "Undo")}
-<p class="muted small">Google Ads, Search Console, Google Analytics and Merchant Center are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property. <a href="/google-analytics-mcp">More on the Google Analytics tools</a>.</p>
+<p class="muted small">Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property. <a href="/google-analytics-mcp">More on the Google Analytics tools</a>.</p>
 </div>
 </div></section>
 
@@ -495,8 +497,8 @@ const ASK_FIRST = `<h2>What to ask first</h2>
 </ul>`;
 
 /** The other Google services, for the Ads guides: each has its own page, which the guides otherwise never linked. */
-const OTHER_SERVICES = `<p>The same connection can also read <a href="/google-search-console-mcp">Search Console</a>, <a href="/google-analytics-mcp">Google Analytics 4</a>
-and <a href="/google-merchant-center-mcp">Merchant Center</a>, if you leave their boxes ticked when you sign in.</p>`;
+const OTHER_SERVICES = `<p>The same connection can also read <a href="/google-search-console-mcp">Search Console</a>, <a href="/google-analytics-mcp">Google Analytics 4</a>,
+<a href="/google-merchant-center-mcp">Merchant Center</a> and <a href="/google-tag-manager-mcp">Tag Manager</a>, if you leave their boxes ticked when you sign in.</p>`;
 
 const CAN_CHANGE = `<h2>What it can change</h2>
 <p>Negative keywords, budgets and end dates, pausing and re-enabling, bids, targeting and bid strategy, conversion goals, and whole new
@@ -556,7 +558,7 @@ expired proposal, are covered in <a href="/docs#troubleshooting">the documentati
 const commonQuestions = (app: string) => `<h3>Do I need a Google Ads developer token?</h3>
 <p>No. Camberstack has its own Google Ads API access. You sign in with Google and choose what to share.</p>
 <h3>Does ${app} see my whole Google account?</h3>
-<p>No. It gets Google Ads access, your email address and, if you leave them ticked, Search Console, Google Analytics and Merchant Center (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
+<p>No. It gets Google Ads access, your email address and, if you leave them ticked, Search Console, Google Analytics, Merchant Center and Tag Manager (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
 <h3>What does it cost?</h3>
 <p>${fp.kind === "one_service" ? `Free on ${oneServiceFree()}, with every tool and unlimited changes. <a href="/#pricing">Plus</a> covers all five together on one account for ${PLUS_PRICE_LABEL}, Pro on up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.`
   : `Free on one Google Ads account, with every tool and unlimited changes. <a href="/#pricing">Pro</a> covers up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.${soon()}`}</p>`;
@@ -704,7 +706,7 @@ ${guideTroubleshooting("ChatGPT",
 <strong>Disconnect Google Ads</strong>, or remove Camberstack at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
 <h3>Does ChatGPT see my whole Google account?</h3>
 <p>No. The Google sign-in is Camberstack's, not ChatGPT's, and it shares only Google Ads, your email address and, if you leave them
-ticked, Search Console, Google Analytics and Merchant Center (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
+ticked, Search Console, Google Analytics, Merchant Center and Tag Manager (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
 <h3>Does it need a paid Camberstack plan?</h3>
 <p>${fp.kind === "one_service" ? `No. Free covers ${oneServiceFree()}, with every tool; <a href="/#pricing">Plus</a> covers all five together on one account, Pro on up to ${PRO_ACCOUNTS} accounts, and Agency up to ${AGENCY_ACCOUNTS}.`
   : `No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to ${PRO_ACCOUNTS}, and Agency up to ${AGENCY_ACCOUNTS}.${soon()}`}</p>
@@ -926,6 +928,114 @@ ${closer("Ask your AI why products aren't showing on Google.", fp.kind === "one_
 }
 
 /**
+ * Use-case page for Google Tag Manager (public 2026-11-11, when Google verified the four tagmanager scopes). The hero is
+ * tag_manager_setup on the demo container (gtm.ts freshGtm): an Ads conversion tag on All Pages, no Conversion Linker,
+ * a Universal Analytics tag. Only web (GTM-) containers are listed; custom HTML tags, variables and editing an existing
+ * tag's settings aren't supported, and GTM accounts can't be created through the API.
+ */
+export function tagManagerPage(baseUrl: string): string {
+  const mcpUrl = `${baseUrl}/mcp`;
+  return layout({
+    baseUrl, path: "/google-tag-manager-mcp", wide: true,
+    title: "Google Tag Manager MCP server, hosted | Camberstack",
+    description: "A hosted Google Tag Manager MCP server for Claude, ChatGPT and Cursor. Find conversion tracking problems in your container, and add, pause or remove tags and publish, only with your approval.",
+    jsonLd: {
+      "@context": "https://schema.org", "@type": "TechArticle",
+      headline: "Google Tag Manager MCP server", url: `${baseUrl}/google-tag-manager-mcp`, dateModified: "2026-11-11",
+      author: { "@type": "Organization", name: "Camberstack", url: baseUrl },
+      about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
+    },
+    body: `
+${guideHero({
+  kicker: "No Google Ads account needed",
+  title: "Google Tag Manager MCP server",
+  lede: `Ask your AI assistant why your conversions look wrong, and it reads your Tag Manager container to answer: which tags fire
+where and when, what isn't published yet, and the tracking mistakes that skew Google Ads and GA4. It can add the tag that's missing,
+pause or remove a broken one, and publish, only when you approve. Camberstack is hosted, so setup is a Google sign-in.`,
+  ctas: `<a class="btn btn-lg" href="#setup">Connect Tag Manager</a><a class="btn btn-lg btn-ghost" href="/tools#tag_manager_containers">See the tools</a>`,
+  aside: `<figure class="window" aria-label="An example answer, from the demo container">
+<div class="window-bar"><i></i><i></i><i></i><span>Demo container · northwind-plumbing.example</span></div>
+<div class="window-body">
+<p class="said you">Why does Google Ads count so many conversions?</p>
+<p class="ai">Three problems in your container:</p>
+<table class="mini"><tr><th>Tag</th><th>Problem</th></tr>
+<tr><td>Ads - Call clicks</td><td>Fires on every page, so each page view counts as a conversion</td></tr>
+<tr><td>(none)</td><td>No Conversion Linker: Safari and Firefox conversions go uncounted</td></tr>
+<tr><td>UA - pageviews (old)</td><td>Universal Analytics, which Google stopped processing in 2024</td></tr></table>
+<p class="ai">Want me to propose adding a Conversion Linker, pausing the call-click tag and deleting the old one, then publishing?</p>
+</div>
+</figure>`,
+})}
+${guideBody(`
+<h2>Questions it answers</h2>
+${pairList([
+  [`<em>"Is my conversion tracking set up right?"</em>`, "Every tag in the container, what it sends where and when it fires, and the problems worth fixing: a Google Ads conversion tag with no Conversion Linker or firing on every page, a tag that never fires, retired Universal Analytics, no Google tag"],
+  [`<em>"What's waiting to be published?"</em>`, "The live version, and the changes in the workspace that aren't on the site yet"],
+  [`<em>"Which containers do I have?"</em>`, "Every web container your Google login can read, across your Tag Manager accounts"],
+  [`<em>"Does my Google Ads conversion fire on the thank-you page?"</em>`, "Each tag's triggers, and the conversion ID and label it sends"],
+], "Reads")}
+
+<h2>Changes it can make</h2>
+<p>Ask for a change and your AI shows you a proposal first. Nothing changes until you approve it, and changes stay in the container's
+workspace until a publish puts them on your site, which is a change you approve too.</p>
+${pairList([
+  ["Add a Google tag (GA4 or Google Ads), a Google Ads conversion tag, a GA4 event tag or a Conversion Linker, on all pages, on pages whose URL contains some text, on a custom event, or on an existing trigger", "Removes the tag, and the trigger it added"],
+  ["Pause, unpause or delete a tag", "Restores the previous state, or the deleted tag"],
+  ["Publish the workspace, so the changes go live on the site", "Publishes the version that was live before"],
+  ["Create a web container", "Deletes the container"],
+  ["Delete a container: Google can't undo this, and the proposal warns you first", "None"],
+], "Undo")}
+
+<h2>Common problems</h2>
+<h3>Conversions counted on every page</h3>
+<p>A Google Ads conversion tag on the All Pages trigger counts each page view as a conversion, so the numbers run high and Smart
+Bidding chases visits instead of leads. Ask your AI to check the tag's triggers, then pause it and add one that fires on the
+thank-you page or the form's event.</p>
+<h3>No Conversion Linker</h3>
+<p>Without a Conversion Linker, Google Ads loses conversions from browsers that block third-party cookies, such as Safari and Firefox.
+Adding one is a single approved change and a publish.</p>
+<h3>Universal Analytics tags</h3>
+<p>Google stopped processing Universal Analytics in 2024, so those tags send data nowhere. They can be deleted; GA4 uses a Google tag.</p>
+
+<h2 id="setup">Set it up</h2>
+<p>Connect Camberstack in your AI app (<a href="/google-ads-claude">Claude</a>, <a href="/google-ads-chatgpt">ChatGPT</a>, or any MCP
+client with <code>${mcpUrl}</code>). On Google's sign-in screen, leave <strong>Tag Manager</strong> ticked, then ask <em>"List my Tag Manager containers"</em>.
+Already connected without it? The first time you ask, Camberstack gives you a link that adds it to the same Google account, with no reconnecting.</p>
+<p>You need a Tag Manager account, which you create at <a href="https://tagmanager.google.com">tagmanager.google.com</a>: Google doesn't let
+any app create one. A container inside it Camberstack can create for you. You don't need a Google Ads account.</p>
+
+<h2>What it can't do</h2>
+<p>Camberstack works on web containers (<code>GTM-</code> IDs), not server-side, app or AMP containers. It doesn't write custom HTML tags,
+edit variables, or change the settings of a tag it didn't add: for those, it tells you what to change in Tag Manager. A container
+managed by another app, such as Shopify's Google channel, can be read but not changed.</p>
+
+<h2>Compared with running your own</h2>
+<p>Google's Tag Manager API needs a Google Cloud project with the API enabled and an OAuth client of your own. That suits a developer
+on one laptop. Camberstack runs that part for you: one Google sign-in, and it works the same in Claude on the web, on your phone, and
+in ChatGPT. The same connection reads <a href="/google-analytics-mcp">Google Analytics 4</a> and your Google Ads conversions, the
+other two ends of the same tracking.</p>
+
+<h2>Questions</h2>
+<h3>What does it cost?</h3>
+<p>${fp.kind === "accounts" ? `Tag Manager is included on every plan: <a href="/#pricing">Free, Pro and Agency</a>.`
+  : fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, Tag Manager is included on Free. From then, Free covers one Google service at a time, and Tag Manager can be that one. Using it together with Google Ads or Google Analytics, for example to take a conversion's ID from Google Ads, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`
+  : `Free covers one Google service at a time, and Tag Manager can be that one. Using it together with Google Ads or Google Analytics, for example to take a conversion's ID from Google Ads, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`}</p>
+<h3>Which Tag Manager permission do I need?</h3>
+<p>Read access to a container is enough to check it. Adding, pausing or deleting tags needs Edit, and publishing needs Publish.
+Creating or deleting a container needs administrator access to the Tag Manager account.</p>
+<h3>Can I try it first?</h3>
+<p>Yes. Ask for the demo container, a sample plumbing business's tags with the three problems above. Changes there change only the demo.</p>
+<h3>Do you store my container?</h3>
+<p>Only what's needed to show and undo the changes you approve, such as a tag you deleted, so it can be put back. Your container's
+tags and triggers are read when your AI asks and aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
+`)}
+${closer("Ask your AI whether your conversion tracking is right.", fp.kind === "one_service" ? "Free for one Google service." : "Free.",
+  `<a class="btn btn-lg" href="/#setup">Connect Tag Manager</a><a class="btn btn-lg btn-ghost" href="/tools#tag_manager_containers">See the tools</a>`)}
+`,
+  });
+}
+
+/**
  * Use-case page for "google analytics mcp" (720/mo, 320 → 1,000 over the year to 2026-09), "ga4 mcp" (170) and "google
  * analytics mcp server" (170): low competition, $5–41 top-of-page bid (Keyword Planner via the dev connector, 2026-11-06;
  * scripts/seo/audits/camberstack.md). The GA4 tools need no Google Ads account (tools.ts gates them on Analytics only).
@@ -1009,7 +1119,7 @@ to use the Google Analytics tools: every one of them works on your real properti
 enabled, and your own OAuth client or credentials. It reads reports, and can create key events, custom dimensions and annotations once
 you turn writes on. That suits a developer on one laptop. Camberstack is hosted, so you only sign in with Google, it works the
 same in Claude on the web, on your phone and in ChatGPT, and every change is a proposal you approve, with undo. It also reads
-your Google Ads, <a href="/google-search-console-mcp">Search Console</a> and <a href="/google-merchant-center-mcp">Merchant Center</a>
+your Google Ads, <a href="/google-search-console-mcp">Search Console</a>, <a href="/google-merchant-center-mcp">Merchant Center</a> and <a href="/google-tag-manager-mcp">Tag Manager</a>
 through the same connection.</p>
 
 <h2>Questions</h2>
@@ -1129,12 +1239,15 @@ export function docsPage(baseUrl: string): string {
     body: `
 <h1>Camberstack documentation</h1>
 <p class="lede">Camberstack is a hosted MCP server that gives your AI assistant access to your Google Ads account and, optionally,
-Search Console. The AI reads the account and proposes changes. Nothing changes until you approve a specific proposal, and applied changes can be undone, apart from deletions Google can't reverse, which are flagged first.</p>
+Search Console, Google Analytics 4, Merchant Center and Tag Manager. The AI reads the account and proposes changes. Nothing changes until you approve a specific proposal, and applied changes can be undone, apart from deletions Google can't reverse, which are flagged first.</p>
 <ul>
 <li><a href="#connect">Connect</a></li>
 <li><a href="#how-it-works">How it works: read, propose, approve, apply, undo</a></li>
 <li><a href="#building">Building campaigns: Search, Performance Max, Display, YouTube</a></li>
 <li><a href="#search-console">Search Console</a></li>
+<li><a href="#analytics">Google Analytics 4</a></li>
+<li><a href="#merchant-center">Merchant Center</a></li>
+<li><a href="#tag-manager">Tag Manager</a></li>
 <li><a href="#demo">Demo account</a></li>
 <li><a href="#plans">Plans and limits</a></li>
 <li><a href="#access">Google API access and your data</a></li>
@@ -1207,6 +1320,13 @@ None of it needs a Google Ads account. <a href="/google-analytics-mcp">More on t
 <p>With the Merchant Center box ticked, your AI can see why products are disapproved or limited, what they earned in Shopping ads, and
 fix prices, GTINs and titles through overrides you approve. <a href="/google-merchant-center-mcp">More on the Merchant Center tools</a>.</p>
 
+<h2 id="tag-manager">Tag Manager</h2>
+<p>With Tag Manager ticked, your AI can list your web containers and check one: every tag, what it sends and when it fires, what isn't
+published yet, and conversion tracking problems such as a Google Ads conversion tag firing on every page or no Conversion Linker.
+Through proposals you approve (<code>propose_tag_manager_changes</code>) it can add a Google tag, Google Ads conversion tag, GA4 event tag or
+Conversion Linker, pause, unpause or delete tags, create or delete a container, and publish. Tag changes reach the site only when a publish
+you approve runs. <a href="/google-tag-manager-mcp">More on the Tag Manager tools</a>.</p>
+
 <h2 id="demo">Demo account</h2>
 <p>Account <code>000-000-0001</code> is a sample plumbing business with six months of campaigns and search terms. Every tool works on it,
 changes there never reach Google, and it doesn't count toward your plan. Ask <em>"Show me Camberstack's demo account"</em>.</p>
@@ -1223,8 +1343,8 @@ Using one more account than your plan covers returns a <code>plan_limit</code> e
 a personal upgrade link valid for 7 days. Undo, change history and billing are never limited. Ask <em>"What plan am I on?"</em> to see your usage.</p>
 
 <h2 id="access">Google API access and your data</h2>
-<p>Camberstack accesses the Google Ads API under its own approved API access, with the user's Google OAuth consent. Search Console is read
-through Google's Search Console API under the same consent, with its <code>webmasters</code> scope. Camberstack is independent and not affiliated with Google.</p>
+<p>Camberstack accesses the Google Ads API under its own approved API access, with the user's Google OAuth consent. Search Console, Google Analytics,
+Merchant Center and Tag Manager are reached through their own Google APIs under the same consent, each with its own scope (listed in the <a href="/privacy">privacy policy</a>). Camberstack is independent and not affiliated with Google.</p>
 <p>It stores your Google email, an encrypted Google refresh token, and your proposals with their results so you can undo them. Reports and query results are not stored.
 Details in the <a href="/privacy">privacy policy</a>.</p>
 
@@ -1259,13 +1379,14 @@ change your Google Ads account. This policy explains what we access, why, and wh
 <li><strong>Your Search Console data and sitemaps, optional</strong> (the <code>https://www.googleapis.com/auth/webmasters</code> scope; a connection made before 2026-10-31 may hold <code>https://www.googleapis.com/auth/webmasters.readonly</code> instead): the websites you have verified, their Google Search clicks, impressions, queries and positions, Google's index status for pages you ask about, and the sitemaps you have submitted, read when your AI assistant calls a Search Console tool, for example to compare what you pay for with where you already rank. Google Ads and Search Console are each optional: you can untick either on Google's consent screen and add it later through a link Camberstack gives you. With the same scope, Camberstack submits, resubmits and removes sitemaps and adds and removes properties, each only when you approve a specific proposal. We keep what we need to show and reverse each change (the sitemap or property, and the proposal), as for any other change.</li>
 <li><strong>Your Google Analytics data and setup, optional</strong> (the <code>https://www.googleapis.com/auth/analytics.readonly</code> and <code>https://www.googleapis.com/auth/analytics.edit</code> scopes): the names of the Google Analytics accounts and properties you can access; reports on your properties' traffic, such as sessions, users, engagement, key events (conversions), landing pages and traffic sources; and each property's setup (web streams and their measurement IDs, key events, Google Ads links), read when your AI assistant calls a Google Analytics tool, for example to see whether visitors from your ads convert. With edit access Camberstack can set up tracking for you, <strong>only</strong> when you approve a specific proposal: create a property with a web stream, mark or unmark an event as a key event, and link or unlink a Google Ads account. Every such change is logged and can be undone. Google Analytics is optional: both scopes come as one box on Google's consent screen, which you can untick and add later through a link Camberstack gives you.</li>
 <li><strong>Your Google Merchant Center data and products, optional</strong> (the <code>https://www.googleapis.com/auth/content</code> scope): the names of the Merchant Center accounts you can access; account-level issues; your products' status (eligible, limited, pending or disapproved) and the issues Google reports for each, with product IDs, titles, brands and prices; and reports on your products' Google Shopping and free-listing clicks and impressions, read when your AI assistant calls a Merchant Center tool, for example to find why products stopped showing. Camberstack can also change products for you, <strong>only</strong> when you approve a specific proposal: override a product's attributes (such as its price, GTIN or title), exclude it from Shopping ads or free listings, or create, change and delete products of its own. Overrides go through Camberstack's own supplemental data source in your account, which it creates and, the first time, places ahead of the product's feed in that feed's rules; products it creates live in its own data source, "Camberstack products". Your feed and its products are never edited, added or deleted. Every change is logged and can be undone: undoing an override lets your feed's values apply again, and undoing a deletion re-creates the product. Merchant Center is optional: it is a box on Google's consent screen, which you can untick and add later through a link Camberstack gives you.</li>
+<li><strong>Your Google Tag Manager containers, optional</strong> (the <code>https://www.googleapis.com/auth/tagmanager.edit.containers</code>, <code>https://www.googleapis.com/auth/tagmanager.edit.containerversions</code>, <code>https://www.googleapis.com/auth/tagmanager.publish</code> and <code>https://www.googleapis.com/auth/tagmanager.delete.containers</code> scopes): the names of the Tag Manager accounts and web containers you can access, and a container's tags, triggers, workspace and versions (which tags exist, what each sends where, such as a Google Ads conversion ID or a GA4 measurement ID, and when each fires), read when your AI assistant calls a Tag Manager tool, for example to check your conversion tracking. Camberstack can also change a container for you, <strong>only</strong> when you approve a specific proposal: add a Google tag, a Google Ads conversion tag, a GA4 event tag or a Conversion Linker with the trigger it needs; pause, unpause or delete a tag; create a version of the workspace and publish it to your site; and create or delete a container. Every change is logged and can be undone, except deleting a container, which Google can't reverse and which the proposal warns about first. Tag Manager is optional: it is on Google's consent screen, which you can untick and add later through a link Camberstack gives you.</li>
 </ul>
 <p>We request nothing else from your Google account: no Gmail, Drive, contacts or calendar.</p>
 
 <h2>How we use it</h2>
 <ul>
 <li>To answer the requests your AI assistant makes on your behalf (reports and read-only queries).</li>
-<li>To apply changes to your Google Ads account, your Search Console sitemaps and properties, your Google Analytics setup or your Merchant Center products, <strong>only</strong> when you approve a specific proposal, and to reverse them if you ask.</li>
+<li>To apply changes to your Google Ads account, your Search Console sitemaps and properties, your Google Analytics setup, your Merchant Center products or your Tag Manager containers, <strong>only</strong> when you approve a specific proposal, and to reverse them if you ask.</li>
 </ul>
 <p>We do not sell your data, use it for advertising, share it with data brokers, or use it to train AI or machine-learning models.
 Humans at Camberstack do not read your Google data unless you ask us to for support, it is needed for security or abuse investigation, or the law requires it.</p>
@@ -1279,18 +1400,18 @@ Humans at Camberstack do not read your Google data unless you ask us to for supp
 <tr><th>Data</th><th>Why</th><th>Kept until</th></tr>
 <tr><td>Google email and account ID</td><td>Identify you across connections</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
 <tr><td>How many Google Ads accounts your login can reach, how many of them had ad spend in the last 30 days, and which manager accounts they sit under (counts and IDs only, never names, amounts or other account data)</td><td>Show which accounts are active when you pick one, and size plans to how many accounts people use</td><td>The same as your email and account ID</td></tr>
-<tr><td>Google refresh token, encrypted (AES-256-GCM)</td><td>Call Google's APIs (Google Ads, and Search Console, Google Analytics or Merchant Center if you granted them) when you use a tool</td><td>You disconnect or revoke access, or six months without use</td></tr>
+<tr><td>Google refresh token, encrypted (AES-256-GCM)</td><td>Call Google's APIs (Google Ads, and Search Console, Google Analytics, Merchant Center or Tag Manager if you granted them) when you use a tool</td><td>You disconnect or revoke access, or six months without use</td></tr>
 <tr><td>A sign-in session for the account page (a cookie; we store only its hash)</td><td>Keep you signed in to camberstack.io/account</td><td>7 days, or until you sign out</td></tr>
 <tr><td>A random value in a cookie while you connect an AI app</td><td>Check that the browser finishing the Google sign-in is the one that approved the connection</td><td>The sign-in finishes, or 1 hour</td></tr>
-<tr><td>A random value in a cookie while you add a Google service (Google Ads, Search Console, Google Analytics or Merchant Center) to your connection</td><td>Check that the browser finishing Google's consent is the one that opened your link</td><td>The consent finishes, or 10 minutes</td></tr>
+<tr><td>A random value in a cookie while you add a Google service (Google Ads, Search Console, Google Analytics, Merchant Center or Tag Manager) to your connection</td><td>Check that the browser finishing Google's consent is the one that opened your link</td><td>The consent finishes, or 10 minutes</td></tr>
 <tr><td>Tokens we issue to your AI app (stored as hashes)</td><td>Authenticate your AI app</td><td>Expiry (1 hour access, 90 days refresh) or disconnect</td></tr>
-<tr><td>Proposals: the changes requested, their summary and results</td><td>Show what changed and let you undo it</td><td>You ask us to delete them, or two years without use (not while on a paid plan)</td></tr>
+<tr><td>Proposals: the changes requested, their summary and results, and for a Tag Manager tag you delete, a copy of that tag's settings</td><td>Show what changed and let you undo it</td><td>You ask us to delete them, or two years without use (not while on a paid plan)</td></tr>
 <tr><td>Merchant Center product changes you approve: the values you set for a product, and for products you create through Camberstack, their details (such as title, price and link)</td><td>Google can't return these, so we keep them to show what's in place and to undo a change</td><td>You remove the change or the product, ask us to delete them, or two years without use (not while on a paid plan)</td></tr>
 <tr><td>Feedback you send from camberstack.io/feedback, or through your AI app with <code>send_feedback</code>: your message, what it's about, and your Google email. Your AI app sends only the message you approve, not your conversation</td><td>Read it and reply to you</td><td>You ask us to delete it</td></tr>
 <tr><td>A sign-in session for the feedback page (a cookie; we store only its hash)</td><td>Know who a message is from, so we can reply and keep spam out</td><td>1 day, or until you sign out</td></tr>
 <tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
 </table>
-<p>Reports, search-term lists, query results, Google Analytics reports and Merchant Center product statuses and reports are computed on request and returned to your AI assistant. We do not store them.
+<p>Reports, search-term lists, query results, Google Analytics reports, Merchant Center product statuses and reports, and Tag Manager containers' tags and triggers are computed on request and returned to your AI assistant. We do not store them.
 When a proposed ad uses an image URL, we download that image only to upload it to your Google Ads account as an image asset; we do not keep the file.
 Web server and application logs (IP address, time, path, errors) are kept for up to 90 days for security and then deleted.
 When the server hits a bug, the error and where in the code it happened go to an error tracker we host ourselves; no request contents, cookies or tokens are sent with it.</p>
@@ -1333,7 +1454,7 @@ as a conversion, so we can tell which ads work. We send only the click identifie
 (<code>_ga</code> and <code>_ga_&lt;id&gt;</code>, kept up to 2 years) so repeat visits are counted once. Google processes this under
 <a href="https://policies.google.com/privacy">its privacy policy</a>; you can block it with your browser's cookie settings or
 <a href="https://tools.google.com/dlpage/gaoptout">Google's opt-out add-on</a>. This covers only visits to camberstack.io.
-None of your Google Ads, Search Console, Google Analytics or Merchant Center data that Camberstack reads for you is ever sent to either analytics tool.</p>
+None of your Google Ads, Search Console, Google Analytics, Merchant Center or Tag Manager data that Camberstack reads for you is ever sent to either analytics tool.</p>
 
 <h2>Your choices</h2>
 <ul>
@@ -1374,7 +1495,7 @@ export function plansPage(baseUrl: string): string {
 ${freeServices()}. Your AI asks which one before the first is used; another opens
 ${ACCOUNT_WINDOW_DAYS} days after the current one was last used.</p>`
     : `<p>Every tool, with unlimited applied changes and undo, on <strong>1 Google Ads account</strong> at a time; another opens
-once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Search Console and Google Analytics are included and don't count. Merchant Center is included too, on 1 Merchant Center account.${soon()}</p>`;
+once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Search Console, Google Analytics and Tag Manager are included and don't count. Merchant Center is included too, on 1 Merchant Center account.${soon()}</p>`;
   const all = paidCovers();
   return layout({
     baseUrl, path: "/plans",
@@ -1409,17 +1530,18 @@ export function termsPage(baseUrl: string): string {
 <h2>The service</h2>
 <p>Camberstack lets an AI assistant read your Google Ads account and, when you approve a specific proposal, change it.
 ${listedServices().includes("merchant")
-    ? `If you add them to your connection, it can also read your Search Console data, your Merchant Center data
-and your Google Analytics data, and change your Search Console sitemaps and properties, your Google Analytics setup and your Merchant Center products when you approve a specific proposal.`
+    ? `If you add them to your connection, it can also read your Search Console data, your Merchant Center data,
+your Google Analytics data and your Tag Manager containers, and change your Search Console sitemaps and properties, your Google Analytics setup,
+your Merchant Center products and your Tag Manager containers (including publishing them to your website) when you approve a specific proposal.`
     : `If you add them to your connection, it can also read your Search Console data and your Google Analytics data, and change your Search Console sitemaps and properties and your Google Analytics setup when you approve a specific proposal.`}
 There is a free plan and paid plans, described at <a href="/#pricing">camberstack.io/#pricing</a>.</p>
 <h2>Paid subscriptions</h2>
 <p>Paid plans are billed monthly in advance through Stripe until you cancel. You can cancel any time from the billing link the <code>billing</code> tool gives you; your plan continues until the end of the period you paid for, and we don't refund partial months. Switching between Pro and Agency takes effect right away, and Stripe prorates the difference. If we change the price we will email you at least 30 days before it applies to you.</p>
 <h2>You stay in control, and responsible</h2>
 <p>Recommendations are generated from your account data and may be wrong. You decide what to approve, and you are responsible
-for changes you approve, for your Google Ads spend, and for the tracking and consent on any website you measure with Google Analytics. Review proposals before approving them.</p>
+for changes you approve, for your Google Ads spend, and for the tracking and consent on any website you measure with Google Analytics or tag through Tag Manager. Review proposals before approving them.</p>
 <h2>Acceptable use</h2>
-<p>Use Camberstack only on Google Ads accounts, Search Console sites${listedServices().includes("merchant") ? ", Google Analytics properties and Merchant Center accounts" : " and Google Analytics properties"} you are authorized to manage, and in line with Google's policies. Don't attempt to access other users' data or overload the service.</p>
+<p>Use Camberstack only on Google Ads accounts, Search Console sites${listedServices().includes("merchant") ? ", Google Analytics properties, Merchant Center accounts and Tag Manager containers" : " and Google Analytics properties"} you are authorized to manage, and in line with Google's policies. Don't attempt to access other users' data or overload the service.</p>
 <h2>No warranty</h2>
 <p>The service is provided "as is", without warranties of any kind, including fitness for a particular purpose or uninterrupted availability.</p>
 <h2>Limitation of liability</h2>
@@ -1460,7 +1582,7 @@ export function aboutPage(baseUrl: string): string {
 <h2>Contact</h2>
 <p>Email <a href="mailto:${CONTACT}">${CONTACT}</a> for support, billing, or to have your data deleted. The code is public: <a href="${SOURCE_URL}">${SOURCE_URL.replace("https://", "")}</a>.</p>
 <h2>What it does</h2>
-<p>Camberstack connects your Google Ads account, and optionally Search Console, to an AI assistant such as Claude or ChatGPT. It reads your data, and it changes your account only when you approve a specific proposal. <a href="/tools">The tools page</a> lists everything it can do.</p>
+<p>Camberstack connects your Google Ads account, and optionally Search Console, Google Analytics 4, Merchant Center and Tag Manager, to an AI assistant such as Claude or ChatGPT. It reads your data, and it changes your account only when you approve a specific proposal. <a href="/tools">The tools page</a> lists everything it can do.</p>
 <p class="muted">Camberstack is independent and not affiliated with or endorsed by Google.</p>`,
   });
 }
@@ -1577,7 +1699,7 @@ export function robotsTxt(baseUrl: string): string {
 }
 
 /** The indexable pages, in sitemap order. */
-export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/google-search-console-mcp", "/google-analytics-mcp", "/google-merchant-center-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
+export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/google-search-console-mcp", "/google-analytics-mcp", "/google-merchant-center-mcp", "/google-tag-manager-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
 
 /** `lastmod`: each page's own last-changed date (lastmod.ts), never one date for the whole site. */
 export function sitemapXml(baseUrl: string, lastmod: Record<string, string>): string {
@@ -1596,6 +1718,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - Search Console (optional): site totals, query/page performance, period-over-period trends, ranking opportunities, URL Inspection (index status), sitemap status, and paid vs organic overlap with the Ads account; approved changes submit or remove sitemaps and add or remove properties.
 - Google Analytics 4 (optional): landing pages with engagement and key events by channel, any GA4 report, each property's streams, key events and Google Ads links; approved changes create a property, mark or unmark key events, and link or unlink Google Ads.
 - Merchant Center (optional): account and product issues, Shopping and free-listing reports, disapproved products joined with their ad spend; approved changes override product attributes (price, GTIN, title, …) through Camberstack's own supplemental source, exclude or include products, add Camberstack's own products, and link Merchant Center to Google Ads. The feed itself is never edited.
+- Tag Manager (optional): web containers, each container's tags and triggers with tracking problems (Ads conversion tag on every page, no Conversion Linker, tags that never fire, Universal Analytics), and what's unpublished; approved changes add a Google tag, Google Ads conversion tag, GA4 event tag or Conversion Linker, pause, unpause or delete tags, create or delete a container, and publish.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
 - Pricing: ${fp.kind === "one_service" ? `Free plan covers ${oneServiceFree()} (every tool, unlimited applied changes); Plus ${PLUS_PRICE_LABEL} covers all five together on 1 Google Ads account; Pro and Agency cover all five on more accounts.`
   : `Free plan covers 1 Google Ads account (every tool, unlimited applied changes).${soon()}`} Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with no switching in between; manager (MCC) and demo accounts don't count. Undo is always free.
@@ -1607,6 +1730,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - [Google Search Console MCP (works without a Google Ads account)](${baseUrl}/google-search-console-mcp)
 - [Google Analytics MCP, GA4 (works without a Google Ads account)](${baseUrl}/google-analytics-mcp)
 - [Google Merchant Center MCP (works without a Google Ads account)](${baseUrl}/google-merchant-center-mcp)
+- [Google Tag Manager MCP (works without a Google Ads account)](${baseUrl}/google-tag-manager-mcp)
 - [Every tool, with its parameters](${baseUrl}/tools)
 - [Source (MIT)](${SOURCE_URL})
 - [Privacy](${baseUrl}/privacy)

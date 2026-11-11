@@ -2,7 +2,7 @@
  * Google OAuth (the user's consent to Google access) and a thin Google Ads REST client.
  *
  * Scopes requested at sign-in: `adwords` (the Ads API), `webmasters` (Search Console: reads, and approved changes), the Google
- * Analytics pair and `content` (Merchant Center) (both passed by provider.ts), and `openid email` (to know who the user is, so a reconnect finds the same
+ * Analytics pair, `content` (Merchant Center) and the four Tag Manager scopes (all passed by provider.ts), and `openid email` (to know who the user is, so a reconnect finds the same
  * account and change log). Each service is an untickable box and any one is enough to connect (provider.ts callback);
  * a missing one is added later by link (grant.ts).
  * Nothing else from the Google account is touched.
@@ -18,7 +18,7 @@ export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readon
 export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
 /** Google Merchant Center (Merchant API), used through merchant.ts. Asked at sign-in since 0.28.0 (verified 2026-11-04); before that only by link (grant.ts), which still adds it. */
 export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
-/** Google Tag Manager (gtm.ts): read, edit tags and triggers in a workspace, make versions, publish. Asked for by link, like Merchant Center. */
+/** Google Tag Manager (gtm.ts): read, edit tags and triggers in a workspace, make versions, publish. Asked at sign-in since 0.30.0 (verified 2026-11-11); by link (grant.ts) for older connections and unticked boxes. */
 /**
  * No tagmanager.readonly: every read method also accepts edit.containers, so asking for both is redundant (and a
  * verification reviewer's first question). Each is the only scope its methods accept: edit.containers for containers.create
@@ -43,7 +43,7 @@ export interface GoogleCreds {
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
 
-/** `extraScopes`: more services asked at sign-in (Google Analytics, Merchant Center); each stays an untickable box. */
+/** `extraScopes`: more services asked at sign-in (Google Analytics, Merchant Center, Tag Manager); each stays an untickable box. */
 export function googleAuthUrl(creds: GoogleCreds, redirectUri: string, state: string, extraScopes: readonly string[] = []): string {
   return `${GOOGLE_AUTH}?${new URLSearchParams({
     client_id: creds.clientId,

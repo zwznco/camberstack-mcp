@@ -3209,7 +3209,7 @@ describe("OAuth + MCP end to end", () => {
     const [off, soon, on] = ([{ kind: "accounts" }, { kind: "upcoming", from }, { kind: "one_service", from }] as FreePlan[])
       .map((fp) => withFreePlan(fp, () => plansPage("https://x.test")));
     expect(off).toContain("on <strong>1 Google Ads account</strong> at a time");
-    expect(off).toContain("Search Console and Google Analytics are included and don't count. Merchant Center is included too, on 1 Merchant Center account.</p>");
+    expect(off).toContain("Search Console, Google Analytics and Tag Manager are included and don't count. Merchant Center is included too, on 1 Merchant Center account.</p>");
     expect(off).toContain("Everything in Free, on <strong>up to 5 Google Ads accounts</strong>");
     expect(soon).toContain("on 1 Merchant Center account. From November 16, Free covers one Google service at a time");
     expect(soon).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together, on <strong>up to 5 Google Ads accounts</strong>");

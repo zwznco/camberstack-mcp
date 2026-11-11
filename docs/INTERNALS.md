@@ -137,7 +137,7 @@ BASE_URL=https://your.host npm run dev
 | `BASE_URL` | public origin, the OAuth issuer (default `https://camberstack.io`) |
 | `DATA_DIR` | SQLite location (default `./data`) |
 | `PRO_EMAILS` | emails treated as Pro |
-| `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console, GA4 or Merchant Center: the most recently used, over 30 days); paid plans cover all four. `YYYY-MM-DD` = announced until that day, 08:00 UTC (midnight Pacific): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
+| `FREE_ONE_SERVICE` | Free covers one Google service at a time (Ads, Search Console, GA4, Merchant Center or Tag Manager: the most recently used, over 30 days); paid plans cover all five. `YYYY-MM-DD` = announced until that day, 08:00 UTC (midnight Pacific): the site, `billing`, the account page and the welcome email describe the change, nothing is gated; from that day it's on, and only calls since then count, so every Free user picks a service. `1` = on now. Off unless set. The demo never counts |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRO_PRICE_ID` | Pro subscription via Stripe Checkout; unset = no upgrade links |
 | `STRIPE_PLUS_PRICE_ID` | the Plus plan's price; unset = no Plus offered |
 | `STRIPE_AGENCY_PRICE_ID` | the Agency plan's price (its own product); unset = no Agency offered. Which plan a user is on follows their subscription's price, so a plan switch in Stripe's billing portal (which must list the prices) moves it within the hour |

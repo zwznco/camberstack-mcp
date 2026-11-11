@@ -110,6 +110,30 @@ Everything else that changed recently: https://camberstack.io/changelog
 
 Adam`,
   },
+  {
+    id: "tag-manager-open",
+    plan: "Tag Manager went public 2026-11-11 (Google verified the four tagmanager scopes that day; 0.30.0). Goes after merchant-center-open "
+      + "finishes: the daily batch is shared, so starting both splits it.",
+    audience: "all",
+    subject: "Google Tag Manager now works in Camberstack",
+    body: `Hi,
+
+Camberstack can now work with your Google Tag Manager containers, alongside your Google Ads, Search Console, Google Analytics and Merchant Center. Tags are where conversion tracking quietly breaks, and now your AI can check them. In Claude or ChatGPT, ask things like:
+
+- Is my Google Ads conversion tracking set up right?
+- Why does Google Ads count more conversions than I get leads?
+- Add a Conversion Linker and publish it.
+
+It flags the usual problems: a conversion tag firing on every page, a missing Conversion Linker, tags that never fire, old Universal Analytics tags. Tag changes wait for your approval, nothing reaches your site until you approve a publish, and each change can be undone.
+
+The first time you ask, Camberstack gives you a link that adds Tag Manager to your connection, no reconnecting. If your AI can't see it yet, reload Camberstack's tools. In Claude: start a new chat. In ChatGPT, only if you added Camberstack as a custom connector: Settings → Connectors → Camberstack → Refresh.
+
+From November 15, Tag Manager is one of the services Free can cover, and Plus covers it together with the other four. What each plan covers: https://camberstack.io/plans
+
+More on what it can do: https://camberstack.io/google-tag-manager-mcp
+
+Adam`,
+  },
 ];
 
 export interface SendState { started_at: number | null; sent_at: number | null; sent: number }

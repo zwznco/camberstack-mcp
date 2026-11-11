@@ -3,8 +3,9 @@
  * conversion tag with no Conversion Linker, one firing on every page, a tag that never fires, retired Universal
  * Analytics). Changes go through gtm-changes.ts, written to the container's workspace and made live by publishing.
  *
- * Its scopes are asked for on first use, by a personal /connect/tag-manager link (grant.ts), not at sign-in: they're
- * sensitive, and most users never need them. The demo container (DEMO_CONTAINER) answers with sample data.
+ * Its scopes are asked at sign-in, as an untickable box, since Google verified them (2026-11-11, 0.30.0); a personal
+ * /connect/tag-manager link (grant.ts) adds them to older connections and unticked boxes. A partial grant (some of the four
+ * ticked) fails on the call that needs the missing one, which answers with that link. The demo container (DEMO_CONTAINER) answers with sample data.
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";

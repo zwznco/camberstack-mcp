@@ -2,7 +2,7 @@
  * The OAuth 2.1 authorization server that MCP clients (Claude, ChatGPT, Cursor…) talk to.
  *
  * The flow chains two consents:
- *   MCP client ──/authorize──▶ us ──redirect──▶ Google consent (email + Ads, Search Console, Analytics; any one is enough)
+ *   MCP client ──/authorize──▶ us ──redirect──▶ Google consent (email + Ads, Search Console, Analytics, Merchant Center, Tag Manager; any one is enough)
  *   Google ──/oauth/google/callback──▶ us: store the Google refresh token (encrypted),
  *   issue OUR authorization code ──▶ MCP client ──/token──▶ OUR access + refresh tokens.
  *
@@ -23,7 +23,7 @@ import { encrypt, randomToken, safeEqual, sha256 } from "./crypto.js";
 import { consentPage } from "./pages.js";
 import { clearGoogleCache } from "./session.js";
 import {
-  ADS_SCOPE, GRANTS, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, exchangeGoogleCode, googleAuthUrl, idTokenClaims, type GoogleCreds,
+  ADS_SCOPE, GRANTS, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES, exchangeGoogleCode, googleAuthUrl, idTokenClaims, type GoogleCreds,
 } from "./google.js";
 
 export const MCP_SCOPE = "ads";
@@ -152,7 +152,7 @@ export class CamberstackProvider implements OAuthServerProvider {
       return denied(clientRedirect(p.redirectUri, p.state), "The user cancelled the connection.");
     }
     this.db.prepare("UPDATE pending_auth SET params = ? WHERE id = ?").run(JSON.stringify({ ...p, approved: true }), row.id);
-    return googleAuthUrl(this.opts.google, this.googleRedirectUri, row.id, [...GRANTS.analytics.scopes, MERCHANT_SCOPE]);
+    return googleAuthUrl(this.opts.google, this.googleRedirectUri, row.id, [...GRANTS.analytics.scopes, MERCHANT_SCOPE, ...TAG_MANAGER_SCOPES]);
   }
 
   /**
@@ -176,7 +176,7 @@ export class CamberstackProvider implements OAuthServerProvider {
     // À la carte: any one service is enough to connect; a tool that needs another returns a link that adds it (grant.ts).
     const granted = g.scope.split(" ");
     // The read-only scope counts too: include_granted_scopes brings it back on a reconnect with the boxes unticked.
-    const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, GRANTS.analytics.scopes[0], MERCHANT_SCOPE];
+    const enough = [ADS_SCOPE, SEARCH_CONSOLE_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, GRANTS.analytics.scopes[0], MERCHANT_SCOPE, TAG_MANAGER_SCOPES[0]];
     if (!enough.some((s) => granted.includes(s))) {
       return { to: denied(back, "No Google service was granted (every box was unticked).") };
     }

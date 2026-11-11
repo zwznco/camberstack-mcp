@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.29.2";
+export const SERVER_VERSION = "0.30.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -37,7 +37,8 @@ const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
 
 /** Added where the Merchant Center tools are listed: a store owner may have no Google Ads account at all. */
 const MERCHANT_INSTRUCTIONS = `
-Camberstack also connects Google Merchant Center: for products and Shopping, start with merchant_accounts, not list_accounts. Merchant Center needs no Google Ads account.`;
+Camberstack also connects Google Merchant Center: for products and Shopping, start with merchant_accounts, not list_accounts. Merchant Center needs no Google Ads account.
+For a site's tags and conversion tracking, start with tag_manager_containers, then tag_manager_setup. Tag Manager changes reach the site only once publish_container runs.`;
 
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
 const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",

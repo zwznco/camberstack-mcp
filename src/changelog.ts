@@ -7,6 +7,16 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.30.0", date: "2026-11-11",
+    summary: "Google Tag Manager: check your conversion tracking, and fix tags with your approval.",
+    items: [
+      "**Tracking check** (`tag_manager_setup`): a container's tags, what each sends where and when it fires, what isn't published yet, and the problems worth fixing: a Google Ads conversion tag with no Conversion Linker or firing on every page, a tag that never fires, retired Universal Analytics.",
+      "**Tag changes** (`propose_tag_manager_changes`): add a Google tag, Google Ads conversion tag, GA4 event tag or Conversion Linker; pause, unpause or delete a tag; create a container; and publish. Changes stay in the workspace until a publish you approve puts them on your site, and each one can be undone. Deleting a container can't be, and the proposal warns you first.",
+      "**Tag Manager is a box on the sign-in screen**, next to the other four services. Already connected? The first time you ask about Tag Manager, you get a link that adds it; no reconnecting. `tag_manager_containers` lists your web containers, and a demo container with sample data is there to try first.",
+      "**Tag Manager is one of the services Free covers**, and Plus, Pro and Agency include it. It needs no Google Ads account.",
+    ],
+  },
+  {
     version: "0.29.2", date: "2026-11-08",
     summary: "Google Analytics setup reads ride out Google's brief outages.",
     items: [
