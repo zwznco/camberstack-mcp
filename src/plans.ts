@@ -33,10 +33,10 @@ export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
  * the most recently used one over ACCOUNT_WINDOW_DAYS; paid plans cover them all together. Off by default.
  * FREE_ONE_SERVICE=YYYY-MM-DD announces it until that day (UTC) and starts it then; =1 starts it now.
  */
-export type Service = "ads" | "search_console" | "analytics" | "merchant";
-export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", search_console: "Search Console", analytics: "Google Analytics", merchant: "Merchant Center" };
-/** The services every page, email and tool result names, in order. Merchant Center is the 4th (public since 2026-11-04). */
-export const listedServices = (): Service[] => ["ads", "search_console", "analytics", "merchant"];
+export type Service = "ads" | "search_console" | "analytics" | "merchant" | "tag_manager";
+export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", search_console: "Search Console", analytics: "Google Analytics", merchant: "Merchant Center", tag_manager: "Tag Manager" };
+/** The services every page, email and tool result names, in order. Merchant Center is the 4th (public since 2026-11-04), Tag Manager the 5th. */
+export const listedServices = (): Service[] => ["ads", "search_console", "analytics", "merchant", "tag_manager"];
 /** "Google Ads, Search Console, Google Analytics or Merchant Center". */
 export const servicesOr = () => joinLabels(listedServices().map((s) => SERVICE_LABELS[s]), "or");
 const joinLabels = (xs: string[], word: string) => `${xs.slice(0, -1).join(", ")} ${word} ${xs.at(-1)}`;
@@ -88,7 +88,7 @@ export const allServices = () => `${joinLabels(listedServices().map((s) => SERVI
 export const freePlanChange = (fp: FreePlan, neutral = false) =>
   fp.kind !== "upcoming" ? ""
     : `From ${dateLabel(fp.from)}, ${neutral ? "the current plan" : "Free"} covers ${oneServiceFree()}; `
-      + (neutral ? "using several together needs a different plan." : `Plus (${PLUS_PRICE_LABEL}) covers all four together on 1 Google Ads account, and Pro and Agency on more.`);
+      + (neutral ? "using several together needs a different plan." : `Plus (${PLUS_PRICE_LABEL}) covers all five together on 1 Google Ads account, and Pro and Agency on more.`);
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number, pool: Pool = "ads") => `${n} ${pool === "mc" ? "Merchant Center" : "Google Ads"} account${n === 1 ? "" : "s"}`;

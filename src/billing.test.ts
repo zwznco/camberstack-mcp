@@ -84,7 +84,7 @@ describe("Agency plan billing", () => {
     stripe.sessions.set("cs_p", { id: "cs_p", status: "complete", metadata: { app: "camberstack-mcp" }, client_reference_id: "p", customer: "cus_p", subscription: "sub_p" });
     const page = await (await visit(`${base}/upgraded?session_id=cs_p`)).text();
     expect(page).toContain("you're on Camberstack Plus");
-    expect(page).toContain("Plus covers Google Ads, Search Console, Google Analytics and Merchant Center together on 1 Google Ads account.");
+    expect(page).toContain("Plus covers Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together on 1 Google Ads account.");
     expect(plan("p")).toBe("plus");
     // The sweep keeps Plus as Plus, follows a portal switch to Pro, and drops it when it ends.
     await billing.sweep();

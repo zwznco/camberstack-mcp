@@ -166,6 +166,13 @@ CREATE TABLE IF NOT EXISTS demo_state (
   updated_at  INTEGER NOT NULL
 );
 
+-- The same for the demo Tag Manager container (gtm.ts DemoTagManager): its tags, triggers and versions.
+CREATE TABLE IF NOT EXISTS demo_gtm_state (
+  user_id     TEXT PRIMARY KEY,
+  state       TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
 -- The same for the demo Google Analytics property (ga4.ts DemoAnalytics): its key events and Google Ads links.
 CREATE TABLE IF NOT EXISTS demo_ga_state (
   user_id     TEXT PRIMARY KEY,

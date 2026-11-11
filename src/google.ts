@@ -18,6 +18,16 @@ export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readon
 export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
 /** Google Merchant Center (Merchant API), used through merchant.ts. Asked at sign-in since 0.28.0 (verified 2026-11-04); before that only by link (grant.ts), which still adds it. */
 export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
+/** Google Tag Manager (gtm.ts): read, edit tags and triggers in a workspace, make versions, publish. Asked for by link, like Merchant Center. */
+/**
+ * No tagmanager.readonly: every read method also accepts edit.containers, so asking for both is redundant (and a
+ * verification reviewer's first question). Each is the only scope its methods accept: edit.containers for containers.create
+ * and workspace edits, edit.containerversions for workspaces.create_version, publish for versions.publish,
+ * delete.containers for containers.delete (delete_container, and undoing create_container).
+ */
+export const TAG_MANAGER_SCOPES = ["https://www.googleapis.com/auth/tagmanager.edit.containers",
+  "https://www.googleapis.com/auth/tagmanager.edit.containerversions", "https://www.googleapis.com/auth/tagmanager.publish",
+  "https://www.googleapis.com/auth/tagmanager.delete.containers"];
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
 const ADS_API = "https://googleads.googleapis.com/v23";
 
@@ -58,6 +68,7 @@ export const GRANTS = {
   "search-console": { label: "Search Console", scopes: [SEARCH_CONSOLE_SCOPE] },
   "analytics": { label: "Google Analytics", scopes: [ANALYTICS_SCOPE, ANALYTICS_EDIT_SCOPE] },
   "merchant-center": { label: "Google Merchant Center", scopes: [MERCHANT_SCOPE] },
+  "tag-manager": { label: "Google Tag Manager", scopes: TAG_MANAGER_SCOPES },
 } as const;
 export type GrantKind = keyof typeof GRANTS;
 
@@ -99,7 +110,7 @@ export const scopeMissing = (status: number, body: string) =>
 export class NotGrantedError extends Error {
   constructor(readonly kind: GrantKind, readonly link: string | null, readonly edit = false) {
     const { label } = GRANTS[kind];
-    super(`${edit ? `Changing ${label} needs its edit access, which this connection doesn't have.`
+    super(`${edit ? `Changing ${label} needs ${kind === "tag-manager" ? "a Tag Manager permission" : "its edit access"}, which this connection doesn't have yet.`
       : `${label} access isn't part of this Google connection yet.`} `
       + (link ? `The user adds it here (a personal link, valid 7 days): ${link} . ` : "")
       + "The other Google tools keep working either way.");

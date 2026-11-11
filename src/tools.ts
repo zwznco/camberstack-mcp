@@ -15,6 +15,8 @@ import { DEMO_PROPERTY } from "./ga4.js";
 import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
 import { PageSpeedClient, type Strategy } from "./pagespeed.js";
+import { CONTAINER_PATH, DEMO_GTM_ACCOUNT, listContainers, tagManagerSetup } from "./gtm.js";
+import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-changes.js";
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
@@ -48,6 +50,7 @@ const MC_GATED = new Set(["merchant_product_issues", "merchant_report", "propose
 
 const GA_PROPOSES = new Set(PUBLIC_GA_CHANGES.map((c) => `propose_${c.shape.type.value}`));
 const SC_PROPOSES = new Set(PUBLIC_SC_CHANGES.map((c) => `propose_${c.shape.type.value}`));
+const GTM_PROPOSES = new Set(PUBLIC_GTM_CHANGES.map((c) => `propose_${c.shape.type.value}`));
 /**
  * The Google services a call uses on real data, for the one-service Free plan (session.ts checkService). Listing what a
  * login can reach (list_accounts, search_console_sites, analytics_properties, merchant_accounts) and the demo account, site, property and store
@@ -61,7 +64,8 @@ let gateDemo = false;
 export function gateDemoCalls(on: boolean): void { gateDemo = on; }
 
 export function servicesOf(name: string, a: unknown): Service[] {
-  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; changes?: { property_id?: unknown; site_url?: unknown; type?: unknown }[] };
+  const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; container?: unknown;
+    account?: unknown; changes?: { property_id?: unknown; site_url?: unknown; type?: unknown; container?: unknown; account?: unknown }[] };
   const realGa = (p: unknown) => gateDemo || p !== DEMO_PROPERTY;
   const realMc = typeof x.account_id === "string" && (gateDemo || x.account_id !== DEMO_MERCHANT);
   // Reads Ads and Merchant Center together, so like paid_organic_overlap it needs a paid plan on one-service Free.
@@ -77,6 +81,10 @@ export function servicesOf(name: string, a: unknown): Service[] {
   if ((name.startsWith("search_console_") && name !== "search_console_sites") || SC_PROPOSES.has(name)) return (gateDemo || x.site_url !== DEMO_SITE) ? ["search_console"] : [];
   if (name === "propose_search_console_changes") return (x.changes ?? []).some((c) => (gateDemo || c?.site_url !== DEMO_SITE)) ? ["search_console"] : [];
   if (["analytics_report", "analytics_landing_pages", "analytics_setup"].includes(name) || GA_PROPOSES.has(name)) return realGa(x.property_id) ? ["analytics"] : [];
+  // The demo account and everything in it (its container, and containers created there) are sample data.
+  const realGtm = (c: unknown) => gateDemo || !(typeof c === "string" && (c === DEMO_GTM_ACCOUNT || c.startsWith(`${DEMO_GTM_ACCOUNT}/`)));
+  if (name === "tag_manager_setup" || GTM_PROPOSES.has(name)) return realGtm(x.container ?? x.account) ? ["tag_manager"] : [];
+  if (name === "propose_tag_manager_changes") return (x.changes ?? []).some((c) => realGtm(c?.container ?? c?.account)) ? ["tag_manager"] : [];
   // create_ga4_property has no property_id: a new property is real.
   if (name === "propose_analytics_changes") return (x.changes ?? []).some((c) => realGa(c?.property_id)) ? ["analytics"] : [];
   return [];
@@ -115,6 +123,7 @@ const scWindowShape = (defaultDays: number, maxDays: number) => ({
   ...exactDates,
   fresh: z.boolean().default(false).describe("Include the last 2-3 days, which Google is still filling in (they read low). Use to check something from the last few days"),
 });
+const gtmContainer = z.string().regex(CONTAINER_PATH, "accounts/<id>/containers/<id>").describe("The container, as tag_manager_containers lists it, e.g. accounts/123/containers/456");
 const merchantId = z.string().regex(/^\d+$/, "digits only").describe("Merchant Center account ID, digits only (from merchant_accounts)");
 const propertyId = z.string().regex(/^\d+$/, "digits only").describe("GA4 property id, digits only (from analytics_properties)");
 /** Window options shared by the Google Analytics tools: a day count ending yesterday, or exact dates. */
@@ -505,6 +514,34 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   }, ({ urls, strategy, fixes }: { urls: string[]; strategy: Strategy; fixes: number }) =>
     (o.pagespeed ?? new PageSpeedClient(undefined)).check(urls, { strategy, fixes, token: () => session().googleAccessToken(), userId: session().user.id }));
 
+  // Tag Manager.
+  tool("tag_manager_containers", {
+    title: "List Tag Manager containers",
+    description: "Lists the Google Tag Manager web containers this Google login can read. Use a container from here in the other Tag Manager tools, "
+      + "and an account_id to create a container in (create_container). "
+      + "If Tag Manager isn't part of the connection yet, says so and returns grant_url, a personal link the user opens to add it.",
+    annotations: read,
+  }, async () => { const s = session(); return s.withListingNote("tag_manager", await listContainers(s.gtm)); });
+
+  tool("tag_manager_setup", {
+    title: "Tag Manager setup and tracking check",
+    description: "A container's tags (what each sends where, and when it fires), its triggers, what isn't published yet, and `issues`: tracking "
+      + "problems worth fixing, such as a Google Ads conversion tag with no Conversion Linker or firing on every page, a tag that never fires, or "
+      + "retired Universal Analytics. Use it when conversions are missing or look wrong. Changes nothing.",
+    inputSchema: { container: gtmContainer },
+    annotations: read,
+  }, ({ container }: { container: string }) => tagManagerSetup(session().gtm, container));
+
+  if (!o.chatgpt) tool("propose_tag_manager_changes", {
+    title: "Propose Tag Manager changes (applies nothing)",
+    description: "Checks Tag Manager changes against the container's workspace and stores them as a proposal with a plain-English summary; nothing is "
+      + "changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). Supported: create_container, "
+      + "delete_container, add_google_tag, add_ads_conversion_tag, add_ga4_event_tag, add_conversion_linker, pause_tag, unpause_tag, delete_tag, and publish_container. Tag changes stay "
+      + "in the workspace until publish_container makes them live: include it to put them on the site (it runs last). Point out any ⚠ line before they approve.",
+    inputSchema: { changes: z.array(PublicGtmChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, ({ changes }: { changes: unknown[] }) => session().propose(GTM_TARGET, changes));
+
   // Merchant Center.
   tool("merchant_accounts", {
     title: "List Merchant Center accounts",
@@ -637,6 +674,16 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         inputSchema: { account_id: merchantId, ...shape },
         annotations: proposes,
       }, ({ account_id, ...rest }: { account_id: string } & Record<string, unknown>) => session().propose(mcTarget(account_id), [{ type: op, ...rest }]));
+    }
+    for (const c of PUBLIC_GTM_CHANGES) {
+      const { type, ...shape } = c.shape;
+      const op = type.value;
+      tool(`propose_${op}`, {
+        title: `Propose: ${op.replace(/_/g, " ")}`,
+        description: `${c.description}. Tag Manager. ${proposeNote}`,
+        inputSchema: shape,
+        annotations: proposes,
+      }, (rest: Record<string, unknown>) => session().propose(GTM_TARGET, [{ type: op, ...rest }]));
     }
     tool("propose_undo", {
       title: "Propose reversing an applied proposal",

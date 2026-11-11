@@ -16,6 +16,7 @@ import { AdsApiError, NotGrantedError } from "./google.js";
 import { ChangeSchema, io, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { PUBLIC_SC_CHANGES } from "./search-console-changes.js";
+import { PUBLIC_GTM_CHANGES } from "./gtm-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, gateDemoCalls, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
@@ -673,8 +674,9 @@ describe("OAuth + MCP end to end", () => {
     // The AI sees what each change field means, and never the undo-only change type.
     // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29); +3.5K for the delete_ changes (2026-10-30).
     // Search Console changes (2026-10-31): +1K for propose_search_console_changes; +1K for send_feedback.
-    // landing_page_speed (2026-11-04): +0.9K.
-    expectToolBudget(tools, { total: 109_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000 } });
+    // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +7.2K for its three tools;
+    // +0.2K for create_container and delete_container.
+    expectToolBudget(tools, { total: 117_200, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1269,14 +1271,16 @@ describe("OAuth + MCP end to end", () => {
       const names = tools.map((t) => t.name);
       // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29); +7K for the propose_delete_ tools (2026-10-30).
       // Search Console changes (2026-10-31): +3K for its four propose tools; +1K for send_feedback.
-      // landing_page_speed (2026-11-04): +0.9K.
-      expectToolBudget(tools, { total: 145_000, perTool: 6_000 });
+      // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
+      // +1.1K for propose_create_container and propose_delete_container.
+      expectToolBudget(tools, { total: 156_200, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
+      expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
       for (const n of ["propose_pause_campaign", "propose_create_performance_max_campaign", "propose_set_conversion_counting",
         "propose_link_google_ads", "propose_create_ga4_property", "propose_undo", "apply_changes"]) expect(names).toContain(n);
-      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + MERCHANT_LINK_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_SC_CHANGES.length + PUBLIC_MC_CHANGES.length + 1);
+      expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + MERCHANT_LINK_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_SC_CHANGES.length + PUBLIC_MC_CHANGES.length + PUBLIC_GTM_CHANGES.length + 1);
       for (const t of tools.filter((t) => t.name.startsWith("propose_"))) {
         expect(t.description, t.name).not.toMatch(/undefined|propose_changes|undo_changes/);
         expect(t.inputSchema.properties, t.name).not.toHaveProperty("type");
@@ -1720,6 +1724,56 @@ describe("OAuth + MCP end to end", () => {
     expect(o.snippet_gaps).toEqual([{ query: "Invoice App", clicks: 40, impressions: 800, ctr_pct: 5, position: 2.1, typical_ctr_pct: 15, click_gain: 80 }]);
     expect(o.question_queries.map((r: any) => r.query)).toEqual(["free invoice maker"]);
     expect(Date.parse(o.window.end) - Date.parse(o.window.start)).toBe(89 * 86_400_000);
+  });
+
+  it("audits the demo Tag Manager container, fixes it with a publish proposed out of order, and undoes it", async () => {
+    const C = "accounts/000000001/containers/000000001";
+    const setup = async () => (await call(token, "tag_manager_setup", { container: C })).json;
+    const s0 = await setup();
+    expect(s0.note).toContain("demo");
+    expect(s0.live_version.version_id).toBe("7");
+    expect(s0.unpublished_changes).toEqual([]);
+    const problems = s0.issues.map((i: any) => i.problem).join("\n");
+    expect(problems).toContain("no Conversion Linker");
+    expect(problems).toContain(`"Ads - Call clicks" fires on All Pages`);
+    expect(problems).toContain("Universal Analytics");
+    expect(s0.tags.find((t: any) => t.name === "Ads - Lead form")).toMatchObject({ type: "Google Ads conversion", sends_to: "AW-100000001/DemoLeadAbc",
+      fires_on: ['Lead form sent (Custom event: {{_event}} equals "generate_lead")'] });
+
+    // Listed first, the publish still runs last, and isn't skipped although the workspace has nothing unpublished yet.
+    const p = (await call(token, "propose_tag_manager_changes", { changes: [
+      { type: "publish_container", container: C }, { type: "add_conversion_linker", container: C }] })).json;
+    // Published in the same proposal, so the add isn't called "not live yet".
+    expect(p.summary).toMatch(/^1\. Add a Conversion Linker to .* firing on every page\n2\. Publish .*: the changes above ⚠/);
+    expect(p.summary).toContain("Undo re-publishes version 7");
+    const a = (await call(token, "apply_changes", { proposal_id: p.proposal_id })).json;
+    expect(a.status).toBe("applied");
+    expect(a.results[0].note).toBeUndefined();
+    expect(a.results[1].note).toContain("Version 8 is live");
+    const s1 = await setup();
+    expect(s1.live_version.version_id).toBe("8");
+    expect(s1.issues.map((i: any) => i.problem).join("\n")).not.toContain("no Conversion Linker");
+    expect(s1.unpublished_changes).toEqual([]);
+
+    // A conversion tag on every page is refused; one on the thank-you page reuses the matching trigger.
+    const bad = await call(token, "propose_tag_manager_changes", { changes: [{ type: "add_ads_conversion_tag", container: C, name: "x",
+      conversion_id: "AW-100000001", conversion_label: "NewLabel1", fires_on: { kind: "all_pages" } }] });
+    expect(bad.text).toContain("counts each page view as a conversion");
+    const ok = (await call(token, "propose_tag_manager_changes", { changes: [{ type: "add_ads_conversion_tag", container: C, name: "Ads - Booking",
+      conversion_id: "AW-100000001", conversion_label: "NewLabel1", fires_on: { kind: "page_url_contains", value: "/thank-you" } }] })).json;
+    expect(ok.summary).toContain('firing on Thank-you page (Page view: {{Page URL}} contains "/thank-you")');
+    await call(token, "discard_proposal", { proposal_id: ok.proposal_id });
+
+    // Undo puts version 7 back on the site and takes the linker out of the workspace.
+    const u = (await call(token, "undo_changes", { proposal_id: p.proposal_id })).json;
+    expect(u.summary).toContain("Re-publish version 7");
+    expect(u.summary).toContain('Remove tag "Conversion Linker" that Camberstack added');
+    expect((await call(token, "apply_changes", { proposal_id: u.proposal_id })).json.status).toBe("applied");
+    const s2 = await setup();
+    expect(s2.live_version.version_id).toBe("7");
+    expect(s2.tags.some((t: any) => t.type === "Conversion Linker")).toBe(false);
+    const h = (await call(token, "change_history", {})).json;
+    expect(h.find((x: any) => x.proposal_id === p.proposal_id).customer_id).toBe("gtm");
   });
 
   it("inspects URLs one by one, keeping a failed URL from sinking the rest, and lists sitemaps", async () => {
@@ -2984,7 +3038,7 @@ describe("OAuth + MCP end to end", () => {
       expect(sc1.isError).toBe(false);  // a stop, not a failure
       expect(sc1.json).toMatchObject({ stop: "service_limit", service_in_use: "Google Ads", service_requested: "Search Console" });
       expect(sc1.text).toContain("Service limit: the Free plan covers one Google service at a time");
-      expect(sc1.text).toContain("Pro ($15/month) covers all four together");
+      expect(sc1.text).toContain("Pro ($15/month) covers all five together");
       // C1: answer with what's covered unless the user asked for the other service.
       expect(sc1.text).toContain("If the user's request didn't ask for Search Console, answer it with Google Ads and don't lead with this");
       expect(sc1.text).toContain("If it did ask for Search Console, tell them it isn't on this plan, with the options below.");
@@ -3014,7 +3068,7 @@ describe("OAuth + MCP end to end", () => {
       const plan = (await call(t, "billing")).json;
       expect(plan).toMatchObject({ service_in_use: "Google Ads" });
       expect(plan.included).toContain("1 Google service at a time");
-      expect(plan.pro).toContain("Google Ads, Search Console, Google Analytics and Merchant Center together");
+      expect(plan.pro).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together");
       // A reset by hand clears it: Search Console becomes the one, and Ads waits.
       db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = ?").run(now() + 1, uid);
       await new Promise((r) => setTimeout(r, 1100));
@@ -3051,11 +3105,11 @@ describe("OAuth + MCP end to end", () => {
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.stop).toBe("service_choice");
       expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
       const stop = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      expect(stop.text).toContain("Plus ($7/month) covers all four together on 1 Google Ads account, so Search Console works right away; Pro ($15/month) does on up to 5.");
+      expect(stop.text).toContain("Plus ($7/month) covers all five together on 1 Google Ads account, so Search Console works right away; Pro ($15/month) does on up to 5.");
       expect(stop.json).toMatchObject({ stop: "service_limit", upgrade: { plan: "plus", price: "$7/month" }, or_pro: { plan: "pro", price: "$15/month" } });
       expect(stop.json.upgrade.upgrade_url).toMatch(/\/upgrade\?t=[\w.-]+&plan=plus&src=tool$/);
       const free = (await call(t, "billing")).json;
-      expect(free.plus).toBe("Google Ads, Search Console, Google Analytics and Merchant Center together, on 1 Google Ads account, $7/month, cancel any time");
+      expect(free.plus).toBe("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together, on 1 Google Ads account, $7/month, cancel any time");
       expect(free.plus_upgrade_url).toContain("&plan=plus");
       // ChatGPT connections are never pitched Plus (or any plan): the same stop, neutral.
       const pc = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
@@ -3096,9 +3150,9 @@ describe("OAuth + MCP end to end", () => {
       // Announced: every service works, billing says what changes and when, and nothing counts as picked.
       expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
       const before = (await call(t, "billing")).json;
-      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console, Google Analytics or Merchant Center \(1 account\); Plus \(\$7\/month\) covers all four together on 1 Google Ads account, and Pro and Agency on more\.$/);
+      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console, Google Analytics, Merchant Center \(1 account\) or Tag Manager; Plus \(\$7\/month\) covers all five together on 1 Google Ads account, and Pro and Agency on more\.$/);
       expect(before.included).toBe("every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work");
-      expect(before.pro).toContain("Google Ads, Search Console, Google Analytics and Merchant Center together");
+      expect(before.pro).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together");
       expect(before).not.toHaveProperty("service_in_use");
       // ChatGPT connections get it with no paid plan named (its guidelines bar upgrade pitches), as every other plan text.
       const clientId = (db.prepare("SELECT client_id FROM tokens WHERE user_id = (SELECT id FROM users WHERE google_sub = 'google-sub-dated') LIMIT 1").get() as { client_id: string }).client_id;
@@ -3124,9 +3178,9 @@ describe("OAuth + MCP end to end", () => {
       expect(after).toMatchObject({ service_in_use: null, services_included: 1 });
       expect(after).not.toHaveProperty("free_plan_change");
       const onBox = await accountPage();
-      expect(onBox).toContain("on one Google service at a time (Google Ads on 1 account, Search Console, Google Analytics or Merchant Center on 1 account). In use: <strong");
+      expect(onBox).toContain("on one Google service at a time (Google Ads on 1 account, Search Console, Google Analytics, Merchant Center on 1 account or Tag Manager). In use: <strong");
       expect(onBox).toContain("none yet; your AI asks which before the first");
-      expect(onBox).toContain("Pro covers all four together, on up to 5");
+      expect(onBox).toContain("Pro covers all five together, on up to 5");
       expect(onBox).not.toContain("Free covers one Google service at a time; Pro and Agency");
     } finally {
       deps.freeOneServiceFrom = undefined;
@@ -3158,10 +3212,10 @@ describe("OAuth + MCP end to end", () => {
     expect(off).toContain("Search Console and Google Analytics are included and don't count. Merchant Center is included too, on 1 Merchant Center account.</p>");
     expect(off).toContain("Everything in Free, on <strong>up to 5 Google Ads accounts</strong>");
     expect(soon).toContain("on 1 Merchant Center account. From November 16, Free covers one Google service at a time");
-    expect(soon).toContain("Google Ads, Search Console, Google Analytics and Merchant Center together, on <strong>up to 5 Google Ads accounts</strong>");
+    expect(soon).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together, on <strong>up to 5 Google Ads accounts</strong>");
     expect(on).toContain("<strong>one Google service at a time</strong>");
     expect(on).not.toContain("don't count");
-    expect(on).toContain("Google Ads, Search Console, Google Analytics and Merchant Center together, on <strong>up to 5 Google Ads accounts</strong>");
+    expect(on).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together, on <strong>up to 5 Google Ads accounts</strong>");
     // The body (the site header's nav is every page's): nothing that starts an upgrade or links the account page.
     for (const h of [off, soon, on]) expect(h.slice(h.indexOf('<div class="legal">'))).not.toMatch(/upgrade=|Upgrade to|href="\/account/i);
   });
@@ -3195,7 +3249,7 @@ describe("OAuth + MCP end to end", () => {
     expect(soon).toContain('<div class="plan"><h3>Plus</h3>');
     expect(on).toContain("Using it together with Google Ads or Analytics needs <a href=\"/#pricing\">Plus</a> ($7/month)");
     expect(on).toContain("<h2>Plus · $7/month</h2>");
-    expect(on).toContain("Plus $7/month covers all four together on 1 Google Ads account");
+    expect(on).toContain("Plus $7/month covers all five together on 1 Google Ads account");
     expect(on).toContain('"name":"Plus","price":"7"');
   });
 
@@ -3239,8 +3293,8 @@ describe("OAuth + MCP end to end", () => {
   });
 
   it("names Merchant Center in the plan copy", () => {
-    expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console, Google Analytics or Merchant Center (1 account)");
-    expect(allServices()).toBe("Google Ads, Search Console, Google Analytics and Merchant Center together");
+    expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console, Google Analytics, Merchant Center (1 account) or Tag Manager");
+    expect(allServices()).toBe("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together");
   });
 
 });
