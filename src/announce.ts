@@ -112,8 +112,8 @@ Adam`,
   },
   {
     id: "tag-manager-open",
-    plan: "Tag Manager went public 2026-11-11 (Google verified the four tagmanager scopes that day; 0.30.0). Goes after merchant-center-open "
-      + "finishes: the daily batch is shared, so starting both splits it.",
+    plan: "Tag Manager went public 2026-11-11 (Google verified the four tagmanager scopes that day; 0.30.0): send once 0.30.0 is live in prod. "
+      + "~110 recipients at 50 a day, so it takes about three days.",
     audience: "all",
     subject: "Google Tag Manager now works in Camberstack",
     body: `Hi,
