@@ -5,7 +5,7 @@
 
 import type { Release } from "./changelog.js";
 import { z } from "zod";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, listedServices, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, allServices, dateLabel, freePlanChange, freeServices, oneServiceFree, servicesOr, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, listedServices, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, allServices, dateLabel, freePlanChange, freeServices, oneServiceFree, servicesAnd, servicesOr, type FreePlan } from "./plans.js";
 import type { ToolDoc } from "./tools.js";
 
 /**
@@ -1633,13 +1633,16 @@ body{min-height:100vh;display:flex;align-items:center;justify-content:center;pad
 .consent{width:100%;max-width:420px;text-align:center}
 .consent h1{font-size:24px;margin:16px 0 8px}.consent p{margin:0 0 20px}
 .consent .warn{border:1px solid #c0392b;border-radius:8px;padding:10px 12px;font-size:15px;text-align:left}
+.consent .services{font-size:15px;text-align:left}
 .consent .btn{width:100%;border:0;cursor:pointer;font-size:16px}.consent .linkish{margin-top:14px;color:var(--muted)}
 </style></head><body>
 <main class="card consent">
 <img src="/favicon.svg" alt="Camberstack" width="40" height="40">
 <h1>Connect ${esc(o.clientName || "this app")} to Camberstack?</h1>
 <p class="muted">You'll return to <strong>${host}</strong> after signing in with Google.</p>
-${o.known ? "" : `<p class="warn"><strong>Unrecognized address.</strong> If someone sent you this link, cancel: ${host} would get access to your Google Ads.</p>\n`}<form method="post" action="/oauth/consent">
+<p class="services">Google then asks which services to share: <strong>${servicesAnd()}</strong>.
+Every one is optional. Untick any you don't use; if you ask about it later, Camberstack gives you a link that adds it.</p>
+${o.known ? "" : `<p class="warn"><strong>Unrecognized address.</strong> If someone sent you this link, cancel: ${host} would get access to the Google services you share.</p>\n`}<form method="post" action="/oauth/consent">
 <input type="hidden" name="id" value="${esc(o.id)}">
 <button class="btn" name="decision" value="approve">Continue to Google</button><br>
 <button class="linkish" name="decision" value="deny">Cancel</button>

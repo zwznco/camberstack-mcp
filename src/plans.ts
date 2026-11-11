@@ -39,6 +39,8 @@ export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", sear
 export const listedServices = (): Service[] => ["ads", "search_console", "analytics", "merchant", "tag_manager"];
 /** "Google Ads, Search Console, Google Analytics or Merchant Center". */
 export const servicesOr = () => joinLabels(listedServices().map((s) => SERVICE_LABELS[s]), "or");
+/** "Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager". */
+export const servicesAnd = () => joinLabels(listedServices().map((s) => SERVICE_LABELS[s]), "and");
 const joinLabels = (xs: string[], word: string) => `${xs.slice(0, -1).join(", ")} ${word} ${xs.at(-1)}`;
 /** Text of the service gate's refusal. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
 export const SERVICE_LIMIT_PREFIX = "Service limit:";
