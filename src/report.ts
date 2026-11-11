@@ -177,7 +177,7 @@ export function buildReport(db: DB, o: ReportOptions) {
          GROUP BY m.value HAVING count(DISTINCT u.id) > 1
        ORDER BY last DESC`),
     /**
-     * Who tried to move to another Google Ads account after their first day, in the last SWITCH_DAYS: a switch_account to
+     * Who tried to move to another Google Ads account after their first day, in the last SWITCH_DAYS: a switch_account (choose_account on ChatGPT) to
      * a different account than the one they last ran a call on in the plan's current window (ACCOUNT_WINDOW_DAYS, and since
      * plan_reset_at), or a stop by the account gate (Plan limit, and the old Account switch notice). Not a first pick after
      * the Account choice notice (2026-11-09: a pick after a reset by hand read as a switch), a re-pick of the current account, or
@@ -190,13 +190,13 @@ export function buildReport(db: DB, o: ReportOptions) {
       `WITH f AS (SELECT user_id, min(at) first FROM tool_calls GROUP BY user_id),
        e AS (
          SELECT c.user_id, c.at, c.error,
-           c.tool = 'switch_account' AND c.ok = 1 AND c.error IS NULL AND c.customer_id IS NOT NULL AND ${ON_ADS}
+           c.tool IN ('switch_account', 'choose_account') AND c.ok = 1 AND c.error IS NULL AND c.customer_id IS NOT NULL AND ${ON_ADS}
              AND c.customer_id != coalesce((SELECT p.customer_id FROM tool_calls p WHERE p.user_id = c.user_id AND p.id < c.id AND p.ok = 1
                AND p.error IS NULL AND p.customer_id IS NOT NULL AND ${ON_ADS.replaceAll("c.", "p.")}
                AND p.at >= max(c.at - ${ACCOUNT_WINDOW_DAYS * 86400}, coalesce(w.plan_reset_at, 0)) ORDER BY p.id DESC LIMIT 1), c.customer_id) switched,
            coalesce(c.error, '') LIKE '${PLAN_LIMIT_PREFIX}%' OR coalesce(c.error, '') LIKE '${SWITCH_NOTICE_PREFIX}%' stopped
          FROM tool_calls c JOIN f ON f.user_id = c.user_id JOIN users w ON w.id = c.user_id
-         WHERE c.at >= ? AND c.at >= f.first + 86400 AND (c.tool = 'switch_account' OR c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%'))
+         WHERE c.at >= ? AND c.at >= f.first + 86400 AND (c.tool IN ('switch_account', 'choose_account') OR c.error LIKE '${PLAN_LIMIT_PREFIX}%' OR c.error LIKE '${SWITCH_NOTICE_PREFIX}%'))
        SELECT u.id, u.email, u.plan, sum(e.switched) switches, sum(e.stopped AND coalesce(u.ads_accounts, 2) > 1) stops,
          (SELECT count(DISTINCT c.customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.error IS NULL AND c.customer_id IS NOT NULL
             AND ${ON_ADS} AND c.at >= ?) used,

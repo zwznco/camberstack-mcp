@@ -24,7 +24,7 @@ import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage,
 import { allServices, freePlan, oneServiceFree, parseDateFlag, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
-import { clearGoogleCache } from "./session.js";
+import { UserSession, clearGoogleCache } from "./session.js";
 
 vi.mock("./sentry.js", async (orig) => ({ ...(await orig<typeof import("./sentry.js")>()), reportBug: vi.fn() }));
 
@@ -1278,9 +1278,14 @@ describe("OAuth + MCP end to end", () => {
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
       expect(names).not.toContain("undo_changes");
+      // ChatGPT's review flagged switch_account's name as inconsistent with what it does (2026-11-11): it only takes the user's pick.
+      expect(names).not.toContain("switch_account");
+      const choose = tools.find((t) => t.name === "choose_account")!;
+      expect(choose.description).not.toMatch(/switch/i);
       for (const n of ["propose_pause_campaign", "propose_create_performance_max_campaign", "propose_set_conversion_counting",
         "propose_link_google_ads", "propose_create_ga4_property", "propose_undo", "apply_changes"]) expect(names).toContain(n);
       expect(names.filter((n) => n.startsWith("propose_"))).toHaveLength(PUBLIC_CHANGES.length + MERCHANT_LINK_CHANGES.length + PUBLIC_GA_CHANGES.length + PUBLIC_SC_CHANGES.length + PUBLIC_MC_CHANGES.length + PUBLIC_GTM_CHANGES.length + 1);
+      for (const t of tools) expect(t.description, t.name).not.toContain("switch_account");
       for (const t of tools.filter((t) => t.name.startsWith("propose_"))) {
         expect(t.description, t.name).not.toMatch(/undefined|propose_changes|undo_changes/);
         expect(t.inputSchema.properties, t.name).not.toHaveProperty("type");
@@ -1523,7 +1528,10 @@ describe("OAuth + MCP end to end", () => {
         expect(t.json).toMatchObject({ status: "account_choice_needed", accounts_included: 1 });
         expect(t.json.accounts.map((a: any) => [a.customer_id, a.spent_last_30_days]).sort()).toEqual([["1112223333", true], ["2223334444", false]]);
         expect(t.json.note).toContain("may be dormant");
+        expect(t.json.to_go_ahead).toContain("call switch_account with that customer_id");
       }
+      // ChatGPT's notice names its own tool (tools.ts PICK_TOOLS).
+      expect(UserSession.prototype.tool.call({ chatgpt: true } as UserSession, "switch_account")).toBe("choose_account");
       // Logged as ok with no account, and not as a switch notice, so no switch_wanted email.
       expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").get(uid)).toEqual({ n: 0 });
       expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND id > ? AND error LIKE 'Account choice:%' AND ok = 1").get(uid, since)).toEqual({ n: 2 });
@@ -3273,7 +3281,7 @@ describe("OAuth + MCP end to end", () => {
       expect(servicesOf("search_console_summary", { site_url: "sc-domain:northwind-plumbing.example" })).toEqual(["search_console"]);
     } finally { gateDemoCalls(false); }
     expect(servicesOf("analytics_report", { property_id: "000000001" })).toEqual([]);
-    for (const n of ["apply_changes", "undo_changes", "change_history", "list_accounts", "switch_account", "billing"])
+    for (const n of ["apply_changes", "undo_changes", "change_history", "list_accounts", "switch_account", "choose_account", "billing"])
       expect(servicesOf(n, { customer_id: "111-222-3333" })).toEqual([]);
   });
 

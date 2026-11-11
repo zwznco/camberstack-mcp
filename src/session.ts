@@ -222,9 +222,9 @@ export class UserSession {
   }
 
   /** The name a result should give a write tool: ChatGPT connections have per-operation tools instead (tools.ts). */
-  tool(name: "propose_changes" | "undo_changes"): string {
+  tool(name: "propose_changes" | "undo_changes" | "switch_account"): string {
     if (!this.chatgpt) return name;
-    return name === "undo_changes" ? "propose_undo" : "the matching propose_<operation> tool";
+    return name === "undo_changes" ? "propose_undo" : name === "switch_account" ? "choose_account" : "the matching propose_<operation> tool";
   }
 
   /** `seen: false` leaves last_seen_at alone: an admin viewing the user's /account through "Log in as user". */
@@ -500,12 +500,12 @@ export class UserSession {
     const n = this.accountLimit, one = n === 1;
     throw new SwitchNotice(`${ACCOUNT_CHOICE_PREFIX} this plan covers ${n} Google Ads account${one ? "" : "s"} at a time and this login has `
       + `${accounts.length}. The first ${one ? "account" : "accounts"} used become${one ? "s" : ""} the plan's, so nothing has been used yet. `
-      + `Ask the user which to work on; then call switch_account with that customer_id, then this tool again.`,
+      + `Ask the user which to work on; then call ${this.tool("switch_account")} with that customer_id, then this tool again.`,
       { status: "account_choice_needed", plan: this.planName, accounts_included: n,
         accounts: accounts.map((a) => ({ customer_id: a.customerId, name: a.name,
           ...(a.spentLast30Days === undefined ? {} : { spent_last_30_days: a.spentLast30Days }) })),
         ...(accounts.some((a) => a.spentLast30Days === false) ? { note: "spent_last_30_days false: the account had no ad spend in the last 30 days, so it may be dormant. Show this to the user when they pick." } : {}),
-        to_go_ahead: "once the user picks, call switch_account with that customer_id, then this tool again" });
+        to_go_ahead: `once the user picks, call ${this.tool("switch_account")} with that customer_id, then this tool again` });
   }
 
   /** noticeChoice for Merchant Center's own allowance. switch_account takes the mc:<id> form. */
@@ -513,10 +513,10 @@ export class UserSession {
     const n = this.accountLimit, one = n === 1;
     throw new SwitchNotice(`${ACCOUNT_CHOICE_PREFIX} this plan covers ${n} Merchant Center account${one ? "" : "s"} at a time and this login has `
       + `${accounts.length}. The first ${one ? "account" : "accounts"} used become${one ? "s" : ""} the plan's, so nothing has been used yet. `
-      + `Ask the user which to work on; then call switch_account with mc:<that account_id>, then this tool again.`,
+      + `Ask the user which to work on; then call ${this.tool("switch_account")} with mc:<that account_id>, then this tool again.`,
       { status: "account_choice_needed", plan: this.planName, accounts_included: n,
         accounts: accounts.map((a) => ({ customer_id: `mc:${a.account_id}`, account_id: a.account_id, name: a.name })),
-        to_go_ahead: "once the user picks, call switch_account with mc:<that account_id>, then this tool again" });
+        to_go_ahead: `once the user picks, call ${this.tool("switch_account")} with mc:<that account_id>, then this tool again` });
   }
 
   /** False only when a complete account list says no: unsure still refuses, rather than let a second account through. */

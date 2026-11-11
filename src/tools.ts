@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.30.0";
+export const SERVER_VERSION = "0.30.1";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -40,8 +40,15 @@ const MERCHANT_INSTRUCTIONS = `
 Camberstack also connects Google Merchant Center: for products and Shopping, start with merchant_accounts, not list_accounts. Merchant Center needs no Google Ads account.
 For a site's tags and conversion tracking, start with tag_manager_containers, then tag_manager_setup. Tag Manager changes reach the site only once publish_container runs.`;
 
+/**
+ * The user's pick after an "Account choice:" notice. ChatGPT gets it as choose_account: its review flagged the name
+ * switch_account as inconsistent with the tool once 0.29.0 removed switching (2026-11-11). Other clients keep
+ * switch_account, since they cache tool lists.
+ */
+const PICK_TOOLS = new Set(["switch_account", "choose_account"]);
+
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
-const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account",
+const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account", "choose_account",
   ...[...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES].map((c) => `propose_${c.shape.type.value}`)]);
 
 const LINK_CHANGES = new Set(MERCHANT_LINK_CHANGES.map((c) => c.shape.type.value as string));
@@ -78,7 +85,7 @@ export function servicesOf(name: string, a: unknown): Service[] {
   if (MC_GATED.has(name)) return realMc ? ["merchant"] : [];
   if (name === "paid_organic_overlap")
     return [...(typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) ? ["ads" as const] : []), ...((gateDemo || x.site_url !== DEMO_SITE) ? ["search_console" as const] : [])];
-  if (GATED.has(name) && name !== "switch_account") return typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) && !isLookup(name, a) ? ["ads"] : [];
+  if (GATED.has(name) && !PICK_TOOLS.has(name)) return typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) && !isLookup(name, a) ? ["ads"] : [];
   if ((name.startsWith("search_console_") && name !== "search_console_sites") || SC_PROPOSES.has(name)) return (gateDemo || x.site_url !== DEMO_SITE) ? ["search_console"] : [];
   if (name === "propose_search_console_changes") return (x.changes ?? []).some((c) => (gateDemo || c?.site_url !== DEMO_SITE)) ? ["search_console"] : [];
   if (["analytics_report", "analytics_landing_pages", "analytics_setup"].includes(name) || GA_PROPOSES.has(name)) return realGa(x.property_id) ? ["analytics"] : [];
@@ -194,8 +201,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           release = () => { prev(); done(); };
         }
         if ((GATED.has(name) || MC_GATED.has(name)) && typeof cid === "string") {
-          // switch_account is the user's pick after an "Account choice:" notice: it takes the account without asking again.
-          const done = await session().checkAccount(cid, name === "switch_account");
+          // switch_account/choose_account is the user's pick after an "Account choice:" notice: it takes the account without asking again.
+          const done = await session().checkAccount(cid, PICK_TOOLS.has(name));
           const prev = release;
           release = () => { prev(); done(); };
         }
@@ -725,12 +732,19 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, ({ customer_id, limit }: { customer_id?: string; limit: number }) => session().history(customer_id, limit));
 
-  tool("switch_account", {
-    title: "Pick the plan's account",
-    description: "Takes customer_id as one of the plan's accounts. Call it after a tool answered \"Account choice:\" and the user picked this account. "
-      + "Once the plan's accounts are taken there is no switching: another account answers \"Plan limit:\" with when it opens and the upgrade options. "
-      + "Changes nothing in Google Ads; a no-op for an account that is already active."
-      + " Merchant Center accounts are a separate allowance: pass mc:<account_id>, as the notice gives it.",
+  const picked = o.chatgpt ? "chosen" : "switched_to";
+  tool(o.chatgpt ? "choose_account" : "switch_account", {
+    title: o.chatgpt ? "Choose the plan's account" : "Pick the plan's account",
+    description: o.chatgpt
+      ? "Records the account the user chose as one of the accounts their Camberstack plan covers. Call it only after a tool answered \"Account choice:\" "
+        + "and the user chose this account. The choice holds until the account goes 30 days unused, so it can't be undone sooner. "
+        + "Once the plan's accounts are chosen, another account answers \"Plan limit:\" with the date one opens. "
+        + "Changes nothing in Google Ads; a no-op for an account already chosen."
+        + " Merchant Center accounts are a separate allowance: pass mc:<account_id>, as the notice gives it."
+      : "Takes customer_id as one of the plan's accounts. Call it after a tool answered \"Account choice:\" and the user picked this account. "
+        + "Once the plan's accounts are taken there is no switching: another account answers \"Plan limit:\" with when it opens and the upgrade options. "
+        + "Changes nothing in Google Ads; a no-op for an account that is already active."
+        + " Merchant Center accounts are a separate allowance: pass mc:<account_id>, as the notice gives it.",
     inputSchema: { customer_id: customerId },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async ({ customer_id }: { customer_id: string }) => {
@@ -738,13 +752,13 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     if (id.startsWith("mc:")) {
       if (!(await s.merchant.accounts()).some((a) => a.account_id === id.slice(3)))
         throw new Error(`${id.slice(3)} isn't a Merchant Center account this login can reach (merchant_accounts shows the ones it can). Nothing was taken.`);
-      return { switched_to: id, active_merchant_center_accounts: s.planState(new Set(), "mc").active.map((c) => c.slice(3)) };
+      return { [picked]: id, active_merchant_center_accounts: s.planState(new Set(), "mc").active.map((c) => c.slice(3)) };
     }
     // Throwing logs the call as failed, which takes nothing: never take a plan slot for an account the login can't use.
     const reaches = (list: Account[]) => list.some((a) => a.customerId === id);
     if (!reaches(await s.accounts()) && !reaches(await s.accounts({ fresh: true })))
       throw new Error(`${id} isn't a Google Ads account this login can reach (list_accounts shows the ones it can). Nothing was taken.`);
-    return { switched_to: id, active_accounts: s.planState(new Set()).active };
+    return { [picked]: id, active_accounts: s.planState(new Set()).active };
   });
 
   tool("billing", {

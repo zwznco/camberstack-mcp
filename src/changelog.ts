@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.30.1", date: "2026-11-11",
+    summary: "In ChatGPT, the tool that takes the account you pick is now named for what it does.",
+    items: [
+      "**`choose_account`** (ChatGPT): when your plan asks which Google Ads or Merchant Center account to work on, ChatGPT records your choice with `choose_account`. It was `switch_account`, but there has been no switching since 0.29.0. Claude and other apps keep `switch_account`, which works the same way.",
+    ],
+  },
+  {
     version: "0.30.0", date: "2026-11-11",
     summary: "Google Tag Manager: check your conversion tracking, and fix tags with your approval.",
     items: [
