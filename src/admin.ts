@@ -174,7 +174,7 @@ function errorText(e: string | null): string {
 const userLink = (v: View, id: string, email: string) => `<a href="/users/${encodeURIComponent(id)}${qs(v)}">${esc(email)}</a>`;
 const cid = (c: string | null) => (c ? `<code>${esc(c.replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3"))}</code>` : `<span class="dim">—</span>`);
 
-const SHORT: Record<string, string> = { "Google Ads": "Ads", "Search Console": "GSC", "Search Console read-only": "GSC read", "GA4 read": "GA4", "GA4 edit": "GA4 edit", "Merchant Center": "MC" };
+const SHORT: Record<string, string> = { "Google Ads": "Ads", "Search Console": "GSC", "Search Console read-only": "GSC read", "GA4 read": "GA4", "GA4 edit": "GA4 edit", "Merchant Center": "MC", "Tag Manager": "GTM" };
 /** Permission chips: granted ones solid; with `missing`, the rest outlined. */
 function perms(scopes: string | null, connected: number | boolean, o: { short?: boolean; missing?: boolean } = {}): string {
   if (!connected) return `<span class="dim">disconnected</span>`;
@@ -315,6 +315,9 @@ ${card("Google permissions", table(["service", ["connected users", "r"], ""], [
     ...(r.permissionsUnknown ? [[`<span class="dim">not reported yet</span>`, num(r.permissionsUnknown), ""]] : []),
   ]), `<small>connected users only</small>`)}
 </div>
+${card("Use by service", table(["service", [`calls · ${w}`, "r"], [`users · ${w}`, "r"], ["users all time", "r"]],
+    r.serviceUse.map((x) => [x.service, num(x.calls), num(x.users), num(x.ever)])),
+  `<small title="Successful calls on the user's own data (demo calls aren't counted), from tool_calls.service, logged since 2026-10-28. A call that reads two services counts under both.">own data only</small>`)}
 ${card("Connects by app", table(["app", ["users", "r"], [`new · ${w}`, "r"], ["used real", "r"], ["applied", "r"]],
     r.sources.map((x) => [x.app ? esc(x.app) : `<span class="dim">unknown</span>`,
       num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>app of first call, else token</small>`)}

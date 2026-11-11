@@ -2133,7 +2133,10 @@ describe("OAuth + MCP end to end", () => {
     const page = await fetch(`${admin}/?days=30`, { headers: { cookie } });
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("Top tools");   // which tools make its top 6 depends on the whole run; /activity (below) lists them all
+    expect(html).toContain("Top tools");
+    expect(html).toContain("Use by service");
+    expect(html).toMatch(/Use by service[\s\S]*Tag Manager/);
+    expect(html).toMatch(/Google permissions[\s\S]*Tag Manager/);   // which tools make its top 6 depends on the whole run; /activity (below) lists them all
     expect(html).toContain("customer@example.com");
     expect(html).not.toContain("owner@example.com</a>");   // only as the signed-in admin, never as a user
     expect(html).not.toContain("internal=1");

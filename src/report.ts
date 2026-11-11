@@ -7,8 +7,8 @@ import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
-import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
+import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES } from "./google.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
 /**
  * A paying customer: a paid plan with a live Stripe subscription. Complimentary plans (PRO_EMAILS, grandfathered Plus with no
@@ -160,6 +160,11 @@ export function buildReport(db: DB, o: ReportOptions) {
     /** Connected users holding each Google service (as last reported by Google; NULL scopes = not seen yet). */
     permissions: Object.fromEntries(Object.entries(SCOPE_LABELS).map(([scope, label]) => [label,
       n("SELECT count(*) n FROM {U} u WHERE enc_refresh IS NOT NULL AND (' ' || google_scopes || ' ') LIKE ?", `% ${scope} %`)])) as Record<string, number>,
+    /**
+     * Calls on the user's own data, by Google service (tool_calls.service, set since 2026-10-28; demo calls carry none),
+     * in the window and all time. A call joining two services (paid_organic_overlap) counts under both.
+     */
+    serviceUse: serviceUse(q, since),
     permissionsUnknown: n("SELECT count(*) n FROM {U} u WHERE enc_refresh IS NOT NULL AND google_scopes IS NULL"),
     /**
      * Free is one ad account per Google login, so several logins could multiply it. Flags an ad account more than one
@@ -347,6 +352,16 @@ function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
   return { since: on, rows };
 }
 
+function serviceUse(q: <T>(sql: string, ...p: unknown[]) => T[], since: number) {
+  const has = (svc: string) => `(',' || c.service || ',') LIKE '%,${svc},%'`;
+  const cols = listedServices().map((svc, i) => `sum(c.at >= ? AND ${has(svc)}) calls${i},
+      count(DISTINCT CASE WHEN c.at >= ? AND ${has(svc)} THEN c.user_id END) users${i},
+      count(DISTINCT CASE WHEN ${has(svc)} THEN c.user_id END) ever${i}`).join(",\n      ");
+  const row = q<Record<string, number | null>>(`SELECT ${cols} FROM tool_calls c JOIN {U} u ON u.id = c.user_id
+    WHERE c.ok = 1 AND c.service IS NOT NULL`, ...listedServices().flatMap(() => [since, since]))[0] ?? {};
+  return listedServices().map((svc, i) => ({ service: SERVICE_LABELS[svc], calls: row[`calls${i}`] ?? 0, users: row[`users${i}`] ?? 0, ever: row[`ever${i}`] ?? 0 }));
+}
+
 /** Google scope → the service it is, in the order the admin shows them. openid/email are left out. */
 export const SCOPE_LABELS: Record<string, string> = {
   [ADS_SCOPE]: "Google Ads",
@@ -355,6 +370,8 @@ export const SCOPE_LABELS: Record<string, string> = {
   [ANALYTICS_SCOPE]: "GA4 read",
   [ANALYTICS_EDIT_SCOPE]: "GA4 edit",
   [MERCHANT_SCOPE]: "Merchant Center",
+  // Tag Manager's four scopes are granted together (sign-in box or grant link), so edit.containers stands for them.
+  [TAG_MANAGER_SCOPES[0]!]: "Tag Manager",
 };
 export const permissionLabels = (scopes: string | null | undefined): string[] | null => {
   if (scopes == null) return null;

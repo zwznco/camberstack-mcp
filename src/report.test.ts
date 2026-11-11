@@ -37,6 +37,26 @@ describe("buildReport", () => {
     expect(r.retention.reduce((a, c) => a + c.paid, 0)).toBe(3);
   });
 
+  it("counts own-data calls by service, Tag Manager included, and Tag Manager connections by its scope", () => {
+    const db = seed(), t = now(), D = 86400;
+    db.prepare("UPDATE users SET enc_refresh = 'x', google_scopes = ? WHERE id = 'paid'")
+      .run("openid email https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/tagmanager.edit.containers");
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, service, ms, bytes) VALUES (?, ?, ?, ?, ?, 1, 1)");
+    c.run(t - 60, "paid", "tag_manager_setup", 1, "tag_manager");
+    c.run(t - 50, "lapsed", "propose_add_conversion_linker", 1, "tag_manager");
+    c.run(t - 40, "paid", "paid_organic_overlap", 1, "ads,search_console");
+    c.run(t - 10 * D, "lapsed", "tag_manager_setup", 1, "tag_manager");   // outside the week, inside all time
+    c.run(t - 30, "paid", "tag_manager_setup", 1, null);                    // demo container: no service
+    c.run(t - 20, "paid", "tag_manager_setup", 0, null);                    // failed
+    const r = buildReport(db, { days: 7, exclude: [] });
+    const by = Object.fromEntries(r.serviceUse.map((x) => [x.service, x]));
+    expect(by["Tag Manager"]).toEqual({ service: "Tag Manager", calls: 2, users: 2, ever: 2 });
+    expect(by["Google Ads"]).toMatchObject({ calls: 1, users: 1 });
+    expect(by["Search Console"]).toMatchObject({ calls: 1, users: 1 });
+    expect(by["Merchant Center"]).toMatchObject({ calls: 0, users: 0, ever: 0 });
+    expect(r.permissions["Tag Manager"]).toBe(1);
+  });
+
   it("lists the newest error groups first, so a wide window still shows the latest ones", () => {
     const r = buildReport(seed(), { days: 7, exclude: [] });
     expect(r.errors).toHaveLength(15);
