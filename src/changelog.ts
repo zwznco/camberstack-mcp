@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.33.0", date: "2026-11-12",
+    summary: "Approve several proposals together and they apply as one change.",
+    items: [
+      "**One request, one change**: when a request takes more than one proposal (adding exact-match negatives and removing the broad ones they replace), approving them together applies them as one, all or nothing, and it counts once toward Free's 10 changes.",
+      "**Keywords are checked for quote marks and brackets**: match type is set on its own, so text like \"fighter jet\" or [diy] is caught before it reaches Google as part of the keyword.",
+    ],
+  },
+  {
     version: "0.32.1", date: "2026-11-12",
     summary: "Free's 10 changes a month: publishing tags is free, and a cancelled plan starts Free at 0.",
     items: [
