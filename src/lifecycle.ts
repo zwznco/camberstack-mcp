@@ -385,7 +385,7 @@ Camberstack`,
 /** What a new subscription adds, what stays, and how billing works. */
 function paidWelcome(o: { base: string; name: string; adds: string; addsHtml: string; billing: string; billingHtml: string }) {
   const { base, name } = o;
-  const same = "every tool, unlimited changes, nothing applied until you approve it, and almost every change can be undone.";
+  const same = `every tool and Google service, ${changeCap() ? "" : "unlimited changes, "}nothing applied until you approve it, and almost every change can be undone.`;
   return {
     subject: `You're on Camberstack ${name}`,
     text: `Hi,

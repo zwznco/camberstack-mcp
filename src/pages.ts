@@ -17,6 +17,9 @@ const paidCovers = () => (capOn() ? "Everything in Free with unlimited applied c
  * (highlighted), since most users have one Google Ads account (69% on 2026-10-28). Off, Plus would equal Free and isn't shown.
  */
 const capOn = () => !!changeCap();
+/** A service page's "What does it cost?": included everywhere, and on Free its applied changes share the change cap. */
+const serviceCost = (name: string, extra = "") => `${name} is included on every plan, <a href="/#pricing">Free</a> too${extra}.`
+  + (capOn() ? ` On Free, its applied changes count toward the ${freeChanges()}, together with every other service's; reading never counts.${plusLine()}` : "");
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
@@ -795,7 +798,7 @@ The same connection reads <a href="/google-analytics-mcp">Google Analytics 4</a>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>${`The Search Console tools are free and don't count toward a plan. Plans count Google Ads accounts only: <a href="/#pricing">Free covers one, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}</a>.`}</p>
+<p>${serviceCost("Search Console", ", and it doesn't use up a plan's Google Ads accounts")}</p>
 <h3>Which Search Console permission do I need?</h3>
 <p>Any user of the property can read its performance data. Only the sites your Google login can see in Search Console are listed.</p>
 <h3>Do you store my search data?</h3>
@@ -899,7 +902,7 @@ and <a href="/google-analytics-mcp">Google Analytics 4</a> too.</p>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>${`Merchant Center is included on every plan: 1 Merchant Center account on <a href="/#pricing">Free</a>, ${PRO_ACCOUNTS} on Pro and ${AGENCY_ACCOUNTS} on Agency.`}</p>
+<p>${serviceCost("Merchant Center", `: 1 Merchant Center account on Free${capOn() ? " and Plus" : ""}, ${PRO_ACCOUNTS} on Pro and ${AGENCY_ACCOUNTS} on Agency`)}</p>
 <h3>Can I try it first?</h3>
 <p>Yes. Ask for the demo store (Merchant Center account 000000001), a sample plumbing supply shop with disapproved and limited products. Fixes there change only the demo.</p>
 <h3>Do you store my product data?</h3>
@@ -1002,7 +1005,7 @@ other two ends of the same tracking.</p>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>${`Tag Manager is included on every plan: <a href="/#pricing">Free, Pro and Agency</a>.`}</p>
+<p>${serviceCost("Tag Manager")}</p>
 <h3>Which Tag Manager permission do I need?</h3>
 <p>Read access to a container is enough to check it. Adding, pausing or deleting tags needs Edit, and publishing needs Publish.
 Creating or deleting a container needs administrator access to the Tag Manager account.</p>
@@ -1107,7 +1110,7 @@ through the same connection.</p>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>${`Google Analytics is included on every plan: <a href="/#pricing">Free, Pro and Agency</a>.`}</p>
+<p>${serviceCost("Google Analytics")}</p>
 <h3>Which Google Analytics permission do I need?</h3>
 <p>Viewer access to a property is enough to read it. Marking key events needs Marketer or Editor; linking Google Ads needs admin
 access to both. Only the properties your Google login can see are listed.</p>
@@ -1472,7 +1475,7 @@ None of your Google Ads, Search Console, Google Analytics, Merchant Center or Ta
  */
 export function plansPage(baseUrl: string): string {
   const free = `<p>Every tool, with ${freeChanges()} and undo, on <strong>1 Google Ads account</strong> at a time; another opens
-once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Search Console, Google Analytics and Tag Manager are included and don't count. Merchant Center is included too, on 1 Merchant Center account.</p>`;
+once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Search Console, Google Analytics and Tag Manager are included and don't use up the Google Ads account${capOn() ? "; their applied changes count toward the same allowance" : ""}. Merchant Center is included too, on 1 Merchant Center account.</p>`;
   const all = paidCovers();
   return layout({
     baseUrl, path: "/plans",

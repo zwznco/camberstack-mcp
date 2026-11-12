@@ -3148,7 +3148,8 @@ describe("OAuth + MCP end to end", () => {
     let on: string;
     try { on = plansPage("https://x.test"); } finally { setChangeCap(null); }
     expect(off).toContain("on <strong>1 Google Ads account</strong> at a time");
-    expect(off).toContain("Search Console, Google Analytics and Tag Manager are included and don't count. Merchant Center is included too, on 1 Merchant Center account.</p>");
+    expect(off).toContain("Search Console, Google Analytics and Tag Manager are included and don't use up the Google Ads account. Merchant Center is included too, on 1 Merchant Center account.</p>");
+    expect(on).toContain("Search Console, Google Analytics and Tag Manager are included and don't use up the Google Ads account; their applied changes count toward the same allowance.");
     expect(off).toContain("Everything in Free, on <strong>up to 5 Google Ads accounts</strong>");
     expect(on).toContain("Every tool, with 10 applied changes every 30 days and undo, on <strong>1 Google Ads account</strong> at a time");
     expect(on).toContain("<h2>Plus · $7/month</h2>");
@@ -3172,6 +3173,8 @@ describe("OAuth + MCP end to end", () => {
     expect(on).not.toMatch(/Free for one account, with unlimited|Free for 1 account with unlimited|every tool and unlimited changes|every tool, unlimited applied changes|Every tool, with unlimited applied changes(,| and undo,) on (<strong>)?1 Google Ads/i);
     expect(on.match(/10 applied changes every 30 days/g)!.length).toBeGreaterThanOrEqual(5);
     expect(on).toContain('"Change limit"');
+    expect(on).not.toMatch(/don't count toward a plan|Plans count Google Ads accounts only/);
+    expect(on).toContain("On Free, its applied changes count toward the 10 applied changes every 30 days");
     expect(on).toContain("What does Free cover?");
     // On, Plus is sold and is the highlighted plan (most users have one account); off, Pro is.
     expect(on).toContain('<div class="plan plan-pro"><h3>Plus</h3>');
