@@ -1,4 +1,4 @@
-import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, parseDateFlag } from "./plans.js";
+import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, parseChangeCap, parseDateFlag } from "./plans.js";
 /** The environment variables the service reads; LOG_FILE (server.ts), SENTRY_* (sentry.ts) and funnel.ts's DATA_DIR are read where used. */
 
 /** A comma-separated list of emails, lowercased. */
@@ -27,6 +27,8 @@ export interface Config {
   agencyAccounts: number;
   /** FREE_ONE_SERVICE: when Free starts covering one Google service at a time (plans.ts parseDateFlag). Off unless set. */
   freeOneServiceFrom?: number;
+  /** FREE_CHANGE_CAP: approvals Free may apply per 30 days (plans.ts changeCap). Unset = unlimited. */
+  freeChangeCap: number | null;
   /** GATE_DEMO=1, test only (UNPROMPTED-STOPS.md): the plan gate treats demo IDs as real. Dev's test runs set it; prod never does. */
   gateDemo: boolean;
   /**
@@ -86,6 +88,7 @@ export function loadConfig(): Config {
     },
     freeAccounts: 1,
     freeOneServiceFrom: parseDateFlag(process.env.FREE_ONE_SERVICE),
+    freeChangeCap: parseChangeCap(process.env.FREE_CHANGE_CAP),
     gateDemo: process.env.GATE_DEMO === "1",
     proAccounts: PRO_ACCOUNTS,
     agencyAccounts: AGENCY_ACCOUNTS,

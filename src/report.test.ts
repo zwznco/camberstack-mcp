@@ -114,7 +114,7 @@ describe("buildReport", () => {
   it("reads the one-service paywall from switch-on, by existing vs new signups and ChatGPT vs other apps", () => {
     const db = openDb(":memory:");
     const t = now(), on = t - 5 * 86400;
-    expect(buildReport(db, { days: 7, exclude: [] }).paywall).toEqual({ since: null, rows: [] });
+    expect(buildReport(db, { days: 7, exclude: [] }).paywall).toEqual({ since: null, gate: "service", rows: [] });
     db.prepare("INSERT INTO clients (client_id, info, created_at) VALUES ('gpt', ?, 0), ('claude', ?, 0)")
       .run(JSON.stringify({ redirect_uris: ["https://chatgpt.com/connector/oauth/x"] }), JSON.stringify({ redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] }));
     const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, last_seen_at) VALUES (?, ?, ?, 'free', ?, ?)");

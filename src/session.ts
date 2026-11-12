@@ -10,13 +10,13 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
-import { AnalyticsClient, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { AnalyticsClient, DEMO_PROPERTY, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
 import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resolveGaChange, writeGa, type GaChange, type GaOp, type GaResolved } from "./ga4-changes.js";
 import { GTM_TARGET, GtmChangeSchema, orderGtmChanges, gtmInverseAfterApply, gtmNoteAfterApply, resolveGtmChange, writeGtm, type GtmChange, type GtmOp, type GtmResolved } from "./gtm-changes.js";
-import { DemoTagManager, GtmClient, routedTagManager, sharedReads, type TagManager } from "./gtm.js";
+import { DEMO_GTM_ACCOUNT, DemoTagManager, GtmClient, routedTagManager, sharedReads, type TagManager } from "./gtm.js";
 import { SC_TARGET, ScChangeSchema, resolveScChange, scNoteAfterApply, writeSc, type ScChange, type ScOp, type ScResolved } from "./search-console-changes.js";
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
 import { writeFileSync } from "node:fs";
@@ -77,6 +77,20 @@ const NOT_REPEATABLE = new Set<string>(["add_ad_group", "add_responsive_search_a
 /** Per user: the tail of their plan-gate checks (run one at a time), and the accounts with a call running. */
 const gateQueue = new Map<string, Promise<void>>();
 const inFlight = new Map<string, Map<string, number>>();
+/**
+ * A proposal on sample data only: the demo Ads account or store, or Analytics, Search Console or Tag Manager changes that all
+ * name the demo property, site or container. The change cap doesn't count these (creating a property names none: real).
+ */
+export function isDemoProposal(customerId: string, changesJson: string): boolean {
+  if (customerId === DEMO_CID || customerId === `mc:${DEMO_MERCHANT}`) return true;
+  if (customerId !== GA_TARGET && customerId !== SC_TARGET && customerId !== GTM_TARGET) return false;
+  let changes: Record<string, unknown>[];
+  try { changes = JSON.parse(changesJson) as Record<string, unknown>[]; } catch { return false; }
+  const demo = (c: Record<string, unknown>) => c.property_id === DEMO_PROPERTY || c.site_url === DEMO_SITE
+    || [c.container, c.account].some((v) => typeof v === "string" && (v === DEMO_GTM_ACCOUNT || v.startsWith(`${DEMO_GTM_ACCOUNT}/`)));
+  return changes.length > 0 && changes.every(demo);
+}
+
 /** Services a user's running calls use, so parallel calls can't take two services at once (checkService). */
 const servicesInFlight = new Map<string, Map<Service, number>>();
 /** When each user was last asked to pick Free's service (checkService). In memory: a restart just asks again. */
@@ -572,8 +586,8 @@ export class UserSession {
    */
   private get plansPage(): string { return this.deps.plansLink?.(this.user.id) ?? `${this.deps.baseUrl}/plans`; }
 
-  /** Plus is pitched once one-service Free is on, outside ChatGPT, when it's sold. Before that it would equal Free. */
-  private get plusOffered(): boolean { return !this.chatgpt && !!this.deps.plusAvailable && this.freePlan.kind === "one_service"; }
+  /** Plus is pitched once one-service Free or the change cap is on, outside ChatGPT, when it's sold. Before that it would equal Free. */
+  private get plusOffered(): boolean { return !this.chatgpt && !!this.deps.plusAvailable && (this.freePlan.kind === "one_service" || !!changeCap()); }
 
   /** Which Free is live now (plans.ts freePlan): FREE_ONE_SERVICE's date can pass while the server runs. */
   private get freePlan(): FreePlan { return freePlan(this.deps.freeOneServiceFrom); }
@@ -611,8 +625,8 @@ export class UserSession {
 
   private freeIncluded(): string {
     return this.oneService
-      ? `every tool on 1 Google service at a time (${servicesOr()}) and 1 Google Ads account, with unlimited applied changes; undo and history always work`
-      : "every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work";
+      ? `every tool on 1 Google service at a time (${servicesOr()}) and 1 Google Ads account, with ${freeChanges()}; undo and history always work`
+      : `every tool on 1 Google Ads account, with ${freeChanges()}; undo and history always work`;
   }
 
   /** With FREE_ONE_SERVICE: which service Free covers now, or the change it announces before its date. Nothing otherwise. */
@@ -622,6 +636,12 @@ export class UserSession {
     if (!this.oneService) return {};
     const s = this.servicesInUse()[0]?.s;
     return { service_in_use: s ? SERVICE_LABELS[s] : null, services_included: 1 };
+  }
+
+  /** With the change cap on: how many of Free's applied changes this window has used. Nothing otherwise. */
+  private changeUsage(): { changes_applied?: number; changes_included?: number } {
+    const cap = changeCap();
+    return cap ? { changes_applied: this.changesApplied().length, changes_included: cap } : {};
   }
 
   /** What billing shows of the plan's use: Google Ads accounts, and Merchant Center accounts once there are any (a separate allowance of the same size). */
@@ -635,7 +655,7 @@ export class UserSession {
     if (this.chatgpt) {
       const usage = this.planUsage();
       return this.isPro ? { plan: this.planName, ...usage, plans_page: this.plansPage }
-        : { plan: "free", ...usage, ...this.serviceUsage(), included: this.freeIncluded(),
+        : { plan: "free", ...usage, ...this.serviceUsage(), ...this.changeUsage(), included: this.freeIncluded(),
             note: "More accounts at a time need a different plan.", plans_page: this.plansPage };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
@@ -654,9 +674,9 @@ export class UserSession {
           // Plus → Pro and Pro → Agency switch on the billing page (Stripe's portal), with the difference prorated.
           ...(this.planName === "pro" ? agency : {}),
           ...(this.planName === "plus" && upgrade ? { pro: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
-      : { plan: "free", account_page, ...usage, ...this.serviceUsage(),
+      : { plan: "free", account_page, ...usage, ...this.serviceUsage(), ...this.changeUsage(),
           included: this.freeIncluded(),
-          ...(plusUrl ? { plus: `${allServices()}, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
+          ...(plusUrl ? { plus: `${this.oneService ? allServices() : "unlimited applied changes"}, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
           pro: `${this.freePlan.kind !== "accounts" ? `${allServices()}, on ` : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
           upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
@@ -1414,6 +1434,7 @@ export class UserSession {
     const p = this.proposal(proposalId);
     if (p.status === "applied") return this.alreadyApplied(p);
     if (p.status !== "proposed") throw new Error(`Proposal ${proposalId} is already ${p.status}.`);
+    this.checkChangeCap(p);
     const changes = JSON.parse(p.changes) as AnyChange[];
     // Claim it before any write: a client retrying after a timeout would otherwise apply it twice. applied_at
     // marks the claim, and an undo also claims the change it reverses, so two undos of one change can't both run.
@@ -1504,6 +1525,46 @@ export class UserSession {
 
   /** A repeat apply of an applied proposal: not an error, the change is in, and that is the answer (2026-10-28: a model
    *  re-sent apply_changes 8s after it succeeded). Nothing is written again; the first apply's results are returned. */
+  /**
+   * Real proposals this user applied in the window, oldest first: what the change cap counts (plans.ts changeCap). Undos
+   * and the demo (account, site, property, store, container) don't count, nor anything before plan_reset_at.
+   */
+  changesApplied(): number[] {
+    const rows = this.deps.db.prepare(`SELECT customer_id, changes, applied_at FROM proposals
+        WHERE user_id = ? AND status = 'applied' AND undo_of IS NULL AND applied_at >= ? ORDER BY applied_at`)
+      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0)) as { customer_id: string; changes: string; applied_at: number }[];
+    return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes)).map((r) => r.applied_at);
+  }
+
+  /**
+   * The change cap (FREE_CHANGE_CAP, Free only): with the window's allowance used, applying stops with a Change limit
+   * notice, a normal result (SwitchNotice) rather than an error. The proposal stays open. Undo and the demo are never capped.
+   */
+  private checkChangeCap(p: ProposalRow): void {
+    const cap = changeCap();
+    if (!cap || this.isPro || p.undo_of || isDemoProposal(p.customer_id, p.changes)) return;
+    const used = this.changesApplied();
+    if (used.length < cap) return;
+    // A slot opens when the cap-th most recent approval ages out of the window.
+    const opens = new Date((used[used.length - cap]! + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
+    const common = { stop: "change_limit", changes_applied: used.length, changes_included: cap, window_days: ACCOUNT_WINDOW_DAYS,
+      next_change_opens: opens, proposal_id: p.id, proposal_status: "proposed (still open)" };
+    const head = `${CHANGE_LIMIT_PREFIX} nothing was applied. ${this.chatgpt ? "The current plan" : "The Free plan"} includes ${cap} applied changes every `
+      + `${ACCOUNT_WINDOW_DAYS} days, and this login has used them; the next opens on ${opens}. Proposal ${p.id} stays open. `
+      + "Reading, proposing, undo and change history keep working. Tell the user, and don't retry the apply.";
+    if (this.chatgpt) throw new SwitchNotice(`${head} Unlimited changes need a different plan (plans_page).`, { ...common, plans_page: this.plansPage });
+    const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
+    const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    if (plusUrl) throw new SwitchNotice(`${head} Plus (${PLUS_PRICE_LABEL}) has unlimited changes on 1 Google Ads account, so this proposal can be applied right away; `
+      + `Pro (${PRO_PRICE_LABEL}) does on up to ${this.deps.proAccounts}.`,
+      { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: "unlimited applied changes, on 1 Google Ads account", cancel: "any time",
+        upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" },
+        or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `unlimited applied changes, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
+    throw new SwitchNotice(`${head} Pro (${PRO_PRICE_LABEL}) has unlimited changes, so this proposal can be applied right away.`,
+      { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: `unlimited applied changes, on up to ${accountsLabel(this.deps.proAccounts)}`, cancel: "any time",
+        upgrade_url: proUrl, upgrade_url_expires: proUrl ? "7 days; personal to this user" : null, pricing_page: proUrl ? null : `${this.deps.baseUrl}/#pricing` } });
+  }
+
   private alreadyApplied(p: ProposalRow) {
     const outcomes = p.result ? JSON.parse(p.result) as Outcome[] : [];
     const at = p.applied_at ? ` at ${new Date(p.applied_at * 1000).toISOString()}` : "";

@@ -8,7 +8,9 @@
  *   service_limit  the one-service gate (FREE_ONE_SERVICE) stopped a Free user's AI asking for a second Google service on request
  *                  (not inside one answer: report.ts onRequestSql), still
  *                  free the next morning (6+ hours later) → which service they use, when the other opens, Pro covering all three.
- *                  One upgrade email per user: none of limit_reached, switch_wanted and service_limit follows another
+ *   change_limit   the change cap (FREE_CHANGE_CAP) stopped a Free user's apply, still free the next morning (6+ hours later) →
+ *                  when the next change opens, Plus's unlimited changes, the upgrade link
+ *                  One upgrade email per user: none of limit_reached, switch_wanted, service_limit and change_limit follows another
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on a paid plan (Plus, Pro, Agency) with a Stripe subscription → what it adds, where billing lives
@@ -27,7 +29,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, payingSql, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, freeChanges, freeChangesShort, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LIMIT_PREFIX, allServices, dateLabel, freePlan, freePlanChange, oneServiceFree, payingSql, type FreePlan } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { DEMO_MERCHANT } from "./merchant.js";
 import { onRequestSql } from "./report.js";
@@ -82,7 +84,7 @@ function localHour(at: Date, tz: string | null | undefined): number {
   const fmt = (zone: string) => Number(new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hourCycle: "h23" }).format(at));
   try { return fmt(tz || FALLBACK_TZ); } catch { return fmt(FALLBACK_TZ); }
 }
-type Kind = "first_steps" | "limit_reached" | "switch_wanted" | "service_limit" | "check_in" | "welcome" | "pro_welcome";
+type Kind = "first_steps" | "limit_reached" | "switch_wanted" | "service_limit" | "change_limit" | "check_in" | "welcome" | "pro_welcome";
 /** welcome shipped at this time (2026-10-14); everyone who signed up before it never gets one. */
 const WELCOME_SINCE = 1792001873;
 /** A welcome that hasn't gone out a day after signup (mail down that long) is dropped, not sent late. */
@@ -124,7 +126,7 @@ export class Lifecycle {
     const limit = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
         AND coalesce(c.customer_id, '') NOT LIKE 'mc:%' AND c.error NOT LIKE '%Merchant Center account%'
-      WHERE ${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("service_limit")}
+      WHERE ${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("service_limit")} AND ${notSent("change_limit")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // Stopped by the one-service gate (session.ts checkService), the last stop 6 hours to 30 days ago. A stop logs as ok
@@ -134,9 +136,16 @@ export class Lifecycle {
     // never asked for. The cost: someone who asked for both services in one message is labelled in-answer and gets none.
     const service = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND ${onRequestSql("c")}
-      WHERE ${eligible} AND ${notSent("service_limit")} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")}
+      WHERE ${eligible} AND ${notSent("service_limit")} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("change_limit")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${SERVICE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
+    // Stopped by the change cap (session.ts checkChangeCap), the last stop 6 hours to 30 days ago. Always on request: the
+    // user approved the change that was stopped. `error` is the latest stop's, which names the date the next change opens.
+    const changes = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
+      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
+      WHERE ${eligible} AND ${notSent("change_limit")} AND ${notSent("service_limit")} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")}
+      GROUP BY u.id HAVING last BETWEEN ? AND ?`)
+      .all(`${CHANGE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // First applied change to a real account (not the demo, not an undo) 2–14 days ago; any plan, connected or not.
     const checkIn = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, min(p.applied_at) first FROM users u
       JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.undo_of IS NULL AND p.customer_id <> ? AND p.customer_id <> 'mc:${DEMO_MERCHANT}'
@@ -153,6 +162,8 @@ export class Lifecycle {
       ...limit.filter(ok).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
         opens: /opens (?:again )?(?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
       ...service.filter(ok).map((u) => ({ kind: "service_limit" as const, id: u.id, email: u.email, days: 0, error: u.error })),
+      ...changes.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0,
+        opens: /next opens on (\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];
   }
@@ -162,7 +173,8 @@ export class Lifecycle {
     if (!this.d.mail) return 0;
     return this.deliver(this.due(), (u) => u.kind === "first_steps" ? firstSteps(u.days)
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
-      : u.kind === "service_limit" ? serviceLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.error ?? "") : checkInEmail());
+      : u.kind === "service_limit" ? serviceLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.error ?? "")
+      : u.kind === "change_limit" ? changeLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.opens) : checkInEmail());
   }
 
   /**
@@ -230,6 +242,7 @@ export class Lifecycle {
     await this.send(to, limitReached(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "2026-11-13"), "preview");
     await this.send(to, serviceLimit(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=plus`, `${this.d.baseUrl}/account?upgrade=1`, "Service limit: the Free plan covers one Google service at a time "
       + "(Google Ads, Search Console or Google Analytics), and this login uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used."), "preview");
+    await this.send(to, changeLimit(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=plus`, `${this.d.baseUrl}/account?upgrade=1`, "2026-12-02"), "preview");
     await this.send(to, checkInEmail(), "preview");
     await this.send(to, welcome(this.d.baseUrl, freePlan(this.d.freeOneServiceFrom)), "preview");
     await this.send(to, proWelcome(this.d.baseUrl, "pro"), "preview");
@@ -316,7 +329,7 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
     + `and another opens once your current one has gone ${ACCOUNT_WINDOW_DAYS} days unused${when ? `: on ${when}, if you don't use it before then` : ""}.`;
   const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, `
     + `and Agency up to ${AGENCY_ACCOUNTS}, for ${AGENCY_PRICE_LABEL}; cancel any time.`;
-  const free = "On Free, every tool and unlimited changes keep working on your active account, and undo and history always work.";
+  const free = `On Free, every tool and ${freeChangesShort()} keep working on your active account, and undo and history always work.`;
   return upgradeEmail({ subject: "Using Camberstack on more than one Google Ads account", stopped, pitch: pro, link: upgrade, cta: "Upgrade to Pro", free, base });
 }
 
@@ -339,8 +352,20 @@ function serviceLimit(base: string, plus: string | null, upgrade: string | null,
     : `Camberstack Pro covers ${allServices()}, including the tools that use them side by side, `
       + `such as finding searches you pay for that already rank, for ${PRO_PRICE_LABEL}; cancel any time.`;
   const link = plus ?? upgrade;
-  const free = `On Free, every tool and unlimited changes keep working${have ? ` on ${have}` : ""}, and undo and history always work.`;
+  const free = `On Free, every tool and ${freeChangesShort()} keep working${have ? ` on ${have}` : ""}, and undo and history always work.`;
   return upgradeEmail({ subject: `Using ${allServices()}`, stopped, pitch: pro, link, cta: plus ? "Get Plus" : "Upgrade to Pro", free, base });
+}
+
+/** The change cap stopped an apply: when the next one opens (the date the stop named), and Plus's unlimited changes. */
+function changeLimit(base: string, plus: string | null, upgrade: string | null, opens?: string) {
+  const when = opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
+  const stopped = `Camberstack stopped a change you approved: the Free plan includes ${freeChanges()}, and you've used them`
+    + `${when ? `. The next one opens on ${when}` : ""}. The proposal is still open, so nothing is lost.`;
+  const pitch = plus
+    ? `Camberstack Plus has unlimited changes on one Google Ads account, for ${PLUS_PRICE_LABEL}; cancel any time. Pro (${PRO_PRICE_LABEL}) does the same on up to ${PRO_ACCOUNTS} accounts.`
+    : `Camberstack Pro has unlimited changes on up to ${PRO_ACCOUNTS} Google Ads accounts, for ${PRO_PRICE_LABEL}; cancel any time.`;
+  const free = "On Free, every tool keeps working: asking, reading and proposing are never limited, and undo and history always work.";
+  return upgradeEmail({ subject: "Your free Camberstack changes for this month", stopped, pitch, link: plus ?? upgrade, cta: plus ? "Get Plus" : "Upgrade to Pro", free, base });
 }
 
 /** Plain on purpose: it should read like Adam wrote it, and replies go straight to him. Never says how many users there are. */
@@ -372,6 +397,8 @@ function welcome(base: string, fp: FreePlan) {
   const ask = "How did each of my Google Ads campaigns do last month?";
   const plans = fp.kind === "one_service"
     ? `Free covers ${oneServiceFree()}; Plus (${PLUS_PRICE_LABEL}) covers ${allServices()} on 1 Google Ads account, Pro (${PRO_PRICE_LABEL}) on up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`
+    : changeCap() && fp.kind === "accounts"
+      ? `Free covers one Google Ads account, with ${freeChanges()}; Plus (${PLUS_PRICE_LABEL}) has unlimited changes on it, Pro (${PRO_PRICE_LABEL}) on up to ${PRO_ACCOUNTS} accounts, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.`
     : `Free covers one Google Ads account; Pro (${PRO_PRICE_LABEL}) covers up to ${PRO_ACCOUNTS}, and Agency (${AGENCY_PRICE_LABEL}) up to ${AGENCY_ACCOUNTS}.${fp.kind === "upcoming" ? ` ${freePlanChange(fp)}` : ""}`;
   return {
     subject: "Welcome to Camberstack",
@@ -429,7 +456,9 @@ Camberstack`,
 /** Plus adds services, not accounts: every listed service together on the one account. */
 function plusWelcome(base: string) {
   const ask = "Which searches do I pay for that already rank on Google?";
-  const adds = `${allServices()}, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
+  const adds = changeCap() ? "unlimited applied changes on one Google Ads account, where Free stops at "
+      + `${changeCap()} every 30 days. Nothing else changes: every proposal still waits for your approval.`
+    : `${allServices()}, on one Google Ads account. Ask across them in Claude or ChatGPT, e.g. "${ask}"`;
   const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from`;
   return paidWelcome({ base, name: "Plus", adds, addsHtml: adds.replace(`"${ask}"`, `<em>“${ask}”</em>`),
     billing: `${billing} your account page`, billingHtml: `${billing} <a href="${base}/account">your account page</a>.` });

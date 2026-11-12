@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.31.0", date: "2026-11-11",
+    summary: "Free includes 10 applied changes every 30 days, and keeps every Google service. Plus has unlimited changes.",
+    items: [
+      "**Free keeps every service.** The one-service Free plan announced for November 15 isn't happening: Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager stay on Free together.",
+      "**Free includes 10 applied changes every 30 days.** A change counts when you approve and apply a proposal, however many edits it holds. Undo and the demo account don't count, and asking, reading and proposing are never limited. Past the limit, nothing is applied: the proposal stays open, and the answer says when the next change opens.",
+      "**Plus ($7/month) has unlimited applied changes** on one Google Ads account; Pro and Agency do on more.",
+    ],
+  },
+  {
     version: "0.30.1", date: "2026-11-11",
     summary: "In ChatGPT, the tool that takes the account you pick is now named for what it does.",
     items: [

@@ -29,6 +29,23 @@ export const SWITCH_NOTICE_PREFIX = "Account switch:";
 export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
 
 /**
+ * The change cap (projects/camberstack/PRICING-TEST.md, replacing one-service Free before it switched on, 2026-11-11):
+ * Free applies at most this many proposals per ACCOUNT_WINDOW_DAYS, counted per approval (one apply_changes of a
+ * proposal, however many changes it holds); paid plans are unlimited. Undo and the demo don't count. Set once at boot
+ * from FREE_CHANGE_CAP (a whole number; unset = unlimited), and read by every page, email and tool result that describes Free.
+ */
+let changeCapValue: number | null = null;
+export const setChangeCap = (n: number | null) => { changeCapValue = n && n > 0 ? Math.floor(n) : null; };
+export const changeCap = () => changeCapValue;
+export const parseChangeCap = (v: string | undefined): number | null => (/^\d+$/.test(v ?? "") && Number(v) > 0 ? Number(v) : null);
+/** "unlimited applied changes" / "10 applied changes every 30 days". */
+export const freeChanges = () => (changeCapValue ? `${changeCapValue} applied changes every ${ACCOUNT_WINDOW_DAYS} days` : "unlimited applied changes");
+/** The short form for taglines: "unlimited changes" / "10 changes a month". */
+export const freeChangesShort = () => (changeCapValue ? `${changeCapValue} changes a month` : "unlimited changes");
+/** Text of the change cap's stop. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
+export const CHANGE_LIMIT_PREFIX = "Change limit:";
+
+/**
  * Option C (projects/camberstack/PRICING-TEST.md), behind FREE_ONE_SERVICE: Free covers one Google service at a time,
  * the most recently used one over ACCOUNT_WINDOW_DAYS; paid plans cover them all together. Off by default.
  * FREE_ONE_SERVICE=YYYY-MM-DD announces it until that day (UTC) and starts it then; =1 starts it now.

@@ -21,7 +21,7 @@ import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, gateDemoCalls, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
 import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, merchantCenterPage, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
-import { allServices, freePlan, oneServiceFree, parseDateFlag, type FreePlan } from "./plans.js";
+import { allServices, freePlan, oneServiceFree, parseChangeCap, parseDateFlag, setChangeCap, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 import { UserSession, clearGoogleCache } from "./session.js";
@@ -422,7 +422,7 @@ beforeAll(async () => {
   const cfg: Config = {
     baseUrl: "http://localhost", port: 0, dataDir: ":memory:", encryptionKey: key,
     google: { clientId: "gid", clientSecret: "gsecret" },
-    freeAccounts: 1, proAccounts: 5, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro", plusPriceId: "price_plus" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
+    freeAccounts: 1, freeChangeCap: null, proAccounts: 5, stripe: { secretKey: "sk_test_x", proPriceId: "price_pro", plusPriceId: "price_plus" }, proEmails: new Set(), adminEmails: new Set(["owner@example.com"]), allowedEmails, gitSha: "test", gitCommitDate: "",
     matomo: { url: "http://matomo.test", siteId: "1", token: "" },
   };
   // Bind first so baseUrl (the OAuth issuer) is the real test origin.
@@ -439,10 +439,11 @@ beforeAll(async () => {
 });
 afterAll(() => { server?.close(); });
 
-async function connect(cookie?: string, state = "xyz"): Promise<string> {
+/** `ip`: a forwarded client address for /register, whose rate limit is per IP, so a test can connect without spending the shared budget. */
+async function connect(cookie?: string, state = "xyz", ip?: string): Promise<string> {
   const redirect = "http://localhost:9999/callback";
   const reg = await fetch(`${base}/register`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST", headers: { "Content-Type": "application/json", ...(ip ? { "X-Forwarded-For": ip } : {}) },
     body: JSON.stringify({ redirect_uris: [redirect], client_name: "Test AI", token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }),
   });
@@ -3021,6 +3022,79 @@ describe("OAuth + MCP end to end", () => {
     const logo = await fetch(`${base}/logo.png`);
     expect(logo.status).toBe(200);
     expect(logo.headers.get("content-type")).toContain("image/png");
+  });
+
+  it("with FREE_CHANGE_CAP, stops Free's applies past the cap: the proposal stays open, undo and the demo don't count", async () => {
+    googleUser.sub = "google-sub-change-cap"; googleUser.email = "changecap@example.com";
+    setChangeCap(2);
+    try {
+      const t = await connect(undefined, "xyz", "203.0.113.7");
+      const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-change-cap") as { id: string }).id;
+      const negative = async (text: string, customer_id = "1112223333") => (await call(t, "propose_changes", { customer_id,
+        changes: [{ type: "add_negative_keywords", campaign_id: customer_id === "0000000001" ? "2001" : "10", keywords: [{ text, match_type: "PHRASE" }] }] })).json.proposal_id as string;
+      const first = await negative("cap one");
+      expect((await call(t, "apply_changes", { proposal_id: first })).json.status).toBe("applied");
+      expect((await call(t, "apply_changes", { proposal_id: await negative("cap two") })).json.status).toBe("applied");
+      expect((await call(t, "billing")).json).toMatchObject({ plan: "free", changes_applied: 2, changes_included: 2 });
+      // The third approval stops: a normal result, nothing written, the proposal still open.
+      const before = ads.negatives.length;
+      const third = await negative("cap three");
+      const stop = await call(t, "apply_changes", { proposal_id: third });
+      expect(stop.isError).toBe(false);
+      expect(stop.json).toMatchObject({ stop: "change_limit", changes_applied: 2, changes_included: 2, proposal_id: third,
+        next_change_opens: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+      expect(stop.text).toContain("Change limit: nothing was applied. The Free plan includes 2 applied changes every 30 days");
+      expect(stop.text).toContain("Plus ($7/month) has unlimited changes on 1 Google Ads account");
+      expect(stop.json.upgrade).toMatchObject({ plan: "plus", upgrade_url: expect.stringContaining("http") });
+      expect(ads.negatives.length).toBe(before);
+      expect((db.prepare("SELECT status FROM proposals WHERE id = ?").get(third) as { status: string }).status).toBe("proposed");
+      expect(db.prepare("SELECT ok, error FROM tool_calls WHERE user_id = ? AND tool = 'apply_changes' ORDER BY id DESC LIMIT 1").get(uid))
+        .toMatchObject({ ok: 1, error: expect.stringMatching(/^Change limit:/) });
+      // Undo is never capped, and an applied undo doesn't count.
+      const undo = (await call(t, "undo_changes", { proposal_id: first })).json.proposal_id as string;
+      expect((await call(t, "apply_changes", { proposal_id: undo })).json.status).toBe("applied");
+      // Nor is the demo.
+      expect((await call(t, "apply_changes", { proposal_id: await negative("demo", "0000000001") })).json.status).toBe("applied");
+      expect((await call(t, "billing")).json.changes_applied).toBe(2);
+      // ChatGPT connections: the same stop, no price and no checkout link, only the plans page.
+      const gptClient = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
+      const gptInfo = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(gptClient) as { info: string }).info;
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(gptInfo), redirect_uris: ["https://chatgpt.com/connector/oauth/cap"] }), gptClient);
+      const gpt = await call(t, "apply_changes", { proposal_id: third });
+      expect(gpt.json).toMatchObject({ stop: "change_limit", plans_page: expect.stringContaining("/plans") });
+      expect(gpt.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bFree plan\b|\bPro\b|\bPlus\b|\$|upgrade/i);
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(gptInfo, gptClient);
+      // A paid plan has no cap.
+      db.prepare("UPDATE users SET plan = 'plus' WHERE id = ?").run(uid);
+      expect((await call(t, "apply_changes", { proposal_id: third })).json.status).toBe("applied");
+    } finally {
+      setChangeCap(null);
+      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
+      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-change-cap") as { id: string } | undefined;
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
+        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
+      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
+      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-change-cap");
+    }
+  });
+
+  it("with FREE_CHANGE_CAP, the pages name the cap and sell Plus as unlimited changes; unset, Free stays unlimited", () => {
+    expect(parseChangeCap("10")).toBe(10);
+    expect(parseChangeCap(undefined)).toBeNull();
+    expect(parseChangeCap("0")).toBeNull();
+    expect(plansPage("https://x.test")).toContain("unlimited applied changes and undo, on <strong>1 Google Ads account");
+    expect(plansPage("https://x.test")).not.toContain("Plus");
+    setChangeCap(10);
+    try {
+      const plans = plansPage("https://x.test"), home = homePage("https://x.test");
+      expect(plans).toContain("10 applied changes every 30 days");
+      expect(plans).toContain("Unlimited applied changes, on <strong>1 Google Ads account</strong>");
+      expect(home).toContain("Free for one account. $7/month for unlimited changes");
+      expect(home).toContain("A change counts when you approve and apply a proposal");
+      expect(home).not.toContain("unlimited applied changes and undo, on <strong>1 Google Ads account");
+      expect(docsPage("https://x.test")).toContain("<code>change_limit</code>");
+      expect(llmsTxt("https://x.test", [])).toContain("Plus $7/month has unlimited applied changes");
+    } finally { setChangeCap(null); }
   });
 
   it("with FREE_ONE_SERVICE, covers one Google service on Free: the demo is free, another service waits or needs Pro", async () => {

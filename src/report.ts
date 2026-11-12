@@ -8,7 +8,7 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
 /**
  * A paying customer: a paid plan with a live Stripe subscription. Complimentary plans (PRO_EMAILS, grandfathered Plus with no
@@ -26,6 +26,8 @@ export interface ReportOptions {
   exclude: string[];
   /** FREE_ONE_SERVICE's start, which splits existing from new signups in the paywall read. Unset or 0: its first notice. */
   freeOneServiceFrom?: number;
+  /** When the change cap went on, for the paywall read; unset = its first Change limit stop. */
+  changeCapFrom?: number;
 }
 
 /** A tool_calls row on a real Google Ads account: not the demo, not the Google Analytics or Merchant Center markers. */
@@ -142,7 +144,7 @@ export function buildReport(db: DB, o: ReportOptions) {
     signupsHourly: o.days === 1 ? q<{ hour: number; n: number }>(
       `SELECT cast(strftime('%H', created_at, 'unixepoch') AS int) hour, count(*) n FROM {U} u WHERE created_at >= ? GROUP BY 1 ORDER BY 1`, since) : [],
     retention: retention(q),
-    paywall: paywall(q, o.freeOneServiceFrom),
+    paywall: changeCap() ? paywall(q, o.changeCapFrom, "change") : paywall(q, o.freeOneServiceFrom),
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
@@ -322,21 +324,24 @@ export const onRequestSql = (c: string) => `NOT EXISTS (SELECT 1 FROM tool_calls
  * and paid. `offered` and `offered_paid` are the test's bar: stopped and reached the offer, and of those, paid. `applied` is its
  * guardrail. Complimentary plans are left out: they can't be stopped. Empty until the flag has stopped someone.
  */
-function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
-  const first = q<{ at: number | null }>(
-    `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${SERVICE_LIMIT_PREFIX}%' OR c.error LIKE '${SERVICE_CHOICE_PREFIX}%'`)[0]?.at;
-  if (!first) return { since: null, rows: [] };
+function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number, gate: "service" | "change" = "service") {
+  // The change cap (FREE_CHANGE_CAP) reads the same funnel on its own stop and email: Change limit, change_limit.
+  const prefix = gate === "change" ? CHANGE_LIMIT_PREFIX : SERVICE_LIMIT_PREFIX, mail = gate === "change" ? "change_limit" : "service_limit";
+  const first = q<{ at: number | null }>(gate === "change"
+    ? `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${CHANGE_LIMIT_PREFIX}%'`
+    : `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${SERVICE_LIMIT_PREFIX}%' OR c.error LIKE '${SERVICE_CHOICE_PREFIX}%'`)[0]?.at;
+  if (!first) return { since: null, gate, rows: [] };
   const on = from || first;
   const chatgpt = `EXISTS (SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = u.id
     AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%'))`;
   const ev = (kind: string) => `EXISTS (SELECT 1 FROM plan_events e WHERE e.user_id = u.id AND e.kind = '${kind}' AND e.at >= ${on})`;
   const merchant = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on}
     AND (coalesce(c.service, '') LIKE '%merchant%' OR coalesce(c.service_wanted, '') LIKE '%merchant%'))`;
-  const stopped = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%')`;
+  const stopped = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${prefix}%')`;
   // C3: a stop on request (onRequestSql) likely came from a new message; the rest came inside one answer.
-  const onRequest = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${SERVICE_LIMIT_PREFIX}%'
+  const onRequest = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${prefix}%'
     AND ${onRequestSql("c")})`;
-  const emailed = `EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'service_limit')`;
+  const emailed = `EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = '${mail}')`;
   const offered = `(${stopped} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;
   const offeredReq = `(${onRequest} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;
   const rows = q<{ existing: number; chatgpt: number; merchant: number; users: number; stopped: number; emailed: number; viewed: number; clicked: number; paid: number;
@@ -349,7 +354,7 @@ function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
        sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}' AND p.applied_at >= ${on})) applied
      FROM {U} u WHERE coalesce(u.last_seen_at, u.created_at) >= ${on} AND (u.plan = 'free' OR coalesce(u.stripe_sub, '') != '')
      GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 DESC, 3 DESC`);
-  return { since: on, rows };
+  return { since: on, gate, rows };
 }
 
 function serviceUse(q: <T>(sql: string, ...p: unknown[]) => T[], since: number) {
