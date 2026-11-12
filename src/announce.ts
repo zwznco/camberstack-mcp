@@ -98,7 +98,7 @@ It flags the usual problems: a conversion tag firing on every page, a missing Co
 
 The first time you ask, Camberstack gives you a link that adds Tag Manager to your connection, no reconnecting. If your AI can't see it yet, reload Camberstack's tools. In Claude: start a new chat. In ChatGPT, only if you added Camberstack as a custom connector: Settings → Connectors → Camberstack → Refresh.
 
-Tag Manager is included on every plan, Free too, alongside every other service. What each plan covers: https://camberstack.io/plans
+Tag Manager is included on every plan, Free too, alongside every other service. On Free, its changes count toward the same 10 applied changes a month as the rest. What each plan covers: https://camberstack.io/plans
 
 More on what it can do: https://camberstack.io/google-tag-manager-mcp
 

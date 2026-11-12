@@ -542,7 +542,7 @@ export class UserSession {
       const usage = this.planUsage();
       return this.isPro ? { plan: this.planName, ...usage, plans_page: this.plansPage }
         : { plan: "free", ...usage, ...this.changeUsage(), included: this.freeIncluded(),
-            note: "More accounts at a time need a different plan.", plans_page: this.plansPage };
+            note: changeCap() ? "More applied changes, or more accounts at a time, need a different plan." : "More accounts at a time need a different plan.", plans_page: this.plansPage };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     const plusUrl = this.plusOffered && !this.isPro ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
@@ -559,7 +559,7 @@ export class UserSession {
             : { complimentary: true, manage_billing: null }),
           // Plus → Pro and Pro → Agency switch on the billing page (Stripe's portal), with the difference prorated.
           ...(this.planName === "pro" ? agency : {}),
-          ...(this.planName === "plus" && upgrade ? { pro: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
+          ...(this.planName === "plus" && upgrade ? { pro: `${changeCap() ? "unlimited applied changes, on " : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
       : { plan: "free", account_page, ...usage, ...this.changeUsage(),
           included: this.freeIncluded(),
           ...(plusUrl ? { plus: `unlimited applied changes, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
@@ -1320,6 +1320,10 @@ export class UserSession {
     const p = this.proposal(proposalId);
     if (p.status === "applied") return this.alreadyApplied(p);
     if (p.status !== "proposed") throw new Error(`Proposal ${proposalId} is already ${p.status}.`);
+    // At the cap: someone who just paid from the stop's link and closed the tab before /upgraded must not stay stopped
+    // until the hourly sweep. Ask Stripe first, as the account gate does. checkChangeCap still runs right before the claim.
+    const cap = changeCap();
+    if (cap && !this.isPro && this.changesApplied().length >= cap && await this.deps.refreshPlan?.(this.user.id)) this.reloadPlan();
     this.checkChangeCap(p);
     const changes = JSON.parse(p.changes) as AnyChange[];
     // Claim it before any write: a client retrying after a timeout would otherwise apply it twice. applied_at
@@ -1423,6 +1427,9 @@ export class UserSession {
   private checkChangeCap(p: ProposalRow): void {
     const cap = changeCap();
     if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes)) return;
+    // A retry while this same proposal's claim is still being written: its claim is already counted, so stopping it would
+    // say "nothing was applied" while it applies. The claim below answers "already being applied" instead.
+    if (p.applied_at && p.applied_at >= now() - STALE_CLAIM) return;
     const used = this.changesApplied();
     if (used.length < cap) return;
     // A slot opens when the cap-th most recent approval ages out of the window.

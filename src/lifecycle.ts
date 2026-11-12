@@ -146,7 +146,8 @@ export class Lifecycle {
     return [
       ...first.filter(ok).map((u) => ({ kind: "first_steps" as const, id: u.id, email: u.email, days: Math.floor((t - u.created_at) / DAY) })),
       // Every refusal's text names when another account opens (session.ts refuse: "opens on YYYY-MM-DD"; before 0.29.0 "the next opens YYYY-MM-DD").
-      ...limit.filter(ok).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
+      // Both stops by the same morning: change_limit only, so one upgrade email, not two.
+      ...limit.filter((u) => ok(u) && !changes.some((c) => c.id === u.id)).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
         opens: /opens (?:again )?(?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
       ...changes.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0,
         opens: /next opens on (\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
@@ -430,7 +431,7 @@ function proWelcome(base: string, plan: string) {
   const [name, accounts, price] = plan === "agency" ? ["Agency", AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL] : ["Pro", PRO_ACCOUNTS, PRO_PRICE_LABEL];
   const billing = `${price}, renewing monthly. You can see invoices, change your card or cancel any time from`;
   return paidWelcome({ base, name,
-    adds: `up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.`,
-    addsHtml: `up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`,
+    adds: `${changeCap() ? "unlimited applied changes, on " : ""}up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.`,
+    addsHtml: `${changeCap() ? "unlimited applied changes, on " : ""}up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`,
     billing: `${billing} your account page`, billingHtml: `${billing} <a href="${base}/account">your account page</a>.` });
 }

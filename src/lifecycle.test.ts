@@ -73,8 +73,13 @@ describe("lifecycle emails", () => {
     // An earlier account-limit email doesn't hold this one back.
     user("had", "had@example.com", 10); stopped("had", 0.3);
     db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - DAY);
-    expect(await lc.run()).toBe(2);
-    expect(sent.map((m) => m.to[0]).sort()).toEqual(["capped@example.com", "had@example.com"]);
+    // Stopped by both gates by the same morning: one upgrade email, change_limit, not limit_reached too.
+    user("both", "both@example.com", 10); stopped("both", 0.3);
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'both', 'account_overview', 1, ?, 10, 10)")
+      .run(now() - 0.4 * DAY, "Plan limit: the Free plan covers 1 Google Ads account at a time. Another opens on 2026-12-01.");
+    expect(await lc.run()).toBe(3);
+    expect(sent.map((m) => m.to[0]).sort()).toEqual(["both@example.com", "capped@example.com", "had@example.com"]);
+    expect(sent.find((x) => x.to[0] === "both@example.com").subject).toBe("Your free Camberstack changes for this month");
     const m = sent.find((x) => x.to[0] === "capped@example.com");
     expect(m.subject).toBe("Your free Camberstack changes for this month");
     expect(m.text).toContain("The next one opens on December 2. The proposal is still open");

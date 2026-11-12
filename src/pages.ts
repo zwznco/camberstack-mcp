@@ -330,7 +330,7 @@ export function homePage(baseUrl: string): string {
           priceSpecification: { "@type": "UnitPriceSpecification", price: "7", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } }] : []),
         { "@type": "Offer", name: "Pro", price: "15", priceCurrency: "USD", description: `Every tool${capOn() ? ", with unlimited applied changes," : ""} on up to ${PRO_ACCOUNTS} Google Ads accounts.`,
           priceSpecification: { "@type": "UnitPriceSpecification", price: "15", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } },
-        { "@type": "Offer", name: "Agency", price: "49", priceCurrency: "USD", description: `Every tool on up to ${AGENCY_ACCOUNTS} Google Ads accounts.`,
+        { "@type": "Offer", name: "Agency", price: "49", priceCurrency: "USD", description: `Every tool${capOn() ? ", with unlimited applied changes," : ""} on up to ${AGENCY_ACCOUNTS} Google Ads accounts.`,
           priceSpecification: { "@type": "UnitPriceSpecification", price: "49", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } },
       ],
     },
@@ -463,8 +463,8 @@ tool, though some apps (ChatGPT, for one) block disconnect requests from chat.</
 ${freeFaq()}<div><h3>What counts as an account?</h3>
 <p>Each Google Ads account you actually use Camberstack on in the last ${ACCOUNT_WINDOW_DAYS} days, not every account your login can see.
 A manager (MCC) account and the demo account don't count. Free covers one account at a time: your AI asks which one first, and
-another opens once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Before that, a plan-limit error comes with a personal
-checkout link. Undo and change history always work.</p></div>
+another opens once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Before that, your AI says when it opens
+and how to upgrade. Undo and change history always work.</p></div>
 </div>
 </div></section>
 
@@ -523,8 +523,8 @@ With Read only access, ask an account admin to raise it in Google Ads, under <st
 since (a budget, a status, an end date), nothing is applied and ${app} shows you an updated proposal instead. Approve that one to go ahead.
 If everything in it is already in place, there's nothing left to apply. Proposals don't expire: an older one that still matches your account applies as approved.</p>
 <h3>"Plan limit"</h3>
-<p>The Free plan covers one Google Ads account at a time; another opens once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. On a second account, it asks you
-to upgrade, with a personal checkout link, and says when another account opens. Undo and change history always work. <a href="/#pricing">Plans</a>.</p>${capOn() ? `
+<p>The Free plan covers one Google Ads account at a time; another opens once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. On a second account, it says when another account opens
+and how to upgrade. Undo and change history always work. <a href="/#pricing">Plans</a>.</p>${capOn() ? `
 <h3>"Change limit"</h3>
 <p>The Free plan includes ${freeChanges()}. Past that, applying a proposal stops: nothing is applied, the proposal stays open, and
 the answer says when the next change opens. Asking, reading, proposing, undo and change history keep working. Plus has unlimited changes on
@@ -804,7 +804,7 @@ The same connection reads <a href="/google-analytics-mcp">Google Analytics 4</a>
 <h3>Do you store my search data?</h3>
 <p>No. Camberstack fetches it when your AI asks and passes it on; reports and query results aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
 `)}
-${closer("Ask your AI how your site is doing in Google Search.", "Free. It doesn't count toward a plan.",
+${closer("Ask your AI how your site is doing in Google Search.", "Included on every plan, Free too. No Google Ads account needed.",
   `<a class="btn btn-lg" href="/#setup">Connect Search Console</a><a class="btn btn-lg btn-ghost" href="/tools#search_console_sites">See the tools</a>`)}
 `,
   });

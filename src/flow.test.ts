@@ -3068,6 +3068,12 @@ describe("OAuth + MCP end to end", () => {
       expect(gpt.json).toMatchObject({ stop: "change_limit", plans_page: expect.stringContaining("/plans") });
       expect(gpt.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bFree plan\b|\bPro\b|\bPlus\b|\$|upgrade/i);
       db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(gptInfo, gptClient);
+      // A retry while the same proposal's claim is still being written isn't stopped: it isn't over the cap, it's applying.
+      db.prepare("UPDATE proposals SET applied_at = ? WHERE id = ?").run(now(), third);
+      const retry = await call(t, "apply_changes", { proposal_id: third });
+      expect(retry.text).toContain("is already being applied");
+      expect(retry.text).not.toContain("Change limit");
+      db.prepare("UPDATE proposals SET applied_at = NULL WHERE id = ?").run(third);
       // A paid plan has no cap.
       db.prepare("UPDATE users SET plan = 'plus' WHERE id = ?").run(uid);
       expect((await call(t, "apply_changes", { proposal_id: third })).json.status).toBe("applied");
