@@ -2160,6 +2160,8 @@ describe("OAuth + MCP end to end", () => {
       expect(capHtml).toContain("At cap");
       expect(capHtml).toContain("opens = next change frees up");
       expect(capHtml).toContain('href="/cap?days=');
+      // First in the nav while the cap is on.
+      expect(capHtml.indexOf('href="/cap?days=')).toBeLessThan(capHtml.indexOf('href="/?days='));
     } finally { setChangeCap(null); }
     expect((await fetch(`${admin}/users`, { redirect: "manual" })).status).toBe(302);  // every page is behind sign-in
     // Announcements: preset cards; a preset's page previews it and has the Send button; a POST from another site is refused;

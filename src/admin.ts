@@ -210,13 +210,14 @@ function shell(path: string, who: string, v: View, body: string, heading?: strin
   // Counts as of page load (no live polling): users all time, tool errors in the window (red), paying users.
   const errs = v.report.errorsInWindow;
   const nav: [string, string, string][] = [
+    // Cap first while it's on: the operator checks it daily on a phone (2026-11-11).
+    ...(changeCap() ? [["/cap", "Cap", (() => { const n = v.cap.filter((r) => r.atCap).length; return n ? `<b class="bad" title="${n} Free users at the cap now">${n}</b>` : ""; })()] as [string, string, string]] : []),
     ["/", "Overview", ""],
     ["/users", "Users", String(v.report.funnel.all.connected)],
     ["/activity", "Activity", errs ? `<b class="bad" title="${errs} tool errors in this range">${errs}</b>` : ""],
     ["/revenue", "Revenue", String(v.report.funnel.all.paid || "")],
     ["/announcements", "Announcements", ""],
     ["/feedback", "Feedback", String(v.feedback || "")],
-    ...(changeCap() ? [["/cap", "Cap", (() => { const n = v.cap.filter((r) => r.atCap).length; return n ? `<b class="bad" title="${n} Free users at the cap now">${n}</b>` : ""; })()] as [string, string, string]] : []),
   ];
   const title = nav.find(([p]) => p === path)?.[1] ?? "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
