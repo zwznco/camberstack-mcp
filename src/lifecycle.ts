@@ -6,10 +6,12 @@
  *   (switch_wanted, sent when a Free user was stopped before spending the account switch, went with the switch on 2026-11-06;
  *                  its email_log rows still count as an upgrade email already sent)
  *   (service_limit, for the one-service gate, was removed with it on 2026-11-11 before it ever sent)
- *   change_limit   the change cap (FREE_CHANGE_CAP) stopped a Free user's apply, still free the next morning (6+ hours later) →
+ *   change_limit   the change cap (FREE_CHANGE_CAP) stopped a Free user's apply, still free and still at the cap the next
+ *                  morning (6+ hours later) →
  *                  when the next change opens, Plus's unlimited changes, the upgrade link. Once per user, but sent even after
  *                  another upgrade email: the cap is the main paywall, and this email is how ChatGPT users see the offer (2026-11-11)
- *                  limit_reached isn't sent after any upgrade email (limit_reached, switch_wanted or change_limit)
+ *                  limit_reached isn't sent after any upgrade email (limit_reached, switch_wanted or change_limit), nor
+ *                  in the same run as change_limit
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on a paid plan (Plus, Pro, Agency) with a Stripe subscription → what it adds, where billing lives
@@ -30,6 +32,7 @@ import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, freeChanges, freeChangesShort, PRO_ACCOUNTS, PRO_PRICE_LABEL, dateLabel, payingSql } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
+import { capCounted } from "./session.js";
 import { DEMO_MERCHANT } from "./merchant.js";
 
 /** Send one email through Resend; throws if it refuses. */
@@ -128,11 +131,19 @@ export class Lifecycle {
     // Stopped by the change cap (session.ts checkChangeCap), the last stop 6 hours to 30 days ago. Always on request: the
     // user approved the change that was stopped. `error` is the latest stop's, which names the date the next change opens.
     // Not held back by an earlier upgrade email (limit_reached etc.): only by its own.
-    const changes = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
+    const changes = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.plan_reset_at, max(c.at) last, c.error
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
       WHERE ${eligible} AND ${notSent("change_limit")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
-      .all(`${CHANGE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
+      .all(`${CHANGE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; plan_reset_at: number | null; last: number; error: string }[];
+    // Only while they're still at the cap, with the date the next change opens as of now: the stop can be up to a month
+    // old, its window may have rolled, and the cap may be off. Not at it: nothing now; a later stop sends it then.
+    const cap = changeCap();
+    const atCap = changes.flatMap((u) => {
+      const used = cap ? capCounted(this.d.db, u.id, u.plan_reset_at, t) : [];
+      if (!cap || used.length < cap) return [];
+      return [{ ...u, opens: new Date((used[used.length - cap]! + ACCOUNT_WINDOW_DAYS * DAY) * 1000).toISOString().slice(0, 10) }];
+    });
     // First applied change to a real account (not the demo, not an undo) 2–14 days ago; any plan, connected or not.
     const checkIn = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, min(p.applied_at) first FROM users u
       JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.undo_of IS NULL AND p.customer_id <> ? AND p.customer_id <> 'mc:${DEMO_MERCHANT}'
@@ -147,10 +158,9 @@ export class Lifecycle {
       ...first.filter(ok).map((u) => ({ kind: "first_steps" as const, id: u.id, email: u.email, days: Math.floor((t - u.created_at) / DAY) })),
       // Every refusal's text names when another account opens (session.ts refuse: "opens on YYYY-MM-DD"; before 0.29.0 "the next opens YYYY-MM-DD").
       // Both stops by the same morning: change_limit only, so one upgrade email, not two.
-      ...limit.filter((u) => ok(u) && !changes.some((c) => c.id === u.id)).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
+      ...limit.filter((u) => ok(u) && !atCap.some((c) => c.id === u.id)).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
         opens: /opens (?:again )?(?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
-      ...changes.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0,
-        opens: /next opens on (\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
+      ...atCap.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0, opens: u.opens })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];
   }

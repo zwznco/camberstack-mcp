@@ -14,7 +14,7 @@ import type { DB, UserRow } from "./db.js";
 import { now } from "./db.js";
 import { safeEqual, sign } from "./crypto.js";
 import { esc } from "./pages.js";
-import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, allServices, isPaid, payingSql, planLabel, type Plan } from "./plans.js";
+import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, isPaid, payingSql, planLabel, type Plan } from "./plans.js";
 
 const LINK_TTL = 7 * 86400;
 /** Subscription statuses that keep a paid plan (past_due: Stripe is still retrying the card). */
@@ -161,7 +161,9 @@ export class Billing {
         sub = { status: "missing" };
       }
       const plan = LIVE.has(sub.status) ? this.planOf(sub) : "free";
-      if (plan !== p.plan) this.d.db.prepare("UPDATE users SET plan = ? WHERE id = ?").run(plan, p.id);
+      // Back on Free: approvals made while paid were unlimited, so the change cap counts from now (session.ts capCounted).
+      if (plan !== p.plan) this.d.db.prepare(`UPDATE users SET plan = ?${plan === "free" ? ", paid_ended_at = ?" : ""} WHERE id = ?`)
+        .run(...(plan === "free" ? [plan, now(), p.id] : [plan, p.id]));
     }
   }
 
@@ -233,8 +235,8 @@ export class Billing {
         if (!ok) return send(res, 400, "Payment not complete", `<p>We could not confirm this payment. If you were charged, email us and we will sort it out.</p>`);
         const plan = this.planOf(sub), name = planLabel(plan);
         send(res, 200, `You're on ${name}`, `<p><strong>Thanks, you're on Camberstack ${name}.</strong></p>
-<p>Go back to your AI assistant and ask it to try again. ${plan === "plus" ? `Plus covers ${allServices()} on 1 Google Ads account.`
-  : `${name} covers up to ${plan === "agency" ? AGENCY_ACCOUNTS : PRO_ACCOUNTS} Google Ads accounts.`}</p>
+<p>Go back to your AI assistant and ask it to try again. ${plan === "plus" ? "Plus has unlimited applied changes on 1 Google Ads account."
+  : `${name} has unlimited applied changes on up to ${plan === "agency" ? AGENCY_ACCOUNTS : PRO_ACCOUNTS} Google Ads accounts.`}</p>
 <p><a class="btn" href="/account">Go to your account</a></p>
 <p class="muted">Change your card or cancel any time from your account page.</p>`);
       } catch (e) {

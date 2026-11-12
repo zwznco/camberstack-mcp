@@ -245,6 +245,8 @@ export function openDb(dataDir: string): DB {
   if (!cols.has("google_scopes")) db.exec("ALTER TABLE users ADD COLUMN google_scopes TEXT");
   // Operator courtesy reset of plan accounts (session.ts usage): calls before it don't count. NULL = never reset.
   if (!cols.has("plan_reset_at")) db.exec("ALTER TABLE users ADD COLUMN plan_reset_at INTEGER");
+  // When their paid plan last ended (billing.ts sweep): the change cap counts from then (session.ts capCounted). NULL = never.
+  if (!cols.has("paid_ended_at")) db.exec("ALTER TABLE users ADD COLUMN paid_ended_at INTEGER");
   // What their Google login can reach, as of its last fresh account list (session.ts accounts(), 2026-10-22): ad accounts
   // (not managers, not the demo) and manager accounts. NULL = not listed since this was added.
   for (const c of ["ads_accounts", "ads_managers", "ads_accounts_at"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} INTEGER`);
@@ -291,6 +293,8 @@ export interface UserRow {
   time_zone?: string | null;
   /** Calls before this don't count toward plan accounts (session.ts usage); set by hand as a courtesy reset. */
   plan_reset_at?: number | null;
+  /** When a paid plan last ended (billing.ts sweep); Free's change cap counts from then. */
+  paid_ended_at?: number | null;
   google_scopes?: string | null;
 }
 

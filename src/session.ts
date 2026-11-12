@@ -101,18 +101,31 @@ export function isFreeUndo(db: DB, undoOf: string | null | undefined): boolean {
  * The approvals the change cap counts for a user, oldest first (their applied_at, or claim time while applying): real
  * proposals applied since the latest of 30 days ago, plan_reset_at and the cap's start (plans.ts changeCapFrom). Counted:
  * applied ones, and ones claimed and still being written (status 'proposed' with applied_at set, newer than STALE_CLAIM),
- * so parallel applies each see the others. Not counted: failed or discarded ones, a first-order undo (isFreeUndo), and
- * the demo (isDemoProposal). The gate (session.ts checkChangeCap) and the admin Cap tab (report.ts capUsage) both read this.
+ * so parallel applies each see the others. Not counted: failed or discarded ones, a first-order undo (isFreeUndo), the
+ * demo (isDemoProposal), a Tag Manager publish on its own (isPublishOnly), and anything before a paid plan ended (paid_ended_at). The gate (session.ts checkChangeCap) and the admin Cap tab (report.ts capUsage) both read this.
  */
 export function capCounted(db: DB, userId: string, resetAt: number | null, t = now()): number[] {
-  const since = Math.max(t - ACCOUNT_WINDOW_DAYS * 86400, resetAt ?? 0, changeCapFrom());
+  // Approvals made on a paid plan were unlimited when they were made: after it ends, Free counts from then (paid_ended_at).
+  const ended = (db.prepare("SELECT paid_ended_at FROM users WHERE id = ?").get(userId) as { paid_ended_at: number | null } | undefined)?.paid_ended_at;
+  const since = Math.max(t - ACCOUNT_WINDOW_DAYS * 86400, resetAt ?? 0, changeCapFrom(), ended ?? 0);
   const rows = db.prepare(`SELECT p.customer_id, p.changes, p.applied_at FROM proposals p
       LEFT JOIN proposals o ON o.id = p.undo_of
       WHERE p.user_id = ? AND p.applied_at >= ?
         AND (p.status = 'applied' OR (p.status = 'proposed' AND p.applied_at >= ?))
         AND (p.undo_of IS NULL OR o.undo_of IS NOT NULL)
       ORDER BY p.applied_at`).all(userId, since, t - STALE_CLAIM) as { customer_id: string; changes: string; applied_at: number }[];
-  return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes)).map((r) => r.applied_at);
+  return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes) && !isPublishOnly(r.changes)).map((r) => r.applied_at);
+}
+
+/**
+ * A proposal that only publishes Tag Manager containers: free under the cap. The tag changes it makes live were counted
+ * when they were applied, so publishing them separately would charge twice for one change.
+ */
+export function isPublishOnly(changesJson: string): boolean {
+  try {
+    const changes = JSON.parse(changesJson) as { type?: string }[];
+    return changes.length > 0 && changes.every((c) => c.type === "publish_container");
+  } catch { return false; }
 }
 
 /** How many ads account_overview's attention block names, and how long a primary conversion can stay quiet before it says so. */
@@ -1426,7 +1439,7 @@ export class UserSession {
    */
   private checkChangeCap(p: ProposalRow): void {
     const cap = changeCap();
-    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes)) return;
+    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes) || isPublishOnly(p.changes)) return;
     // A retry while this same proposal's claim is still being written: its claim is already counted, so stopping it would
     // say "nothing was applied" while it applies. The claim below answers "already being applied" instead.
     if (p.applied_at && p.applied_at >= now() - STALE_CLAIM) return;

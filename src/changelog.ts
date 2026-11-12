@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.32.1", date: "2026-11-12",
+    summary: "Free's 10 changes a month: publishing tags is free, and a cancelled plan starts Free at 0.",
+    items: [
+      "**Publishing Tag Manager changes on their own doesn't count** toward Free's 10 changes: the tag changes were counted when you applied them.",
+      "**After a paid plan ends, Free starts at 0**: changes applied while you were on Plus, Pro or Agency don't count.",
+      "**Applied changes on every service count toward the same 10**, so the email about the limit only comes while you're still at it, with the date the next change opens.",
+    ],
+  },
+  {
     version: "0.32.0", date: "2026-11-11",
     summary: "Free's 10 changes a month are counted the same however they're applied.",
     items: [

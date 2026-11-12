@@ -84,7 +84,7 @@ describe("Agency plan billing", () => {
     stripe.sessions.set("cs_p", { id: "cs_p", status: "complete", metadata: { app: "camberstack-mcp" }, client_reference_id: "p", customer: "cus_p", subscription: "sub_p" });
     const page = await (await visit(`${base}/upgraded?session_id=cs_p`)).text();
     expect(page).toContain("you're on Camberstack Plus");
-    expect(page).toContain("Plus covers Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together on 1 Google Ads account.");
+    expect(page).toContain("Plus has unlimited applied changes on 1 Google Ads account.");
     expect(plan("p")).toBe("plus");
     // The sweep keeps Plus as Plus, follows a portal switch to Pro, and drops it when it ends.
     await billing.sweep();
@@ -97,6 +97,11 @@ describe("Agency plan billing", () => {
     expect((await visit(billing.link("upgrade", "p")!)).headers.get("location")).toBe("https://billing.stripe.test/portal");
     const noPlus = new Billing({ db, baseUrl: "http://x", signingKey: Buffer.alloc(32, 1), stripe: { secretKey: "sk", proPriceId: PRO } });
     expect(noPlus.link("plus", "p")).toBeNull();
+    // When it ends, Free's change cap counts from then: approvals made while paid don't (session.ts capCounted).
+    expect((db.prepare("SELECT paid_ended_at FROM users WHERE id = 'p'").get() as { paid_ended_at: number | null }).paid_ended_at).toBeNull();
+    stripe.subs.set("sub_p", { status: "canceled", price: PRO });
+    await billing.sweep();
+    expect(db.prepare("SELECT plan, paid_ended_at FROM users WHERE id = 'p'").get()).toMatchObject({ plan: "free", paid_ended_at: expect.any(Number) });
   });
 
   it("tracks the paywall funnel: upgrade clicks by where the link came from, one paid event per subscription, /plans links", async () => {

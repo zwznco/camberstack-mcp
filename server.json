@@ -3,7 +3,7 @@
   "name": "io.camberstack/google-ads",
   "title": "Camberstack: Google Ads",
   "description": "Hosted MCP for Google Ads, Search Console, GA4, Merchant Center, Tag Manager: approve every change.",
-  "version": "0.32.0",
+  "version": "0.32.1",
   "websiteUrl": "https://camberstack.io",
   "repository": {
     "url": "https://github.com/zwznco/camberstack-mcp",

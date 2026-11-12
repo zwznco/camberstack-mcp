@@ -62,19 +62,27 @@ describe("lifecycle emails", () => {
 
   it("sends change_limit once, the morning after the change cap stopped an apply, even after an account-limit email", async () => {
     const { db, lc, sent, user, call } = setup();
+    setChangeCap(10);
+    try {
+    // At the cap: 10 approvals, the oldest 20 days ago, so the next opens in 10 days.
+    const atCap = (userId: string) => { for (let i = 0; i < 10; i++) db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at)
+        VALUES (?, ?, '1112223333', '[]', 's', 'applied', ?, ?)`).run(`${userId}-${i}`, userId, now() - 20 * DAY, now() - (20 - i) * DAY); };
+    const opens = new Date((now() + 10 * DAY) * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
     // Each has used Camberstack (so no first_steps), then been stopped.
     const stopped = (userId: string, daysAgo: number) => call(userId, "account_overview") &&
       db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'apply_changes', 1, ?, 10, 10)")
         .run(now() - daysAgo * DAY, userId, "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days, "
           + "and this login has used them; the next opens on 2026-12-02. Proposal p1 stays open.");
-    user("capped", "capped@example.com", 10); stopped("capped", 0.3);
-    user("recent", "recent@example.com", 10); stopped("recent", 0.2);   // under 6 hours ago
-    user("pro", "pro@example.com", 10, "pro"); stopped("pro", 0.3);
+    user("capped", "capped@example.com", 10); stopped("capped", 0.3); atCap("capped");
+    user("recent", "recent@example.com", 10); stopped("recent", 0.2); atCap("recent");   // under 6 hours ago
+    user("pro", "pro@example.com", 10, "pro"); stopped("pro", 0.3); atCap("pro");
+    // No longer at the cap (the window rolled, or a paid plan ended since): nothing.
+    user("rolled", "rolled@example.com", 10); stopped("rolled", 0.3);
     // An earlier account-limit email doesn't hold this one back.
-    user("had", "had@example.com", 10); stopped("had", 0.3);
+    user("had", "had@example.com", 10); stopped("had", 0.3); atCap("had");
     db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - DAY);
     // Stopped by both gates by the same morning: one upgrade email, change_limit, not limit_reached too.
-    user("both", "both@example.com", 10); stopped("both", 0.3);
+    user("both", "both@example.com", 10); stopped("both", 0.3); atCap("both");
     db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'both', 'account_overview', 1, ?, 10, 10)")
       .run(now() - 0.4 * DAY, "Plan limit: the Free plan covers 1 Google Ads account at a time. Another opens on 2026-12-01.");
     expect(await lc.run()).toBe(3);
@@ -82,11 +90,12 @@ describe("lifecycle emails", () => {
     expect(sent.find((x) => x.to[0] === "both@example.com").subject).toBe("Your free Camberstack changes for this month");
     const m = sent.find((x) => x.to[0] === "capped@example.com");
     expect(m.subject).toBe("Your free Camberstack changes for this month");
-    expect(m.text).toContain("The next one opens on December 2. The proposal is still open");
+    expect(m.text).toContain(`The next one opens on ${opens}. The proposal is still open`);
     expect(m.text).toContain("https://camberstack.io/upgrade?t=capped.sig");
     // Once per user: another stop sends nothing.
     stopped("capped", 0.25);
     expect(await lc.run()).toBe(0);
+    } finally { setChangeCap(null); }
   });
 
   it("pitches Plus in change_limit when it's sold, and welcomes a Plus subscriber with what Plus adds", async () => {
@@ -95,6 +104,8 @@ describe("lifecycle emails", () => {
     setChangeCap(10);
     try {
       user("cap", "cap@example.com", 10); call("cap", "account_overview");
+      for (let i = 0; i < 10; i++) db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at)
+        VALUES (?, 'cap', '1112223333', '[]', 's', 'applied', ?, ?)`).run(`cap-${i}`, now() - DAY, now() - DAY);
       db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'cap', 'apply_changes', 1, ?, 10, 10)").run(now() - 0.3 * DAY,
         "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days, and this login has used them; the next opens on 2026-12-02.");
       expect(await lc.run()).toBe(1);
