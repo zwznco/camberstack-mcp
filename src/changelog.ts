@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.33.1", date: "2026-11-12",
+    summary: "Undoing several changes at once works in one step.",
+    items: [
+      "**Approve several undos together** and each one is applied in turn, still free under Free's 10 changes.",
+    ],
+  },
+  {
     version: "0.33.0", date: "2026-11-12",
     summary: "Approve several proposals together and they apply as one change.",
     items: [

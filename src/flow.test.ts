@@ -3156,6 +3156,17 @@ describe("OAuth + MCP end to end", () => {
       expect(ads.negatives.length).toBe(before);
       expect(ads.kwStatus).toBe("ENABLED");
       expect([status(h), status(i)]).toEqual(["proposed", "proposed"]);
+      // Undos together (prod, 2026-11-12: ChatGPT passed two and was refused): each applies on its own, free even at the cap.
+      const fg = (db.prepare("SELECT id FROM proposals WHERE user_id = ? AND status = 'applied' AND changes LIKE '%batch f%'").get(uid) as { id: string }).id;
+      const ue = (await call(t, "propose_undo", { proposal_id: e })).json.proposal_id as string;
+      const ufg = (await call(t, "propose_undo", { proposal_id: fg })).json.proposal_id as string;
+      expect((await call(t, "apply_changes", { proposal_ids: [ue, h] })).text).toContain("not both in one call");
+      const undos = await call(t, "apply_changes", { proposal_ids: [ue, ufg] });
+      expect(undos.isError).toBe(false);
+      expect(undos.json).toMatchObject({ status: "applied", combined: [ue, ufg] });
+      expect(undos.json.each.map((r: { status: string }) => r.status)).toEqual(["applied", "applied"]);
+      expect(ads.negatives.map((n) => n.text).filter((x) => /^batch [efg]$/.test(x))).toEqual([]);
+      expect((await call(t, "billing")).json.changes_applied).toBe(3);
     } finally {
       ads.failOn = undefined;
       setChangeCap(null);

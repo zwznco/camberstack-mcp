@@ -1446,7 +1446,19 @@ export class UserSession {
     const done = ps.filter((p) => p.status !== "proposed");
     if (done.length) throw new Error(`Nothing was applied: ${done.map((p) => `${p.id} is already ${p.status}`).join("; ")}. Pass only open proposals.`);
     if (ps.some((p) => p.applied_at)) throw new Error(`Nothing was applied: ${ps.filter((p) => p.applied_at).map((p) => p.id).join(", ")} is already being applied.`);
-    if (ps.some((p) => p.undo_of)) throw new Error("Nothing was applied: apply an undo on its own, not with other proposals.");
+    // Undos only: each applied on its own, in order (they're free under the cap, and merging would lose undo_of). ChatGPT
+    // passed two undos together and was refused before this (prod, 2026-11-12).
+    if (ps.every((p) => p.undo_of)) {
+      const each: Record<string, unknown>[] = [];
+      for (const p of ps) {
+        try { each.push(await this.apply(p.id) as Record<string, unknown>); }
+        catch (e) { each.push({ proposal_id: p.id, status: "failed", error: (e as Error).message }); }
+      }
+      const all = each.every((r) => r.status === "applied");
+      return { status: all ? "applied" : "see each", combined: unique, each,
+        ...(all ? {} : { note: "Undos apply one by one, each all or nothing: some didn't apply; see each." }) };
+    }
+    if (ps.some((p) => p.undo_of)) throw new Error("Nothing was applied: apply undos together, or other proposals together, not both in one call.");
     const first = ps[0]!;
     if (ps.some((p) => p.customer_id !== first.customer_id || p.login_customer_id !== first.login_customer_id)) {
       throw new Error("Nothing was applied: proposals applied together must all be for the same account (or the same Google service). Apply the others separately.");
