@@ -91,6 +91,30 @@ describe("lifecycle emails", () => {
     expect(await lc.run()).toBe(0);
   });
 
+  it("sends change_limit once, the morning after the change cap stopped an apply, even after an account-limit email", async () => {
+    const { db, lc, sent, user, call } = setup();
+    // Each has used Camberstack (so no first_steps), then been stopped.
+    const stopped = (userId: string, daysAgo: number) => call(userId, "account_overview") &&
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'apply_changes', 1, ?, 10, 10)")
+        .run(now() - daysAgo * DAY, userId, "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days, "
+          + "and this login has used them; the next opens on 2026-12-02. Proposal p1 stays open.");
+    user("capped", "capped@example.com", 10); stopped("capped", 0.3);
+    user("recent", "recent@example.com", 10); stopped("recent", 0.2);   // under 6 hours ago
+    user("pro", "pro@example.com", 10, "pro"); stopped("pro", 0.3);
+    // An earlier account-limit email doesn't hold this one back.
+    user("had", "had@example.com", 10); stopped("had", 0.3);
+    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - DAY);
+    expect(await lc.run()).toBe(2);
+    expect(sent.map((m) => m.to[0]).sort()).toEqual(["capped@example.com", "had@example.com"]);
+    const m = sent.find((x) => x.to[0] === "capped@example.com");
+    expect(m.subject).toBe("Your free Camberstack changes for this month");
+    expect(m.text).toContain("The next one opens on December 2. The proposal is still open");
+    expect(m.text).toContain("https://camberstack.io/upgrade?t=capped.sig");
+    // Once per user: another stop sends nothing.
+    stopped("capped", 0.25);
+    expect(await lc.run()).toBe(0);
+  });
+
   it("sends service_limit only for a stop on request, not one inside an AI answer (UNPROMPTED-STOPS.md)", async () => {
     const { db, lc, sent, user } = setup();
     // ms is how long the call ran; `at` is when it ended, so it started at at - ms/1000.

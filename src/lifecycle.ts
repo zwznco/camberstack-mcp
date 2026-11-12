@@ -9,8 +9,9 @@
  *                  (not inside one answer: report.ts onRequestSql), still
  *                  free the next morning (6+ hours later) → which service they use, when the other opens, Pro covering all three.
  *   change_limit   the change cap (FREE_CHANGE_CAP) stopped a Free user's apply, still free the next morning (6+ hours later) →
- *                  when the next change opens, Plus's unlimited changes, the upgrade link
- *                  One upgrade email per user: none of limit_reached, switch_wanted, service_limit and change_limit follows another
+ *                  when the next change opens, Plus's unlimited changes, the upgrade link. Once per user, but sent even after
+ *                  another upgrade email: the cap is the main paywall, and this email is how ChatGPT users see the offer (2026-11-11)
+ *                  One upgrade email per user otherwise: none of limit_reached, switch_wanted, service_limit follows another or change_limit
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on a paid plan (Plus, Pro, Agency) with a Stripe subscription → what it adds, where billing lives
@@ -141,9 +142,10 @@ export class Lifecycle {
       .all(`${SERVICE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // Stopped by the change cap (session.ts checkChangeCap), the last stop 6 hours to 30 days ago. Always on request: the
     // user approved the change that was stopped. `error` is the latest stop's, which names the date the next change opens.
+    // Not held back by an earlier upgrade email (limit_reached etc.): only by its own.
     const changes = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
-      WHERE ${eligible} AND ${notSent("change_limit")} AND ${notSent("service_limit")} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")}
+      WHERE ${eligible} AND ${notSent("change_limit")}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
       .all(`${CHANGE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
     // First applied change to a real account (not the demo, not an undo) 2–14 days ago; any plan, connected or not.
