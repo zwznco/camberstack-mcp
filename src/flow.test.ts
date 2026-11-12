@@ -18,10 +18,10 @@ import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { PUBLIC_SC_CHANGES } from "./search-console-changes.js";
 import { PUBLIC_GTM_CHANGES } from "./gtm-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
-import { SERVER_VERSION, gateDemoCalls, servicesOf } from "./tools.js";
+import { SERVER_VERSION, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
-import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, merchantCenterPage, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
-import { allServices, freePlan, oneServiceFree, parseCapFrom, parseChangeCap, parseDateFlag, setChangeCap, type FreePlan } from "./plans.js";
+import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, merchantCenterPage, plansPage, searchConsolePage } from "./pages.js";
+import { allServices, parseCapFrom, parseChangeCap, servicesOr, setChangeCap } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 import { UserSession, clearGoogleCache } from "./session.js";
@@ -512,17 +512,6 @@ async function signIn(google: URL, state: string): Promise<string> {
 
 let lastCallbackCookies = "";
 let rpcId = 0;
-/** The server instructions a client gets on initialize (C2 adds a plan line on one-service Free). */
-async function instructionsFor(token: string): Promise<string> {
-  const res = await fetch(`${base}/mcp`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "initialize",
-      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } } }),
-  });
-  return (await res.json()).result?.instructions ?? "";
-}
-
 async function call(token: string, name: string, args: object = {}) {
   const res = await fetch(`${base}/mcp`, {
     method: "POST",
@@ -3091,6 +3080,45 @@ describe("OAuth + MCP end to end", () => {
     }
   });
 
+  it("with FREE_CHANGE_CAP, parallel applies can't pass on one count, and an undo of an undo counts", async () => {
+    googleUser.sub = "google-sub-cap-race"; googleUser.email = "caprace@example.com";
+    setChangeCap(2);
+    try {
+      const t = await connect(undefined, "xyz", "203.0.113.8");
+      const negative = async (text: string) => (await call(t, "propose_changes", { customer_id: "1112223333",
+        changes: [{ type: "add_negative_keywords", campaign_id: "10", keywords: [{ text, match_type: "PHRASE" }] }] })).json.proposal_id as string;
+      // Four approvals at once against a cap of 2: each check sees the claims before it, so exactly two go through.
+      const ids = [await negative("race a"), await negative("race b"), await negative("race c"), await negative("race d")];
+      const results = await Promise.all(ids.map((proposal_id) => call(t, "apply_changes", { proposal_id })));
+      expect(results.filter((r) => r.json.status === "applied")).toHaveLength(2);
+      expect(results.filter((r) => r.json.stop === "change_limit")).toHaveLength(2);
+      // An undo is free; an undo of that undo replays the original change, so it counts. Pause/enable reverses both ways.
+      setChangeCap(3);
+      const pause = (await call(t, "propose_changes", { customer_id: "1112223333",
+        changes: [{ type: "pause_keyword", ad_group_id: "5", criterion_id: "7" }] })).json.proposal_id as string;
+      expect((await call(t, "apply_changes", { proposal_id: pause })).json.status).toBe("applied");   // 3 of 3
+      const undo = (await call(t, "undo_changes", { proposal_id: pause })).json.proposal_id as string;
+      expect((await call(t, "apply_changes", { proposal_id: undo })).json.status).toBe("applied");    // free
+      expect((await call(t, "billing")).json.changes_applied).toBe(3);
+      const redo = (await call(t, "undo_changes", { proposal_id: undo })).json.proposal_id as string;
+      expect((await call(t, "apply_changes", { proposal_id: redo })).json.stop).toBe("change_limit"); // counts: stopped
+      setChangeCap(4);
+      expect((await call(t, "apply_changes", { proposal_id: redo })).json.status).toBe("applied");
+      expect((await call(t, "billing")).json.changes_applied).toBe(4);
+      expect(ads.kwStatus).toBe("PAUSED");
+      // Leave the shared fake keyword as the other tests expect it.
+      ads.kwStatus = "ENABLED";
+    } finally {
+      setChangeCap(null);
+      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
+      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-cap-race") as { id: string } | undefined;
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
+        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
+      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
+      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-cap-race");
+    }
+  });
+
   it("with FREE_CHANGE_CAP, the pages name the cap and sell Plus as unlimited changes; unset, Free stays unlimited", () => {
     expect(parseChangeCap("10")).toBe(10);
     expect(parseChangeCap(undefined)).toBeNull();
@@ -3112,244 +3140,45 @@ describe("OAuth + MCP end to end", () => {
     } finally { setChangeCap(null); }
   });
 
-  it("with FREE_ONE_SERVICE, covers one Google service on Free: the demo is free, another service waits or needs Pro", async () => {
-    googleUser.sub = "google-sub-one-service"; googleUser.email = "oneservice@example.com";
-    deps.freeOneServiceFrom = 0;
-    deps.plusAvailable = false;  // Plus not sold: the stop pitches Pro (the next test covers Plus)
-    try {
-      const t = await connect();
-      const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-one-service") as { id: string }).id;
-      // The demo site uses no service, so it doesn't pick one.
-      expect((await call(t, "search_console_summary", { site_url: "sc-domain:northwind-plumbing.example", days: 28 })).isError).toBe(false);
-      expect((await call(t, "billing")).json).toMatchObject({ plan: "free", service_in_use: null, services_included: 1 });
-      // C2: the instructions say a service is picked by use, and to stay on it unless the user asks for another.
-      expect(await instructionsFor(t)).toContain("This login's plan covers one Google service at a time");
-      expect(await instructionsFor(t)).toContain("none is picked yet");
-      // The first real call asks instead of picking: nothing runs, nothing is taken, and it isn't an error.
-      expect((await call(t, "switch_account", { customer_id: "111-222-3333" })).isError).toBe(false);
-      const ask = await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 });
-      expect(ask.isError).toBe(false);
-      expect(ask.json).toMatchObject({ stop: "service_choice", this_call_uses: "Google Ads" });
-      expect(ask.text).toContain("Service choice: The Free plan covers one Google service at a time");
-      expect((await call(t, "billing")).json.service_in_use).toBeNull();
-      // The next real call is the user's answer and takes the plan.
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
-      const sc1 = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      expect(sc1.isError).toBe(false);  // a stop, not a failure
-      expect(sc1.json).toMatchObject({ stop: "service_limit", service_in_use: "Google Ads", service_requested: "Search Console" });
-      expect(sc1.text).toContain("Service limit: the Free plan covers one Google service at a time");
-      expect(sc1.text).toContain("Pro ($15/month) covers all five together");
-      // C1: answer with what's covered unless the user asked for the other service.
-      expect(sc1.text).toContain("If the user's request didn't ask for Search Console, answer it with Google Ads and don't lead with this");
-      expect(sc1.text).toContain("If it did ask for Search Console, tell them it isn't on this plan, with the options below.");
-      // C2: once Ads is the plan's, the instructions name it.
-      expect(await instructionsFor(t)).toContain("it's set to Google Ads. Answer with Google Ads tools");
-      // ChatGPT connections: the same stop with no paid plan named, as every other ChatGPT plan text.
-      const gptClient = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
-      const gptInfo = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(gptClient) as { info: string }).info;
-      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(gptInfo), redirect_uris: ["https://chatgpt.com/connector/oauth/one"] }), gptClient);
-      const gptStop = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      // C1 v2 (round 2): ChatGPT's stop leads with what to do; the limit and plans page only if the user asked.
-      expect(gptStop.text).toContain("Service limit: nothing ran: Search Console isn't on the current plan");
-      expect(gptStop.text).toContain("Answer the user's request with Google Ads. Only if the user asked for Search Console");
-      expect(gptStop.json).toMatchObject({ stop: "service_limit", answer_with: "Google Ads",
-        only_if_user_asked_for: { service: "Search Console", note: "Using several together needs a different plan.", plans_page: expect.stringContaining("/plans") } });
-      // C4: a listing of a service the plan doesn't cover says so, in every client.
-      const gptSites = (await call(t, "search_console_sites")).json;
-      expect(Object.keys(gptSites)[0]).toBe("plan_note");
-      expect(gptSites.plan_note).toContain("Search Console isn't on this login's plan");
-      expect(gptStop.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bFree plan\b|\bPro\b|\$|upgrade/i);
-      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(gptInfo, gptClient);
-      // C4 for other clients too; the covered service's own listing carries no note.
-      expect((await call(t, "search_console_sites")).json.plan_note).toContain("it's set to Google Ads");
-      expect((await call(t, "list_accounts")).json).not.toHaveProperty("plan_note");
-      // A refused call takes nothing: Ads still works, and billing names it.
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
-      const plan = (await call(t, "billing")).json;
-      expect(plan).toMatchObject({ service_in_use: "Google Ads" });
-      expect(plan.included).toContain("1 Google service at a time");
-      expect(plan.pro).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together");
-      // A reset by hand clears it: Search Console becomes the one, and Ads waits.
-      db.prepare("UPDATE users SET plan_reset_at = ? WHERE id = ?").run(now() + 1, uid);
-      await new Promise((r) => setTimeout(r, 1100));
-      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.stop).toBe("service_choice");
-      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).text).toContain("this login uses it for Search Console");
-      // Paid plans cover all three.
-      db.prepare("UPDATE users SET plan = 'pro' WHERE id = ?").run(uid);
-      expect(await instructionsFor(t)).not.toContain("This login's plan covers");
-      expect((await call(t, "search_console_sites")).json).not.toHaveProperty("plan_note");
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).isError).toBe(false);
-      // A stop records what the call was after, and still doesn't count as use.
-      expect(db.prepare("SELECT service, service_wanted w FROM tool_calls WHERE error LIKE 'Service limit:%' ORDER BY id DESC LIMIT 1").get())
-        .toEqual({ service: null, w: expect.stringMatching(/\S/) });
-    } finally {
-      deps.freeOneServiceFrom = undefined;
-      deps.plusAvailable = true;
-      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
-      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-one-service") as { id: string } | undefined;
-      // Every table keyed by user, so later tests see only the users they made.
-      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
-        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
-      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
-      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-one-service");
-    }
-  });
-
-  it("with Plus sold, a second-service stop offers Plus (Pro beside it); Plus covers all three on one account, and more accounts point to Pro", async () => {
-    googleUser.sub = "google-sub-plus"; googleUser.email = "plus@example.com";
-    deps.freeOneServiceFrom = 0;
-    try {
-      const t = await connect();
-      const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-plus") as { id: string }).id;
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.stop).toBe("service_choice");
-      expect((await call(t, "account_overview", { customer_id: "111-222-3333", days: 30 })).json.campaigns).toBeDefined();
-      const stop = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      expect(stop.text).toContain("Plus ($7/month) covers all five together on 1 Google Ads account, so Search Console works right away; Pro ($15/month) does on up to 5.");
-      expect(stop.json).toMatchObject({ stop: "service_limit", upgrade: { plan: "plus", price: "$7/month" }, or_pro: { plan: "pro", price: "$15/month" } });
-      expect(stop.json.upgrade.upgrade_url).toMatch(/\/upgrade\?t=[\w.-]+&plan=plus&src=tool$/);
-      const free = (await call(t, "billing")).json;
-      expect(free.plus).toBe("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together, on 1 Google Ads account, $7/month, cancel any time");
-      expect(free.plus_upgrade_url).toContain("&plan=plus");
-      // ChatGPT connections are never pitched Plus (or any plan): the same stop, neutral.
-      const pc = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
-      const pi = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(pc) as { info: string }).info;
-      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(pi), redirect_uris: ["https://chatgpt.com/connector/oauth/p"] }), pc);
-      const gpt = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      expect(gpt.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bPlus\b|\bPro\b|\$|upgrade/i);
-      expect(JSON.stringify((await call(t, "billing")).json).replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bPlus\b|plus_upgrade|\$/i);
-      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(pi, pc);
-      // On Plus (as Stripe would settle it): no service gate, one Google Ads account, Pro as the way to more.
-      db.prepare("UPDATE users SET plan = 'plus', stripe_customer = 'cus_p', stripe_sub = 'sub_p' WHERE id = ?").run(uid);
-      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
-      const plus = (await call(t, "billing")).json;
-      expect(plus).toMatchObject({ plan: "plus", accounts_included: 1 });
-      expect(plus.pro_upgrade_url).toContain("/upgrade?t=");
-      expect(plus).not.toHaveProperty("plus_upgrade_url");
-      expect(plus).not.toHaveProperty("service_in_use");
-      // Grandfathered (PRICING-TEST.md): Plus with no Stripe subscription is complimentary, all three services, nothing to manage.
-      db.prepare("UPDATE users SET stripe_customer = NULL, stripe_sub = NULL WHERE id = ?").run(uid);
-      expect((await call(t, "billing")).json).toMatchObject({ plan: "plus", complimentary: true, manage_billing: null, accounts_included: 1 });
-      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
-    } finally {
-      deps.freeOneServiceFrom = undefined;
-      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
-      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-plus") as { id: string } | undefined;
-      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
-        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
-      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
-      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-plus");
-    }
-  });
-
-  it("before FREE_ONE_SERVICE's date, announces it and gates nothing; from the date, everyone picks a service, history before it aside", async () => {
-    googleUser.sub = "google-sub-dated"; googleUser.email = "dated@example.com";
-    deps.freeOneServiceFrom = now() + 86400;
-    try {
-      const t = await connect();
-      // Announced: every service works, billing says what changes and when, and nothing counts as picked.
-      expect((await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 })).json.current).toBeDefined();
-      const before = (await call(t, "billing")).json;
-      expect(before.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, Free covers one Google service at a time: Google Ads \(1 account\), Search Console, Google Analytics, Merchant Center \(1 account\) or Tag Manager; Plus \(\$7\/month\) covers all five together on 1 Google Ads account, and Pro and Agency on more\.$/);
-      expect(before.included).toBe("every tool on 1 Google Ads account, with unlimited applied changes; undo and history always work");
-      expect(before.pro).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together");
-      expect(before).not.toHaveProperty("service_in_use");
-      // ChatGPT connections get it with no paid plan named (its guidelines bar upgrade pitches), as every other plan text.
-      const clientId = (db.prepare("SELECT client_id FROM tokens WHERE user_id = (SELECT id FROM users WHERE google_sub = 'google-sub-dated') LIMIT 1").get() as { client_id: string }).client_id;
-      const info = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(clientId) as { info: string }).info;
-      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(info), redirect_uris: ["https://chatgpt.com/connector/oauth/dated"] }), clientId);
-      const gpt = (await call(t, "billing")).json;
-      expect(gpt.free_plan_change).toMatch(/^From [A-Z][a-z]+ \d+, the current plan covers one Google service at a time: .+; using several together needs a different plan\.$/);
-      expect(JSON.stringify(gpt).replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/upgrade|\bPro\b|\$|account_page|https?:/i);
-      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(info, clientId);
-      // The account page's plan box says the same.
-      const login = await fetch(`${base}/account/login`, { redirect: "manual" });
-      const cookie = await signIn(new URL(login.headers.get("location")!), stateCookie(login));
-      const accountPage = async () => (await fetch(`${base}/account`, { headers: { cookie } })).text();
-      const soonBox = await accountPage();
-      expect(soonBox).toContain("Every tool, with unlimited applied changes, on 1 Google Ads account.");
-      expect(soonBox).toMatch(/<strong style="color:var\(--fg\)">From [A-Z][a-z]+ \d+, Free covers one Google service at a time/);
-      // The date passes while the server runs: Search Console use before it doesn't pick the service, so the user is asked.
-      deps.freeOneServiceFrom = now() + 1;
-      await new Promise((r) => setTimeout(r, 1100));
-      const ask = await call(t, "search_console_summary", { site_url: "sc-domain:acme.test", days: 28 });
-      expect(ask.json).toMatchObject({ stop: "service_choice", this_call_uses: "Search Console" });
-      const after = (await call(t, "billing")).json;
-      expect(after).toMatchObject({ service_in_use: null, services_included: 1 });
-      expect(after).not.toHaveProperty("free_plan_change");
-      const onBox = await accountPage();
-      expect(onBox).toContain("on one Google service at a time (Google Ads on 1 account, Search Console, Google Analytics, Merchant Center on 1 account or Tag Manager). In use: <strong");
-      expect(onBox).toContain("none yet; your AI asks which before the first");
-      expect(onBox).toContain("Pro covers all five together, on up to 5");
-      expect(onBox).not.toContain("Free covers one Google service at a time; Pro and Agency");
-    } finally {
-      deps.freeOneServiceFrom = undefined;
-      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
-      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-dated") as { id: string } | undefined;
-      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
-        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
-      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
-      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-dated");
-    }
-  });
-
-  it("reads FREE_ONE_SERVICE as 1 (on), a date (announced until then), or off", () => {
-    expect(parseDateFlag("1")).toBe(0);
-    // 08:00 UTC = midnight Pacific: it's the 16th in the Americas too when it starts.
-    expect(parseDateFlag("2026-11-16")).toBe(Date.UTC(2026, 10, 16, 8) / 1000);
-    for (const v of [undefined, "", "0", "true", "2026-13-40", "11/16/2026"]) expect(parseDateFlag(v)).toBeUndefined();
-    const from = Date.UTC(2026, 10, 16) / 1000;
-    expect(freePlan(undefined, from)).toEqual({ kind: "accounts" });
-    expect(freePlan(from, from - 1)).toEqual({ kind: "upcoming", from });
-    expect(freePlan(from, from)).toEqual({ kind: "one_service", from });
-  });
-
-  it("describes whichever Free plan is live on /plans", () => {
-    const from = Date.UTC(2026, 10, 16) / 1000;
-    const [off, soon, on] = ([{ kind: "accounts" }, { kind: "upcoming", from }, { kind: "one_service", from }] as FreePlan[])
-      .map((fp) => withFreePlan(fp, () => plansPage("https://x.test")));
+  it("describes Free on /plans with the change cap off and on", () => {
+    const off = plansPage("https://x.test");
+    setChangeCap(10);
+    let on: string;
+    try { on = plansPage("https://x.test"); } finally { setChangeCap(null); }
     expect(off).toContain("on <strong>1 Google Ads account</strong> at a time");
     expect(off).toContain("Search Console, Google Analytics and Tag Manager are included and don't count. Merchant Center is included too, on 1 Merchant Center account.</p>");
     expect(off).toContain("Everything in Free, on <strong>up to 5 Google Ads accounts</strong>");
-    expect(soon).toContain("on 1 Merchant Center account. From November 16, Free covers one Google service at a time");
-    expect(soon).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together, on <strong>up to 5 Google Ads accounts</strong>");
-    expect(on).toContain("<strong>one Google service at a time</strong>");
-    expect(on).not.toContain("don't count");
-    expect(on).toContain("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together, on <strong>up to 5 Google Ads accounts</strong>");
+    expect(on).toContain("Every tool, with 10 applied changes every 30 days and undo, on <strong>1 Google Ads account</strong> at a time");
+    expect(on).toContain("<h2>Plus · $7/month</h2>");
+    expect(on).toContain("Everything in Free with unlimited applied changes, on <strong>up to 5 Google Ads accounts</strong>");
     // The body (the site header's nav is every page's): nothing that starts an upgrade or links the account page.
-    for (const h of [off, soon, on]) expect(h.slice(h.indexOf('<div class="legal">'))).not.toMatch(/upgrade=|Upgrade to|href="\/account/i);
+    for (const h of [off, on]) expect(h.slice(h.indexOf('<div class="legal">'))).not.toMatch(/upgrade=|Upgrade to|href="\/account/i);
   });
 
-  it("says nothing on any page, in any phase, that the live Free plan makes untrue", () => {
-    const from = Date.UTC(2026, 10, 16) / 1000;
+  it("says nothing on any page, with the change cap off or on, that the live Free plan makes untrue", () => {
     const render = () => [homePage("https://x.test"), claudeGuidePage("https://x.test"), chatgptGuidePage("https://x.test"), geminiGuidePage("https://x.test"),
       searchConsolePage("https://x.test"), merchantCenterPage("https://x.test"), docsPage("https://x.test"), plansPage("https://x.test"), llmsTxt("https://x.test", [])].join("\n");
-    const off = withFreePlan({ kind: "accounts" }, render), soon = withFreePlan({ kind: "upcoming", from }, render), on = withFreePlan({ kind: "one_service", from }, render);
-    // Off: exactly as before the flag existed.
-    expect(off).not.toMatch(/one Google service|November 16/);
-    // Announced: today's plan stays described, and the change is named with its date wherever plans are detailed.
-    expect(soon).toContain("don't count");
-    expect(soon.match(/From November 16/g)!.length).toBeGreaterThanOrEqual(6);
-    // On: nothing says Search Console or Analytics are free alongside Ads, or that Free is every tool on an Ads account.
-    expect(on).not.toMatch(/don't count toward a plan|included and don't count|November 16|Everything in Free|Search Console and Google Analytics included/);
-    expect(on).not.toMatch(/Free on one Google Ads account|One Google Ads account is free|Free plan covers 1 Google Ads account|on 1 Google Ads account\. No card/);
-    expect(on).toContain('"Service limit"');
+    const off = render();
+    setChangeCap(10);
+    let on: string;
+    try { on = render(); } finally { setChangeCap(null); }
+    // Nothing of the one-service plan that never switched on.
+    for (const h of [off, on]) expect(h).not.toMatch(/one Google service|November 1[56]|Service limit/);
+    // Off: Free is unlimited, and Plus (which would equal Free) isn't offered.
+    expect(off).not.toMatch(/\bPlus\b|upgrade=plus|Change limit|applied changes every/);
+    // On: nothing says Free's changes are unlimited, and every place plans are detailed names the cap.
+    expect(on).not.toMatch(/Free for one account, with unlimited|Free for 1 account with unlimited|every tool and unlimited changes|every tool, unlimited applied changes|Every tool, with unlimited applied changes(,| and undo,) on (<strong>)?1 Google Ads/i);
+    expect(on.match(/10 applied changes every 30 days/g)!.length).toBeGreaterThanOrEqual(5);
+    expect(on).toContain('"Change limit"');
     expect(on).toContain("What does Free cover?");
-    // Plus: absent while off (it would equal Free), named with its date while announced (nothing to buy yet), sold once on.
-    expect(off).not.toMatch(/\bPlus\b|upgrade=plus/);
-    expect(soon).toContain("<h3>Plus</h3>");
-    expect(soon).toContain("Available from November 16.");
-    expect(soon).not.toContain("upgrade=plus");
-    // From the date Plus is the highlighted plan (most users have one account); before, Pro is.
+    // On, Plus is sold and is the highlighted plan (most users have one account); off, Pro is.
     expect(on).toContain('<div class="plan plan-pro"><h3>Plus</h3>');
     expect(on).toContain('<a class="btn" href="/account?upgrade=plus">Get Plus</a>');
     expect(on).toContain('<div class="plan"><h3>Pro</h3>');
     expect(on).toContain('<a class="btn btn-ghost" href="/account?upgrade=1">Upgrade to Pro</a>');
-    expect(soon).toContain('<div class="plan plan-pro"><h3>Pro</h3>');
-    expect(soon).toContain('<div class="plan"><h3>Plus</h3>');
-    expect(on).toContain("Using it together with Google Ads or Analytics needs <a href=\"/#pricing\">Plus</a> ($7/month)");
+    expect(off).toContain('<div class="plan plan-pro"><h3>Pro</h3>');
     expect(on).toContain("<h2>Plus · $7/month</h2>");
-    expect(on).toContain("Plus $7/month covers all five together on 1 Google Ads account");
+    expect(on).toContain("Plus $7/month has unlimited applied changes on 1 Google Ads account");
     expect(on).toContain('"name":"Plus","price":"7"');
   });
 
@@ -3365,14 +3194,7 @@ describe("OAuth + MCP end to end", () => {
     expect(servicesOf("propose_mark_key_event", { property_id: "123" })).toEqual(["analytics"]);
     expect(servicesOf("propose_analytics_changes", { changes: [{ type: "create_ga4_property" }] })).toEqual(["analytics"]);
     expect(servicesOf("paid_organic_overlap", { customer_id: "111-222-3333", site_url: "sc-domain:acme.test" })).toEqual(["ads", "search_console"]);
-    // GATE_DEMO (test only, UNPROMPTED-STOPS.md): off by default; on, the demo counts like a real account, site and property.
-    gateDemoCalls(true);
-    try {
-      expect(servicesOf("run_gaql", { customer_id: "0000000001", query: "SELECT campaign.id FROM campaign" })).toEqual(["ads"]);
-      expect(servicesOf("analytics_report", { property_id: "000000001" })).toEqual(["analytics"]);
-      expect(servicesOf("search_console_summary", { site_url: "sc-domain:northwind-plumbing.example" })).toEqual(["search_console"]);
-    } finally { gateDemoCalls(false); }
-    expect(servicesOf("analytics_report", { property_id: "000000001" })).toEqual([]);
+    expect(servicesOf("search_console_summary", { site_url: "sc-domain:northwind-plumbing.example" })).toEqual([]);
     for (const n of ["apply_changes", "undo_changes", "change_history", "list_accounts", "switch_account", "choose_account", "billing"])
       expect(servicesOf(n, { customer_id: "111-222-3333" })).toEqual([]);
   });
@@ -3393,7 +3215,7 @@ describe("OAuth + MCP end to end", () => {
   });
 
   it("names Merchant Center in the plan copy", () => {
-    expect(oneServiceFree()).toBe("one Google service at a time: Google Ads (1 account), Search Console, Google Analytics, Merchant Center (1 account) or Tag Manager");
+    expect(servicesOr()).toBe("Google Ads, Search Console, Google Analytics, Merchant Center or Tag Manager");
     expect(allServices()).toBe("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together");
   });
 

@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, changeCapFrom, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, changeCapFrom, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SwitchNotice, accountsLabel, allServices, isPaid, poolOf, planLabel, type Plan, type Pool } from "./plans.js";
 import { AnalyticsClient, DEMO_PROPERTY, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -91,10 +91,30 @@ export function isDemoProposal(customerId: string, changesJson: string): boolean
   return changes.length > 0 && changes.every(demo);
 }
 
-/** Services a user's running calls use, so parallel calls can't take two services at once (checkService). */
-const servicesInFlight = new Map<string, Map<Service, number>>();
-/** When each user was last asked to pick Free's service (checkService). In memory: a restart just asks again. */
-const serviceAsked = new Map<string, number>();
+/** An undo the cap leaves free: one that reverses an ordinary proposal. An undo of an undo replays the original change, so it counts. */
+export function isFreeUndo(db: DB, undoOf: string | null | undefined): boolean {
+  if (!undoOf) return false;
+  return !(db.prepare("SELECT undo_of FROM proposals WHERE id = ?").get(undoOf) as { undo_of: string | null } | undefined)?.undo_of;
+}
+
+/**
+ * The approvals the change cap counts for a user, oldest first (their applied_at, or claim time while applying): real
+ * proposals applied since the latest of 30 days ago, plan_reset_at and the cap's start (plans.ts changeCapFrom). Counted:
+ * applied ones, and ones claimed and still being written (status 'proposed' with applied_at set, newer than STALE_CLAIM),
+ * so parallel applies each see the others. Not counted: failed or discarded ones, a first-order undo (isFreeUndo), and
+ * the demo (isDemoProposal). The gate (session.ts checkChangeCap) and the admin Cap tab (report.ts capUsage) both read this.
+ */
+export function capCounted(db: DB, userId: string, resetAt: number | null, t = now()): number[] {
+  const since = Math.max(t - ACCOUNT_WINDOW_DAYS * 86400, resetAt ?? 0, changeCapFrom());
+  const rows = db.prepare(`SELECT p.customer_id, p.changes, p.applied_at FROM proposals p
+      LEFT JOIN proposals o ON o.id = p.undo_of
+      WHERE p.user_id = ? AND p.applied_at >= ?
+        AND (p.status = 'applied' OR (p.status = 'proposed' AND p.applied_at >= ?))
+        AND (p.undo_of IS NULL OR o.undo_of IS NOT NULL)
+      ORDER BY p.applied_at`).all(userId, since, t - STALE_CLAIM) as { customer_id: string; changes: string; applied_at: number }[];
+  return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes)).map((r) => r.applied_at);
+}
+
 /** How many ads account_overview's attention block names, and how long a primary conversion can stay quiet before it says so. */
 const ATTENTION_ADS = 10, ATTENTION_CONVERSION_DAYS = 30;
 
@@ -124,11 +144,9 @@ export interface SessionDeps {
   /** Google Ads accounts each plan covers, over ACCOUNT_WINDOW_DAYS (config.ts). */
   freeAccounts: number;
   proAccounts: number;
-  /** Option C (plans.ts FreePlan): when Free starts covering one Google service at a time. Off unless FREE_ONE_SERVICE is set. */
-  freeOneServiceFrom?: number;
   /** Agency's accounts at a time; unset = no Agency plan (tests, and billing without STRIPE_AGENCY_PRICE_ID). */
   agencyAccounts?: number;
-  /** Plus is sold (STRIPE_PLUS_PRICE_ID). It's offered only once one-service Free is announced: before, Free is the same. */
+  /** Plus is sold (STRIPE_PLUS_PRICE_ID). It is offered only while the change cap is on: without it, Free is the same. */
   plusAvailable?: boolean;
   proEmails: Set<string>;
   /** Asks Stripe whether this user just paid; true when that made them Pro (billing.ts refreshPlan). */
@@ -272,7 +290,7 @@ export class UserSession {
     }
   }
 
-  /** On a paid plan (Plus, Pro or Agency), or complimentary Pro (PRO_EMAILS): every Google service, no one-service gate. */
+  /** On a paid plan (Plus, Pro or Agency), or complimentary Pro (PRO_EMAILS): no change cap. */
   get isPro(): boolean {
     return isPaid(this.user.plan) || this.deps.proEmails.has(this.user.email.toLowerCase());
   }
@@ -315,93 +333,6 @@ export class UserSession {
    */
   accountsInUse(pool: Pool = "ads"): string[] {
     return this.usage(pool).map((u) => u.c);
-  }
-
-  /**
-   * Google services this user ran real calls on in the window, most recently used first (tool_calls.service; the demo,
-   * refused calls and calls before plan_reset_at don't count). With FREE_ONE_SERVICE, Free covers the first of these.
-   */
-  servicesInUse(): { s: Service; last: number }[] {
-    const rows = this.deps.db.prepare(`SELECT service, max(at) last, max(id) id FROM tool_calls WHERE user_id = ? AND ok = 1 AND service IS NOT NULL AND at >= ?
-        GROUP BY service ORDER BY last DESC, id DESC`)
-      // Only calls since one-service Free started: everyone picks their service then, rather than keeping whichever they used last before it.
-      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0, this.deps.freeOneServiceFrom ?? 0)) as { service: string; last: number }[];
-    const out: { s: Service; last: number }[] = [];
-    for (const r of rows) for (const s of r.service.split(",") as Service[]) if (!out.some((o) => o.s === s)) out.push({ s, last: r.last });
-    return out;
-  }
-
-  /**
-   * The one-service gate (FREE_ONE_SERVICE, Free only): a call may use only the service the plan covers, which is the
-   * most recently used one (a call needing two, paid_organic_overlap, needs a paid plan). Another service opens 30 days
-   * after the covered one was last used, or with plan_reset_at. With none used yet, the first real call stops with a
-   * Service choice notice so the AI asks the user which service to keep for 30 days; the next real call within
-   * SERVICE_CHOICE_SECONDS is the answer and takes the plan. Both stops are SwitchNotices, normal results rather than
-   * errors (errors count against the directories' reliability metrics).
-   * Returns a release to call once the call is logged: until then its service counts as in use.
-   */
-  checkService(services: Service[]): () => void {
-    if (!this.oneService || this.isPro) return () => {};
-    const running = [...(servicesInFlight.get(this.user.id)?.keys() ?? [])];
-    const used = this.servicesInUse();
-    if (!running.length && !used.length && services.length === 1) {
-      const asked = serviceAsked.get(this.user.id);
-      if (!asked || now() - asked > SERVICE_CHOICE_SECONDS) {
-        serviceAsked.set(this.user.id, now());
-        const plan = this.chatgpt ? "The current plan" : "The Free plan";
-        throw new SwitchNotice(`${SERVICE_CHOICE_PREFIX} ${plan} covers one Google service at a time: ${servicesOr()}. `
-          + `Nothing has run yet. Ask the user which one they want to use for the next ${ACCOUNT_WINDOW_DAYS} days, then make the call for that service: `
-          + `the first one made in the next ${SERVICE_CHOICE_SECONDS / 60} minutes becomes the plan's service, and the others wait until ${ACCOUNT_WINDOW_DAYS} days after it was last used.`
-          + (this.chatgpt ? "" : this.plusOffered ? ` Plus (${PLUS_PRICE_LABEL}) covers all five together.` : ` Pro (${PRO_PRICE_LABEL}) covers all five together.`),
-          { stop: "service_choice", this_call_uses: SERVICE_LABELS[services[0]!], services: listedServices().map((s) => SERVICE_LABELS[s]), window_days: ACCOUNT_WINDOW_DAYS,
-            ...(this.chatgpt ? { plans_page: this.plansPage } : {}) });
-      }
-      serviceAsked.delete(this.user.id);
-    }
-    const covered = running[0] ?? used[0]?.s ?? (services.length === 1 ? services[0]! : undefined);
-    const extra = services.filter((s) => s !== covered);
-    if (!covered || extra.length) {
-      const have = covered ? SERVICE_LABELS[covered] : null;
-      const want = extra.map((s) => SERVICE_LABELS[s]).join(" and ") || services.map((s) => SERVICE_LABELS[s]).join(" and ");
-      // A covered service still in flight (parallel calls) has no logged use yet: it's being used now.
-      const last = used.find((u) => u.s === covered)?.last ?? (covered ? now() : undefined);
-      const opens = last ? new Date((last + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10) : null;
-      const why = have ? `this login uses it for ${have}` : `${want} together need more than one`;
-      const head = `${SERVICE_LIMIT_PREFIX} ${this.chatgpt ? "the current plan" : "the Free plan"} covers one Google service at a time (${servicesOr()}), and ${why}.`
-        + (have && opens ? ` ${want} opens on Free on ${opens}, ${ACCOUNT_WINDOW_DAYS} days after ${have} was last used.` : "");
-      const common = { stop: "service_limit", service_in_use: have, service_requested: want, opens_on_free: opens };
-      // C1 (UNPROMPTED-STOPS.md): most stops are calls the AI made on its own; it answers with what's covered instead.
-      const scope = (options: string) => (have ? ` ${serviceLimitScope(have, want, options)}` : "");
-      // C1 v2 (round 2), ChatGPT only: lead with what to do; the limit and the plans page sit under only_if_user_asked_for,
-      // so they aren't relayed when the AI made the call on its own. Claude keeps the round-1 wording (tested with C2).
-      if (this.chatgpt && have) throw new SwitchNotice(`${SERVICE_LIMIT_PREFIX} nothing ran: ${want} isn't on the current plan, which covers one Google service at a time `
-        + `and is set to ${have}. Answer the user's request with ${have}. Only if the user asked for ${want}, tell them it isn't on their plan`
-        + `${opens ? ` (it opens on ${opens})` : ""} and that using several together needs a different plan (plans_page).`,
-        { stop: "service_limit", service_in_use: have, answer_with: have,
-          only_if_user_asked_for: { service: want, opens_on_free: opens, note: "Using several together needs a different plan.", plans_page: this.plansPage } });
-      if (this.chatgpt) throw new SwitchNotice(`${head}${scope("the plans page (plans_page)")} Using several together needs a different plan.`, { ...common, plans_page: this.plansPage });
-      const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
-      if (plusUrl) {
-        const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-        throw new SwitchNotice(`${head}${scope("the options below")} Plus (${PLUS_PRICE_LABEL}) covers all five together on 1 Google Ads account, so ${want} works right away; `
-          + `Pro (${PRO_PRICE_LABEL}) does on up to ${this.deps.proAccounts}.`,
-          { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${allServices()}, on 1 Google Ads account`, cancel: "any time",
-            upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" },
-            or_pro: { plan: "pro", price: PRO_PRICE_LABEL, covers: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl } });
-      }
-      const url = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
-      throw new SwitchNotice(`${head}${scope("the options below")} Pro (${PRO_PRICE_LABEL}) covers all five together, so ${want} works right away.`,
-        { ...common, upgrade: { plan: "pro", price: PRO_PRICE_LABEL, covers: allServices(), cancel: "any time",
-          upgrade_url: url, upgrade_url_expires: url ? "7 days; personal to this user" : null, pricing_page: url ? null : `${this.deps.baseUrl}/#pricing` } });
-    }
-    const mine = servicesInFlight.get(this.user.id) ?? new Map<Service, number>();
-    servicesInFlight.set(this.user.id, mine);
-    mine.set(covered, (mine.get(covered) ?? 0) + 1);
-    return () => {
-      const n = (mine.get(covered) ?? 1) - 1;
-      if (n > 0) mine.set(covered, n); else mine.delete(covered);
-      if (!mine.size) servicesInFlight.delete(this.user.id);
-    };
   }
 
   /** accountsInUse, most recently used first, with when each was last used. Merchant Center accounts (mc:<id>) are their own pool. */
@@ -586,56 +517,11 @@ export class UserSession {
    */
   private get plansPage(): string { return this.deps.plansLink?.(this.user.id) ?? `${this.deps.baseUrl}/plans`; }
 
-  /** Plus is pitched once one-service Free or the change cap is on, outside ChatGPT, when it's sold. Before that it would equal Free. */
-  private get plusOffered(): boolean { return !this.chatgpt && !!this.deps.plusAvailable && (this.freePlan.kind === "one_service" || !!changeCap()); }
-
-  /** Which Free is live now (plans.ts freePlan): FREE_ONE_SERVICE's date can pass while the server runs. */
-  private get freePlan(): FreePlan { return freePlan(this.deps.freeOneServiceFrom); }
-  private get oneService(): boolean { return this.freePlan.kind === "one_service"; }
-
-  /**
-   * C2 (UNPROMPTED-STOPS.md): a line for the server instructions on one-service Free, so the AI stays on the covered
-   * service unless the user asks for another, instead of calling one on its own and meeting a Service limit stop.
-   * Null for paid plans and while Free isn't one-service. Instructions are read when a conversation starts.
-   */
-  /**
-   * C4 (UNPROMPTED-STOPS.md round 2): a listing of another service's properties, on one-service Free, says that service
-   * isn't the plan's. Listings are free, and most unprompted calls follow one (ChatGPT often calls them all up front);
-   * clients that ignore per-user instructions (ChatGPT) still read tool results. Leads the result so it's read first.
-   */
-  withListingNote<T extends object>(service: Service, result: T): T | ({ plan_note: string } & T) {
-    if (!this.oneService || this.isPro) return result;
-    const covered = this.servicesInUse()[0]?.s;
-    if (!covered || covered === service) return result;
-    const label = SERVICE_LABELS[service];
-    return { plan_note: `${label} isn't on this login's plan: it covers one Google service at a time, and it's set to ${SERVICE_LABELS[covered]}. `
-      + `Calls to ${label} tools are stopped and return no data, so call them only if the user asks for ${label}.`, ...result };
-  }
-
-  serviceNote(): string | null {
-    if (!this.oneService || this.isPro) return null;
-    const s = this.servicesInUse()[0]?.s;
-    if (!s) return `This login's plan covers one Google service at a time (${servicesOr()}) and none is picked yet. `
-      + `Once one is used, call tools for another service only when the user asks about that service.`;
-    const have = SERVICE_LABELS[s];
-    const others = listedServices().filter((x) => x !== s).map((x) => SERVICE_LABELS[x]).join(", ");
-    return `This login's plan covers one Google service at a time, and it's set to ${have}. Answer with ${have} tools, and call `
-      + `tools for another service (${others}) only when the user asks about that service: those calls are stopped and return no data.`;
-  }
+  /** Plus is pitched while the change cap is on, outside ChatGPT, when it's sold. Without the cap it would equal Free. */
+  private get plusOffered(): boolean { return !this.chatgpt && !!this.deps.plusAvailable && !!changeCap(); }
 
   private freeIncluded(): string {
-    return this.oneService
-      ? `every tool on 1 Google service at a time (${servicesOr()}) and 1 Google Ads account, with ${freeChanges()}; undo and history always work`
-      : `every tool on 1 Google Ads account, with ${freeChanges()}; undo and history always work`;
-  }
-
-  /** With FREE_ONE_SERVICE: which service Free covers now, or the change it announces before its date. Nothing otherwise. */
-  private serviceUsage(): { service_in_use?: string | null; services_included?: number; free_plan_change?: string } {
-    const change = freePlanChange(this.freePlan, this.chatgpt);
-    if (change) return { free_plan_change: change };
-    if (!this.oneService) return {};
-    const s = this.servicesInUse()[0]?.s;
-    return { service_in_use: s ? SERVICE_LABELS[s] : null, services_included: 1 };
+    return `every tool on 1 Google Ads account, with ${freeChanges()}; undo and history always work`;
   }
 
   /** With the change cap on: how many of Free's applied changes this window has used. Nothing otherwise. */
@@ -655,7 +541,7 @@ export class UserSession {
     if (this.chatgpt) {
       const usage = this.planUsage();
       return this.isPro ? { plan: this.planName, ...usage, plans_page: this.plansPage }
-        : { plan: "free", ...usage, ...this.serviceUsage(), ...this.changeUsage(), included: this.freeIncluded(),
+        : { plan: "free", ...usage, ...this.changeUsage(), included: this.freeIncluded(),
             note: "More accounts at a time need a different plan.", plans_page: this.plansPage };
     }
     const upgrade = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
@@ -674,10 +560,10 @@ export class UserSession {
           // Plus → Pro and Pro → Agency switch on the billing page (Stripe's portal), with the difference prorated.
           ...(this.planName === "pro" ? agency : {}),
           ...(this.planName === "plus" && upgrade ? { pro: `${allServices()}, on up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
-      : { plan: "free", account_page, ...usage, ...this.serviceUsage(), ...this.changeUsage(),
+      : { plan: "free", account_page, ...usage, ...this.changeUsage(),
           included: this.freeIncluded(),
-          ...(plusUrl ? { plus: `${this.oneService ? allServices() : "unlimited applied changes"}, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
-          pro: `${this.freePlan.kind !== "accounts" ? `${allServices()}, on ` : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
+          ...(plusUrl ? { plus: `unlimited applied changes, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
+          pro: `${changeCap() ? "unlimited applied changes, on " : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
           upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
   }
@@ -1523,26 +1409,20 @@ export class UserSession {
     };
   }
 
-  /** A repeat apply of an applied proposal: not an error, the change is in, and that is the answer (2026-10-28: a model
-   *  re-sent apply_changes 8s after it succeeded). Nothing is written again; the first apply's results are returned. */
-  /**
-   * Real proposals this user applied in the window, oldest first: what the change cap counts (plans.ts changeCap). Undos
-   * and the demo (account, site, property, store, container) don't count, nor anything before plan_reset_at or the cap's start.
-   */
+  /** What the change cap counts for this user now (capCounted). */
   changesApplied(): number[] {
-    const rows = this.deps.db.prepare(`SELECT customer_id, changes, applied_at FROM proposals
-        WHERE user_id = ? AND status = 'applied' AND undo_of IS NULL AND applied_at >= ? ORDER BY applied_at`)
-      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0, changeCapFrom())) as { customer_id: string; changes: string; applied_at: number }[];
-    return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes)).map((r) => r.applied_at);
+    return capCounted(this.deps.db, this.user.id, this.user.plan_reset_at ?? null);
   }
 
   /**
    * The change cap (FREE_CHANGE_CAP, Free only): with the window's allowance used, applying stops with a Change limit
-   * notice, a normal result (SwitchNotice) rather than an error. The proposal stays open. Undo and the demo are never capped.
+   * notice, a normal result (SwitchNotice) rather than an error. The proposal stays open. An undo and the demo are never
+   * capped; an undo of an undo is (it would replay the original change for free). Runs synchronously right before the
+   * claim, so with in-flight claims counted (capCounted) parallel applies can't all pass on the same count.
    */
   private checkChangeCap(p: ProposalRow): void {
     const cap = changeCap();
-    if (!cap || this.isPro || p.undo_of || isDemoProposal(p.customer_id, p.changes)) return;
+    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes)) return;
     const used = this.changesApplied();
     if (used.length < cap) return;
     // A slot opens when the cap-th most recent approval ages out of the window.
@@ -1565,6 +1445,8 @@ export class UserSession {
         upgrade_url: proUrl, upgrade_url_expires: proUrl ? "7 days; personal to this user" : null, pricing_page: proUrl ? null : `${this.deps.baseUrl}/#pricing` } });
   }
 
+  /** A repeat apply of an applied proposal: not an error, the change is in, and that is the answer (2026-10-28: a model
+   *  re-sent apply_changes 8s after it succeeded). Nothing is written again; the first apply's results are returned. */
   private alreadyApplied(p: ProposalRow) {
     const outcomes = p.result ? JSON.parse(p.result) as Outcome[] : [];
     const at = p.applied_at ? ` at ${new Date(p.applied_at * 1000).toISOString()}` : "";

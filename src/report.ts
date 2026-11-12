@@ -7,9 +7,9 @@ import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
-import { isDemoProposal } from "./session.js";
+import { capCounted } from "./session.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, changeCapFrom, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, changeCapFrom, PRO_PRICE_LABEL, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
 /**
  * A paying customer: a paid plan with a live Stripe subscription. Complimentary plans (PRO_EMAILS, grandfathered Plus with no
@@ -25,8 +25,6 @@ export interface ReportOptions {
   days: number;
   /** Emails left out of every number (the operator's and testers' own accounts). */
   exclude: string[];
-  /** FREE_ONE_SERVICE's start, which splits existing from new signups in the paywall read. Unset or 0: its first notice. */
-  freeOneServiceFrom?: number;
   /** When the change cap went on, for the paywall read; unset = its first Change limit stop. */
   changeCapFrom?: number;
 }
@@ -84,8 +82,7 @@ export interface CapRow {
 }
 
 /**
- * The change cap (FREE_CHANGE_CAP) per user, counted the way the gate counts (session.ts changesApplied: real approvals,
- * no undo or demo, since the cap's start, plan_reset_at and 30 days ago). Users with a counted approval or a stop since
+ * The change cap (FREE_CHANGE_CAP) per user, counted by the gate's own count (session.ts capCounted). Users with a counted approval or a stop since
  * the start; internal accounts left out. At the cap first, then by approvals. Empty with the cap off.
  */
 export function capUsage(db: DB, exclude: string[], t = Math.floor(Date.now() / 1000)): CapRow[] {
@@ -94,16 +91,13 @@ export function capUsage(db: DB, exclude: string[], t = Math.floor(Date.now() / 
   const from = changeCapFrom(), win = ACCOUNT_WINDOW_DAYS * 86400, ex = new Set(exclude.map((e) => e.toLowerCase()));
   const users = (db.prepare(`SELECT id, email, plan, coalesce(stripe_sub, '') != '' paying, plan_reset_at FROM users`).all() as
     { id: string; email: string; plan: string; paying: number; plan_reset_at: number | null }[]).filter((u) => !ex.has(u.email.toLowerCase()));
-  const applied = db.prepare(`SELECT customer_id, changes, applied_at FROM proposals WHERE user_id = ? AND status = 'applied' AND undo_of IS NULL
-      AND applied_at >= ? ORDER BY applied_at`);
   const stops = db.prepare(`SELECT count(*) n, max(at) last FROM tool_calls WHERE user_id = ? AND error LIKE '${CHANGE_LIMIT_PREFIX}%' AND at >= ?`);
   const mailed = db.prepare(`SELECT sent_at FROM email_log WHERE user_id = ? AND kind = 'change_limit'`);
   const gpt = db.prepare(`SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = ?
       AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%') LIMIT 1`);
   const rows: CapRow[] = [];
   for (const u of users) {
-    const counted = (applied.all(u.id, Math.max(t - win, u.plan_reset_at ?? 0, from)) as { customer_id: string; changes: string; applied_at: number }[])
-      .filter((r) => !isDemoProposal(r.customer_id, r.changes)).map((r) => r.applied_at);
+    const counted = capCounted(db, u.id, u.plan_reset_at, t);
     const st = stops.get(u.id, from) as { n: number; last: number | null };
     if (!counted.length && !st.n) continue;
     const atCap = u.plan === "free" && counted.length >= cap;
@@ -187,7 +181,7 @@ export function buildReport(db: DB, o: ReportOptions) {
     signupsHourly: o.days === 1 ? q<{ hour: number; n: number }>(
       `SELECT cast(strftime('%H', created_at, 'unixepoch') AS int) hour, count(*) n FROM {U} u WHERE created_at >= ? GROUP BY 1 ORDER BY 1`, since) : [],
     retention: retention(q),
-    paywall: changeCap() ? paywall(q, o.changeCapFrom || changeCapFrom() || undefined, "change") : paywall(q, o.freeOneServiceFrom),
+    paywall: paywall(q, o.changeCapFrom || changeCapFrom() || undefined),
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
@@ -346,58 +340,35 @@ function retention(q: <T>(sql: string, ...p: unknown[]) => T[]) {
   });
 }
 
-/** Seconds between the end of a user's previous call and the start of a Service limit stop, past which it's labelled on request. */
-export const ON_REQUEST_GAP = 45;
-
 /**
- * SQL, true when tool call `c` (an alias) is "on request" (C3, UNPROMPTED-STOPS.md): it started more than ON_REQUEST_GAP
- * seconds after the user's previous call ended, or had none before it, so a new message from the user likely asked for it.
- * Closer than that, the AI made the call inside one answer, often on its own. `at` is logged when a call ends, so a call
- * started at at - ms/1000. One copy for the paywall report and the service_limit email (lifecycle.ts).
+ * The change-cap paywall (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md), from switch-on: the cap's start, or its
+ * first Change limit stop. Users split into those who signed up before it and after, and by whether they use ChatGPT,
+ * whose connections get /plans instead of an upgrade link. Each step counts users since the switch-on: stopped by
+ * `Change limit:`, emailed about it (change_limit), viewed /plans through their personal link, clicked a personal upgrade
+ * link (any source), and paid. `offered` and `offered_paid` are the test's bar: stopped and reached the offer, and of those,
+ * paid. `applied` is its guardrail. Complimentary plans are left out: they can't be stopped. Empty until the cap stops someone.
  */
-export const onRequestSql = (c: string) => `NOT EXISTS (SELECT 1 FROM tool_calls q WHERE q.user_id = ${c}.user_id AND q.id < ${c}.id
-    AND q.at >= ${c}.at - ${c}.ms / 1000.0 - ${ON_REQUEST_GAP})`;
-
-/**
- * The one-service paywall (FREE_ONE_SERVICE; projects/camberstack/PRICING-TEST.md), from switch-on: the flag's date, or the first
- * Service notice. Users split into those who signed up before it (they lost all three) and after (Free was always one service),
- * by whether they use ChatGPT, whose connections get /plans instead of an upgrade link, and by whether Merchant Center was
- * involved (used, or asked for in a stop), which brings a different audience. Each step counts users since the switch-on: stopped
- * by `Service limit:`, emailed about it, viewed /plans through their personal link, clicked a personal upgrade link (any source),
- * and paid. `offered` and `offered_paid` are the test's bar: stopped and reached the offer, and of those, paid. `applied` is its
- * guardrail. Complimentary plans are left out: they can't be stopped. Empty until the flag has stopped someone.
- */
-function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number, gate: "service" | "change" = "service") {
-  // The change cap (FREE_CHANGE_CAP) reads the same funnel on its own stop and email: Change limit, change_limit.
-  const prefix = gate === "change" ? CHANGE_LIMIT_PREFIX : SERVICE_LIMIT_PREFIX, mail = gate === "change" ? "change_limit" : "service_limit";
-  const first = q<{ at: number | null }>(gate === "change"
-    ? `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${CHANGE_LIMIT_PREFIX}%'`
-    : `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${SERVICE_LIMIT_PREFIX}%' OR c.error LIKE '${SERVICE_CHOICE_PREFIX}%'`)[0]?.at;
-  if (!first) return { since: null, gate, rows: [] };
+function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
+  const first = q<{ at: number | null }>(
+    `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${CHANGE_LIMIT_PREFIX}%'`)[0]?.at;
+  if (!first) return { since: null, rows: [] };
   const on = from || first;
   const chatgpt = `EXISTS (SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = u.id
     AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%'))`;
   const ev = (kind: string) => `EXISTS (SELECT 1 FROM plan_events e WHERE e.user_id = u.id AND e.kind = '${kind}' AND e.at >= ${on})`;
-  const merchant = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on}
-    AND (coalesce(c.service, '') LIKE '%merchant%' OR coalesce(c.service_wanted, '') LIKE '%merchant%'))`;
-  const stopped = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${prefix}%')`;
-  // C3: a stop on request (onRequestSql) likely came from a new message; the rest came inside one answer.
-  const onRequest = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${prefix}%'
-    AND ${onRequestSql("c")})`;
-  const emailed = `EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = '${mail}')`;
+  const stopped = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${CHANGE_LIMIT_PREFIX}%')`;
+  const emailed = `EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'change_limit')`;
   const offered = `(${stopped} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;
-  const offeredReq = `(${onRequest} AND (${emailed} OR ${ev("plans_view")} OR ${ev("upgrade_click")}))`;
-  const rows = q<{ existing: number; chatgpt: number; merchant: number; users: number; stopped: number; emailed: number; viewed: number; clicked: number; paid: number;
-      offered: number; offered_paid: number; stopped_req: number; offered_req: number; offered_req_paid: number; applied: number }>(
-    `SELECT u.created_at < ${on} existing, ${chatgpt} chatgpt, ${merchant} merchant, count(*) users,
+  const rows = q<{ existing: number; chatgpt: number; users: number; stopped: number; emailed: number; viewed: number; clicked: number; paid: number;
+      offered: number; offered_paid: number; applied: number }>(
+    `SELECT u.created_at < ${on} existing, ${chatgpt} chatgpt, count(*) users,
        sum(${stopped}) stopped, sum(${emailed}) emailed,
        sum(${ev("plans_view")}) viewed, sum(${ev("upgrade_click")}) clicked, sum(${ev("paid")}) paid,
        sum(${offered}) offered, sum(${offered} AND ${ev("paid")}) offered_paid,
-       sum(${onRequest}) stopped_req, sum(${offeredReq}) offered_req, sum(${offeredReq} AND ${ev("paid")}) offered_req_paid,
        sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}' AND p.applied_at >= ${on})) applied
      FROM {U} u WHERE coalesce(u.last_seen_at, u.created_at) >= ${on} AND (u.plan = 'free' OR coalesce(u.stripe_sub, '') != '')
-     GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2 DESC, 3 DESC`);
-  return { since: on, gate, rows };
+     GROUP BY 1, 2 ORDER BY 1 DESC, 2 DESC`);
+  return { since: on, rows };
 }
 
 function serviceUse(q: <T>(sql: string, ...p: unknown[]) => T[], since: number) {

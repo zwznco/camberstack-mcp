@@ -13,7 +13,7 @@ import { deriveKey } from "./crypto.js";
 import { CamberstackProvider, MCP_SCOPE, consentCookie } from "./provider.js";
 import { UserSession, clearGoogleCache, type SessionDeps } from "./session.js";
 import { Grants } from "./grant.js";
-import { buildServer, gateDemoCalls, SERVER_VERSION, toolCatalog } from "./tools.js";
+import { buildServer, SERVER_VERSION, toolCatalog } from "./tools.js";
 import { Analytics, BEACON_JS, gtagJs, parseBeacon } from "./analytics.js";
 import { mountAdmin } from "./admin.js";
 import { mountAccount } from "./account.js";
@@ -24,8 +24,8 @@ import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
 import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { CHANGELOG } from "./changelog.js";
-import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, merchantCenterPage, analyticsPage, tagManagerPage, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage, withFreePlan } from "./pages.js";
-import { freePlan, setChangeCap } from "./plans.js";
+import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, claudeGuidePage, geminiGuidePage, llmsTxt, merchantCenterPage, analyticsPage, tagManagerPage, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
+import { setChangeCap } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
@@ -60,12 +60,11 @@ export interface Service {
   startJobs(): void;
   /** Links that add one Google service to a connection, so tests can follow one. */
   grants: Grants;
-  /** What every session reads, so tests can flip a flag (freeOneService) without a second server. */
+  /** What every session reads, so tests can change a setting (plusAvailable) without a second server. */
   deps: SessionDeps;
 }
 
 export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Service {
-  gateDemoCalls(cfg.gateDemo);
   setChangeCap(cfg.freeChangeCap, cfg.freeChangeCapFrom);
   const app = express();
   app.set("trust proxy", 1); // behind Traefik: one hop
@@ -80,7 +79,6 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     upgradeLink: (userId) => billing.link("upgrade", userId, "email"),
     agencyLink: (userId) => billing.link("agency", userId, "email"),
     plusLink: (userId) => billing.link("plus", userId, "email"),
-    freeOneServiceFrom: cfg.freeOneServiceFrom,
   });
   const announcements = new Announcements({ db, lifecycle, internalEmails, canSend: !!cfg.mail });
   const info = (title: string, body: string) => infoPage(cfg.baseUrl, title, body);
@@ -96,15 +94,15 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     track: (req, action, name) => analytics.event(req, action, name) });
   const deps: SessionDeps = {
     db, baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey,
-    freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails, freeOneServiceFrom: cfg.freeOneServiceFrom,
+    freeAccounts: cfg.freeAccounts, proAccounts: cfg.proAccounts, proEmails: cfg.proEmails,
     agencyAccounts: billing.agencyEnabled ? cfg.agencyAccounts : undefined, plusAvailable: billing.plusEnabled,
     billingLink: (kind, userId) => billing.link(kind, userId, "tool"), plansLink: (userId) => billing.plansLink(userId),
     refreshPlan: (userId) => billing.refreshPlan(userId),
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };
   const mcpUrl = new URL(`${cfg.baseUrl}/mcp`);
-  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service, service_wanted, grant_offered)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service, grant_offered)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
 
   app.use((req, res, next) => {
@@ -120,7 +118,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   // Before every public route: the admin host serves only the admin site.
   const admin = mountAdmin(app, {
     db, google: cfg.google, baseUrl: cfg.baseUrl, adminUrl: cfg.adminUrl, adminEmails: cfg.adminEmails,
-    internalEmails, announcements, freeOneServiceFrom: cfg.freeOneServiceFrom, fetch: overrides.fetch,
+    internalEmails, announcements, fetch: overrides.fetch,
   });
 
   // Gemini (Spark custom apps) registers asking for client_secret_post, takes the secret, then its
@@ -251,12 +249,6 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     return uris.some((u) => { try { return new URL(u).hostname === "chatgpt.com"; } catch { return false; } });
   };
 
-  // C2 (UNPROMPTED-STOPS.md): on one-service Free, the instructions say which service the plan covers. Loaded without
-  // touching last_seen_at; any failure just leaves the line out.
-  const planNoteFor = (userId: string, chatgpt: boolean): string | null => {
-    if (!userId) return null;
-    try { return UserSession.load(deps, userId, { chatgpt, seen: false }).serviceNote(); } catch { return null; }
-  };
 
   const pagespeed = new PageSpeedClient(cfg.pagespeedApiKey, overrides.pagespeedFetch, db);
   // A fresh server per request, bound to the caller the bearer middleware verified.
@@ -267,8 +259,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     let session: UserSession | undefined;
     const email = (db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string } | undefined)?.email.toLowerCase();
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
-      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.serviceWanted ?? null, c.grantOffered ?? null);
-    }, [], { chatgpt, planNote: planNoteFor(userId, chatgpt), pagespeed,
+      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.grantOffered ?? null);
+    }, [], { chatgpt, pagespeed,
       feedback: async (kind, message) => {
         if (!email) throw new Error("Feedback needs a connected account.");
         return { sent: await submitFeedback(feedbackDeps, email, kind, message, "sent from their AI app"), email };
@@ -352,8 +344,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.get("/mcp", noSessions);
   app.delete("/mcp", noSessions);
 
-  // Each page rendered once per phase of FREE_ONE_SERVICE (announced, then on), and the live phase's copy served,
-  // so the pages flip at its date, no restart. With no date set, there's one phase.
+  // Each page rendered once at boot (FREE_CHANGE_CAP is read then too).
   const render = (): Record<string, string> => {
     const tools = toolCatalog();
     return {
@@ -376,10 +367,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     "/llms.txt": llmsTxt(cfg.baseUrl, tools),
     };
   };
-  const from = cfg.freeOneServiceFrom;
-  const phases = [0, ...(from ? [from] : [])].map((at) => ({ at, pages: withFreePlan(freePlan(from, at), render) }));
-  const live = () => phases.filter((p) => p.at <= now()).at(-1)!.pages;
-  const pages = live();
+  const pages = render();
+  const live = () => pages;
   const page = (path: string) => (req: express.Request, res: express.Response) => {
     res.setHeader("Cache-Control", "public, max-age=300");
     adConversions.captureClick(req, res);  // keeps an ad click id; makes the response private if it does

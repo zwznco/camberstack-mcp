@@ -5,34 +5,18 @@
 
 import type { Release } from "./changelog.js";
 import { z } from "zod";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, listedServices, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, allServices, changeCap, dateLabel, freeChanges, freeChangesShort, freePlanChange, freeServices, oneServiceFree, servicesAnd, servicesOr, type FreePlan } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, listedServices, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, changeCap, freeChanges, freeChangesShort, servicesAnd, servicesOr } from "./plans.js";
 import type { ToolDoc } from "./tools.js";
 
-/**
- * Which Free the pages describe while they render (plans.ts FreePlan). server.ts renders each page once per phase of
- * FREE_ONE_SERVICE (announced, then on) and serves the live one, so the copy flips at the date without a restart.
- */
-let fp: FreePlan = { kind: "accounts" };
-export function withFreePlan<T>(plan: FreePlan, render: () => T): T {
-  const prev = fp;
-  fp = plan;
-  try { return render(); } finally { fp = prev; }
-}
-/** " From November 16, Free covers …" while announced; "" otherwise. Leading space, for the end of a paragraph. */
-const soon = () => (fp.kind === "upcoming" ? ` ${freePlanChange(fp)}` : "");
-/** Plus, in a sentence: from the date while announced. Empty before one-service Free is announced (Plus would equal Free). */
-const plusLine = () => fp.kind === "accounts" ? (capOn() ? ` Plus (${PLUS_PRICE_LABEL}) has unlimited applied changes on 1 Google Ads account.` : "")
-  : ` Plus (${PLUS_PRICE_LABEL}) covers all five together on 1 Google Ads account${fp.kind === "upcoming" ? `, from ${dateLabel(fp.from)}` : ""}.`;
+/** Plus, in a sentence; empty with the change cap off (Plus would equal Free). Leading space, for the end of a paragraph. */
+const plusLine = () => (capOn() ? ` Plus (${PLUS_PRICE_LABEL}) has unlimited applied changes on 1 Google Ads account.` : "");
 /** What Pro and Agency cover besides more accounts. */
-const paidCovers = () => (fp.kind === "accounts" ? (capOn() ? "Everything in Free with unlimited applied changes, on" : "Everything in Free, on") : `${allServices()}, on`);
-/** The change cap (plans.ts changeCap) on the accounts-based Free: Plus is sold as unlimited changes on 1 account. */
-const capOn = () => fp.kind === "accounts" && !!changeCap();
-/** Plus is on the page once one-service Free is announced, or with the change cap. */
-const plusShown = () => fp.kind !== "accounts" || capOn();
-/** Plus leads the pricing (highlighted) once it's sold: most users have one Google Ads account (69% on 2026-10-28). */
-const plusLeads = () => fp.kind === "one_service" || capOn();
-/** What Plus covers, as a sentence start. */
-const plusCovers = () => (fp.kind === "accounts" ? "Unlimited applied changes" : allServices());
+const paidCovers = () => (capOn() ? "Everything in Free with unlimited applied changes, on" : "Everything in Free, on");
+/**
+ * The change cap (plans.ts changeCap) is on: Plus is sold, as unlimited changes on 1 account, and leads the pricing
+ * (highlighted), since most users have one Google Ads account (69% on 2026-10-28). Off, Plus would equal Free and isn't shown.
+ */
+const capOn = () => !!changeCap();
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
@@ -320,12 +304,11 @@ const guideBody = (html: string) => `<section class="sec guide"><div class="wrap
 const closer = (title: string, sub: string, ctas: string) =>
   `<section class="closer"><div class="wrap"><h2>${title}</h2><p class="muted">${sub}</p><div class="ctas">${ctas}</div></div></section>`;
 
-/** The homepage's "What does Free cover?" once one-service Free is announced; nothing before. */
-const freeFaq = () => fp.kind === "accounts" ? (capOn() ? `<div><h3>What does Free cover?</h3>
+/** The homepage's "What does Free cover?" while the change cap is on; nothing otherwise. */
+const freeFaq = () => (capOn() ? `<div><h3>What does Free cover?</h3>
 <p>Every tool on 1 Google Ads account, with Search Console, Google Analytics, Merchant Center (1 account) and Tag Manager included, and
 ${freeChanges()}. A change counts when you approve and apply a proposal, however many edits it holds; undo and the demo account
-don't count. Reading, asking and proposing are never limited.${plusLine()}</p></div>` : "") : `<div><h3>What does Free cover?</h3>
-<p>${fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, every tool on 1 Google Ads account, with Search Console, Google Analytics, Merchant Center (1 account) and Tag Manager included. From then, one` : "One"} Google service at a time: ${freeServices()}, with every tool and ${freeChangesShort()}. The first time, your AI asks which one; another opens ${ACCOUNT_WINDOW_DAYS} days after the current one was last used.${plusLine()} Pro and Agency cover all five on more accounts.</p></div>`;
+don't count. Reading, asking and proposing are never limited.${plusLine()}</p></div>` : "");
 
 export function homePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
@@ -339,10 +322,10 @@ export function homePage(baseUrl: string): string {
       description: "Hosted Google Ads MCP server for Claude, ChatGPT and other MCP apps: read-only queries, optional Search Console, Google Analytics 4, Merchant Center and Tag Manager, and approved changes with undo.",
       offers: [
         { "@type": "Offer", name: "Free", price: "0", priceCurrency: "USD",
-          description: fp.kind === "one_service" ? `Every tool, with ${freeChanges()}, on ${oneServiceFree()}.` : `Every tool, with ${freeChanges()}, on 1 Google Ads account.` },
-        ...(plusLeads() ? [{ "@type": "Offer", name: "Plus", price: "7", priceCurrency: "USD", description: `${plusCovers()}, on 1 Google Ads account.`,
+          description: `Every tool, with ${freeChanges()}, on 1 Google Ads account.` },
+        ...(capOn() ? [{ "@type": "Offer", name: "Plus", price: "7", priceCurrency: "USD", description: `Unlimited applied changes, on 1 Google Ads account.`,
           priceSpecification: { "@type": "UnitPriceSpecification", price: "7", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } }] : []),
-        { "@type": "Offer", name: "Pro", price: "15", priceCurrency: "USD", description: fp.kind === "accounts" ? `Every tool${capOn() ? ", with unlimited applied changes," : ""} on up to ${PRO_ACCOUNTS} Google Ads accounts.` : `${allServices()}, on up to ${PRO_ACCOUNTS} Google Ads accounts.`,
+        { "@type": "Offer", name: "Pro", price: "15", priceCurrency: "USD", description: `Every tool${capOn() ? ", with unlimited applied changes," : ""} on up to ${PRO_ACCOUNTS} Google Ads accounts.`,
           priceSpecification: { "@type": "UnitPriceSpecification", price: "15", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } },
         { "@type": "Offer", name: "Agency", price: "49", priceCurrency: "USD", description: `Every tool on up to ${AGENCY_ACCOUNTS} Google Ads accounts.`,
           priceSpecification: { "@type": "UnitPriceSpecification", price: "49", priceCurrency: "USD", billingDuration: "P1M", unitCode: "MON" } },
@@ -445,20 +428,14 @@ Changes there never reach Google, and the demo doesn't count as one of your plan
 
 <section class="sec sec-tint" id="pricing"><div class="wrap">
 <div class="sec-head"><p class="kicker">Pricing</p><h2>${capOn() ? `Free for one account. ${PLUS_PRICE_LABEL} for unlimited changes, ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS} accounts, ${AGENCY_PRICE_LABEL} for ${AGENCY_ACCOUNTS}.`
-  : fp.kind === "accounts" ? `Free for one account. ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}, ${AGENCY_PRICE_LABEL} for ${AGENCY_ACCOUNTS}.`
-  : `Free for one ${fp.kind === "one_service" ? "service" : "account"}. ${PLUS_PRICE_LABEL} for all five, ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS} accounts, ${AGENCY_PRICE_LABEL} for ${AGENCY_ACCOUNTS}.`}</h2></div>
+  : `Free for one account. ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}, ${AGENCY_PRICE_LABEL} for ${AGENCY_ACCOUNTS}.`}</h2></div>
 <div class="plans">
-<div class="plan"><h3>Free</h3><p class="price">$0</p><p>${fp.kind === "one_service"
-  ? `Every tool, with ${freeChanges()} and undo, on <strong>one Google service at a time</strong>: ${freeServices()}. No card.`
-  : `Every tool, with ${freeChanges()} and undo, on <strong>1 Google Ads account</strong>. No card.`}</p>${fp.kind === "upcoming"
-  ? `<p class="muted small">From ${dateLabel(fp.from)}: one Google service at a time (${servicesOr()}).</p>` : ""}
-<p class="plan-cta"><a class="btn btn-ghost" href="#setup">Connect for free</a></p></div>${!plusShown() ? "" : `
-<div class="plan${plusLeads() ? " plan-pro" : ""}"><h3>Plus</h3><p class="price">${PLUS_PRICE_LABEL}</p><p>${plusCovers()}, on <strong>1 Google Ads account</strong>, ${capOn() ? "for anyone who makes more than a few changes a month" : "for anyone who wants one connection for all of it"}. Cancel any time.</p>
-${fp.kind === "upcoming" ? `<p class="muted small">Available from ${dateLabel(fp.from)}.</p>`
-  // Once sold, Plus is the highlighted plan: most users have one Google Ads account (69% on 2026-10-28).
-  : `<p class="plan-cta"><a class="btn" href="/account?upgrade=plus">Get Plus</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p>`}</div>`}
-<div class="plan${plusLeads() ? "" : " plan-pro"}"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>${paidCovers()} <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>, for owners with a few brands and freelancers with a few clients. Cancel any time; you keep Pro until the end of the month you paid for.</p>
-<p class="plan-cta"><a class="btn${plusLeads() ? " btn-ghost" : ""}" href="/account?upgrade=1">Upgrade to Pro</a></p>${plusLeads() ? "" : `<p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p>`}</div>
+<div class="plan"><h3>Free</h3><p class="price">$0</p><p>Every tool, with ${freeChanges()} and undo, on <strong>1 Google Ads account</strong>. No card.</p>
+<p class="plan-cta"><a class="btn btn-ghost" href="#setup">Connect for free</a></p></div>${!capOn() ? "" : `
+<div class="plan plan-pro"><h3>Plus</h3><p class="price">${PLUS_PRICE_LABEL}</p><p>Unlimited applied changes, on <strong>1 Google Ads account</strong>, for anyone who makes more than a few changes a month. Cancel any time.</p>
+<p class="plan-cta"><a class="btn" href="/account?upgrade=plus">Get Plus</a></p><p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p></div>`}
+<div class="plan${capOn() ? "" : " plan-pro"}"><h3>Pro</h3><p class="price">${PRO_PRICE_LABEL}</p><p>${paidCovers()} <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>, for owners with a few brands and freelancers with a few clients. Cancel any time; you keep Pro until the end of the month you paid for.</p>
+<p class="plan-cta"><a class="btn${capOn() ? " btn-ghost" : ""}" href="/account?upgrade=1">Upgrade to Pro</a></p>${capOn() ? "" : `<p class="muted small">Connect Camberstack to your AI app first; you'll sign in with the same Google account.</p>`}</div>
 <div class="plan"><h3>Agency</h3><p class="price">${AGENCY_PRICE_LABEL}</p><p>${paidCovers()} <strong>up to ${AGENCY_ACCOUNTS} Google Ads accounts</strong>, for agencies and anyone managing clients through a manager (MCC) account. Already on Pro? Switch from your account page; the difference is prorated.</p>
 <p class="plan-cta"><a class="btn btn-ghost" href="/account?upgrade=agency">Upgrade to Agency</a></p></div>
 </div>
@@ -544,10 +521,11 @@ since (a budget, a status, an end date), nothing is applied and ${app} shows you
 If everything in it is already in place, there's nothing left to apply. Proposals don't expire: an older one that still matches your account applies as approved.</p>
 <h3>"Plan limit"</h3>
 <p>The Free plan covers one Google Ads account at a time; another opens once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. On a second account, it asks you
-to upgrade, with a personal checkout link, and says when another account opens. Undo and change history always work. <a href="/#pricing">Plans</a>.</p>${fp.kind === "one_service" ? `
-<h3>"Service limit"</h3>
-<p>The Free plan covers one Google service at a time: ${servicesOr()}. The first time, your AI asks which one;
-another opens ${ACCOUNT_WINDOW_DAYS} days after the current one was last used. Plus covers all five together on one account, Pro and Agency on more. <a href="/#pricing">Plans</a>.</p>` : ""}
+to upgrade, with a personal checkout link, and says when another account opens. Undo and change history always work. <a href="/#pricing">Plans</a>.</p>${capOn() ? `
+<h3>"Change limit"</h3>
+<p>The Free plan includes ${freeChanges()}. Past that, applying a proposal stops: nothing is applied, the proposal stays open, and
+the answer says when the next change opens. Asking, reading, proposing, undo and change history keep working. Plus has unlimited changes on
+one account, Pro and Agency on more. <a href="/#pricing">Plans</a>.</p>` : ""}
 <h3>"Search Console access isn't part of this Google connection"</h3>
 <p>The Search Console box was unticked on Google's sign-in screen, or you connected before the Search Console tools existed.
 The same message comes with a personal link: open it and Google adds Search Console to your connection, no reconnecting. The same goes for Google Ads.</p>
@@ -571,9 +549,8 @@ const commonQuestions = (app: string) => `<h3>Do I need a Google Ads developer t
 <h3>Does ${app} see my whole Google account?</h3>
 <p>No. It gets Google Ads access, your email address and, if you leave them ticked, Search Console, Google Analytics, Merchant Center and Tag Manager (changed only when you approve a proposal). Nothing else: no Gmail, Drive or calendar. Details in the <a href="/privacy">privacy policy</a>.</p>
 <h3>What does it cost?</h3>
-<p>${fp.kind === "one_service" ? `Free on ${oneServiceFree()}, with every tool and ${freeChangesShort()}. <a href="/#pricing">Plus</a> covers all five together on one account for ${PLUS_PRICE_LABEL}, Pro on up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.`
-  : capOn() ? `Free on one Google Ads account, with every tool and ${freeChangesShort()}. <a href="/#pricing">Plus</a> has unlimited changes on one account for ${PLUS_PRICE_LABEL}, Pro on up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.`
-  : `Free on one Google Ads account, with every tool and ${freeChangesShort()}. <a href="/#pricing">Pro</a> covers up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.${soon()}`}</p>`;
+<p>${capOn() ? `Free on one Google Ads account, with every tool and ${freeChangesShort()}. <a href="/#pricing">Plus</a> has unlimited changes on one account for ${PLUS_PRICE_LABEL}, Pro on up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.`
+  : `Free on one Google Ads account, with every tool and ${freeChangesShort()}. <a href="/#pricing">Pro</a> covers up to ${PRO_ACCOUNTS} accounts for ${PRO_PRICE_LABEL}, Agency up to ${AGENCY_ACCOUNTS} for ${AGENCY_PRICE_LABEL}.`}</p>`;
 
 /**
  * Use-case page for "claude google ads" / "google ads claude" / "google ads mcp server" (keyword data:
@@ -720,9 +697,8 @@ ${guideTroubleshooting("ChatGPT",
 <p>No. The Google sign-in is Camberstack's, not ChatGPT's, and it shares only Google Ads, your email address and, if you leave them
 ticked, Search Console, Google Analytics, Merchant Center and Tag Manager (changed only when you approve a proposal). ChatGPT sees the answers Camberstack returns to the questions you ask, nothing else.</p>
 <h3>Does it need a paid Camberstack plan?</h3>
-<p>${fp.kind === "one_service" ? `No. Free covers ${oneServiceFree()}, with every tool; <a href="/#pricing">Plus</a> covers all five together on one account, Pro on up to ${PRO_ACCOUNTS} accounts, and Agency up to ${AGENCY_ACCOUNTS}.`
-  : capOn() ? `No. One Google Ads account is free with every tool and ${freeChanges()}; <a href="/#pricing">Plus</a> has unlimited changes on one account, Pro on up to ${PRO_ACCOUNTS} accounts, and Agency up to ${AGENCY_ACCOUNTS}.`
-  : `No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to ${PRO_ACCOUNTS}, and Agency up to ${AGENCY_ACCOUNTS}.${soon()}`}</p>
+<p>${capOn() ? `No. One Google Ads account is free with every tool and ${freeChanges()}; <a href="/#pricing">Plus</a> has unlimited changes on one account, Pro on up to ${PRO_ACCOUNTS} accounts, and Agency up to ${AGENCY_ACCOUNTS}.`
+  : `No. One Google Ads account is free with every tool; <a href="/#pricing">Pro</a> is for managing up to ${PRO_ACCOUNTS}, and Agency up to ${AGENCY_ACCOUNTS}.`}</p>
 <h3>Using Claude too?</h3>
 <p>Camberstack is in Claude's connector directory as well: see <a href="/google-ads-claude">the Claude guide</a>.</p>
 `)}
@@ -819,15 +795,13 @@ The same connection reads <a href="/google-analytics-mcp">Google Analytics 4</a>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>${fp.kind === "accounts" ? `The Search Console tools are free and don't count toward a plan. Plans count Google Ads accounts only: <a href="/#pricing">Free covers one, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}</a>.`
-  : fp.kind === "upcoming" ? `The Search Console tools are free. Until ${dateLabel(fp.from)} they don't count toward a plan; from then, Free covers one Google service at a time, and Search Console can be that one. Using it together with Google Ads or Analytics needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`
-  : `The Search Console tools are free on their own: Free covers one Google service at a time, and Search Console can be that one. Using it together with Google Ads or Analytics needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`}</p>
+<p>${`The Search Console tools are free and don't count toward a plan. Plans count Google Ads accounts only: <a href="/#pricing">Free covers one, Pro ${PRO_ACCOUNTS}, Agency ${AGENCY_ACCOUNTS}</a>.`}</p>
 <h3>Which Search Console permission do I need?</h3>
 <p>Any user of the property can read its performance data. Only the sites your Google login can see in Search Console are listed.</p>
 <h3>Do you store my search data?</h3>
 <p>No. Camberstack fetches it when your AI asks and passes it on; reports and query results aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
 `)}
-${closer("Ask your AI how your site is doing in Google Search.", fp.kind === "accounts" ? "Free. It doesn't count toward a plan." : "Free.",
+${closer("Ask your AI how your site is doing in Google Search.", "Free. It doesn't count toward a plan.",
   `<a class="btn btn-lg" href="/#setup">Connect Search Console</a><a class="btn btn-lg btn-ghost" href="/tools#search_console_sites">See the tools</a>`)}
 `,
   });
@@ -925,16 +899,14 @@ and <a href="/google-analytics-mcp">Google Analytics 4</a> too.</p>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>${fp.kind === "accounts" ? `Merchant Center is included on every plan: 1 Merchant Center account on <a href="/#pricing">Free</a>, ${PRO_ACCOUNTS} on Pro and ${AGENCY_ACCOUNTS} on Agency.`
-  : fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, Merchant Center is included on Free, on 1 Merchant Center account. From then, Free covers one Google service at a time, and Merchant Center can be that one. Using it together with Google Ads, for example to see what disapproved products were earning in ads, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`
-  : `Free covers one Google service at a time, and Merchant Center (1 account) can be that one. Using it together with Google Ads, for example to see what disapproved products were earning in ads, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`}</p>
+<p>${`Merchant Center is included on every plan: 1 Merchant Center account on <a href="/#pricing">Free</a>, ${PRO_ACCOUNTS} on Pro and ${AGENCY_ACCOUNTS} on Agency.`}</p>
 <h3>Can I try it first?</h3>
 <p>Yes. Ask for the demo store (Merchant Center account 000000001), a sample plumbing supply shop with disapproved and limited products. Fixes there change only the demo.</p>
 <h3>Do you store my product data?</h3>
 <p>Only the changes you approve, so they can be shown and undone; Google can't return them. Product statuses and reports are fetched
 when your AI asks and aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
 `)}
-${closer("Ask your AI why products aren't showing on Google.", fp.kind === "one_service" ? "Free for one Google service." : "Free on one Merchant Center account.",
+${closer("Ask your AI why products aren't showing on Google.", "Free on one Merchant Center account.",
   `<a class="btn btn-lg" href="/#setup">Connect Merchant Center</a><a class="btn btn-lg btn-ghost" href="/tools#merchant_accounts">See the tools</a>`)}
 `,
   });
@@ -1030,9 +1002,7 @@ other two ends of the same tracking.</p>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>${fp.kind === "accounts" ? `Tag Manager is included on every plan: <a href="/#pricing">Free, Pro and Agency</a>.`
-  : fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, Tag Manager is included on Free. From then, Free covers one Google service at a time, and Tag Manager can be that one. Using it together with Google Ads or Google Analytics, for example to take a conversion's ID from Google Ads, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`
-  : `Free covers one Google service at a time, and Tag Manager can be that one. Using it together with Google Ads or Google Analytics, for example to take a conversion's ID from Google Ads, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`}</p>
+<p>${`Tag Manager is included on every plan: <a href="/#pricing">Free, Pro and Agency</a>.`}</p>
 <h3>Which Tag Manager permission do I need?</h3>
 <p>Read access to a container is enough to check it. Adding, pausing or deleting tags needs Edit, and publishing needs Publish.
 Creating or deleting a container needs administrator access to the Tag Manager account.</p>
@@ -1042,7 +1012,7 @@ Creating or deleting a container needs administrator access to the Tag Manager a
 <p>Only what's needed to show and undo the changes you approve, such as a tag you deleted, so it can be put back. Your container's
 tags and triggers are read when your AI asks and aren't kept. Details in the <a href="/privacy">privacy policy</a>.</p>
 `)}
-${closer("Ask your AI whether your conversion tracking is right.", fp.kind === "one_service" ? "Free for one Google service." : "Free.",
+${closer("Ask your AI whether your conversion tracking is right.", "Free.",
   `<a class="btn btn-lg" href="/#setup">Connect Tag Manager</a><a class="btn btn-lg btn-ghost" href="/tools#tag_manager_containers">See the tools</a>`)}
 `,
   });
@@ -1137,9 +1107,7 @@ through the same connection.</p>
 
 <h2>Questions</h2>
 <h3>What does it cost?</h3>
-<p>${fp.kind === "accounts" ? `Google Analytics is included on every plan: <a href="/#pricing">Free, Pro and Agency</a>.`
-  : fp.kind === "upcoming" ? `Until ${dateLabel(fp.from)}, Google Analytics is included on Free. From then, Free covers one Google service at a time, and Google Analytics can be that one. Using it together with Google Ads, for example to see campaigns next to their landing pages, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`
-  : `Free covers one Google service at a time, and Google Analytics can be that one. Using it together with Google Ads, for example to see campaigns next to their landing pages, needs <a href="/#pricing">Plus</a> (${PLUS_PRICE_LABEL}).`}</p>
+<p>${`Google Analytics is included on every plan: <a href="/#pricing">Free, Pro and Agency</a>.`}</p>
 <h3>Which Google Analytics permission do I need?</h3>
 <p>Viewer access to a property is enough to read it. Marking key events needs Marketer or Editor; linking Google Ads needs admin
 access to both. Only the properties your Google login can see are listed.</p>
@@ -1149,7 +1117,7 @@ access to both. Only the properties your Google login can see are listed.</p>
 <p>No. Camberstack fetches reports when your AI asks and passes them on; they aren't kept. Only the setup changes you approve are
 stored, so they can be shown and undone. Details in the <a href="/privacy">privacy policy</a>.</p>
 `)}
-${closer("Ask your AI which pages turn visitors into customers.", fp.kind === "one_service" ? "Free for one Google service." : "Free.",
+${closer("Ask your AI which pages turn visitors into customers.", "Free.",
   `<a class="btn btn-lg" href="/#setup">Connect Google Analytics</a><a class="btn btn-lg btn-ghost" href="/tools#analytics_properties">See the tools</a>`)}
 `,
   });
@@ -1346,11 +1314,10 @@ changes there never reach Google, and it doesn't count toward your plan. Ask <em
 
 <h2 id="plans">Plans and limits</h2>
 <table><tr><th>Plan</th><th>Covers</th></tr>
-<tr><td>Free</td><td>${fp.kind === "one_service" ? `Every tool, ${freeChanges()}, on ${oneServiceFree()}. No card.`
-  : `Every tool, ${freeChanges()}, on 1 Google Ads account. No card.${soon()}`}</td></tr>
-${!plusShown() ? "" : `<tr><td>Plus, ${PLUS_PRICE_LABEL}</td><td>${plusCovers()}, on 1 Google Ads account.${fp.kind === "upcoming" ? ` From ${dateLabel(fp.from)}.` : ""} Cancel any time.</td></tr>
-`}<tr><td>Pro, ${PRO_PRICE_LABEL}</td><td>${fp.kind === "accounts" ? (capOn() ? "Unlimited applied changes" : "The same") : allServices()}, on up to ${PRO_ACCOUNTS} Google Ads accounts. Cancel any time.</td></tr>
-<tr><td>Agency, ${AGENCY_PRICE_LABEL}</td><td>${fp.kind === "accounts" ? (capOn() ? "Unlimited applied changes" : "The same") : allServices()}, on up to ${AGENCY_ACCOUNTS} Google Ads accounts. Cancel any time; switching from Pro is prorated.</td></tr></table>
+<tr><td>Free</td><td>Every tool, ${freeChanges()}, on 1 Google Ads account. No card.</td></tr>
+${!capOn() ? "" : `<tr><td>Plus, ${PLUS_PRICE_LABEL}</td><td>Unlimited applied changes, on 1 Google Ads account. Cancel any time.</td></tr>
+`}<tr><td>Pro, ${PRO_PRICE_LABEL}</td><td>${(capOn() ? "Unlimited applied changes" : "The same")}, on up to ${PRO_ACCOUNTS} Google Ads accounts. Cancel any time.</td></tr>
+<tr><td>Agency, ${AGENCY_PRICE_LABEL}</td><td>${(capOn() ? "Unlimited applied changes" : "The same")}, on up to ${AGENCY_ACCOUNTS} Google Ads accounts. Cancel any time; switching from Pro is prorated.</td></tr></table>
 <p>An account counts when you use Camberstack on it; it stops counting ${ACCOUNT_WINDOW_DAYS} days after its last use. Manager (MCC) accounts and the demo don't count.
 Using one more account than your plan covers returns a <code>plan_limit</code> error listing the accounts in use, when one frees up, and, on Free,
 a personal upgrade link valid for 7 days.${changeCap() ? ` On Free, applying a proposal once ${changeCap()} have been applied in the last ${ACCOUNT_WINDOW_DAYS} days
@@ -1501,16 +1468,11 @@ None of your Google Ads, Search Console, Google Analytics, Merchant Center or Ta
 /**
  * What each plan includes, as facts only: no upgrade buttons and no checkout links. The one plans page a ChatGPT connection
  * may link to (its guidelines allow "an informational page describing available plans", not a page that "explicitly
- * initiates the process to upgrade"; the homepage #pricing has upgrade buttons). Follows FREE_ONE_SERVICE, so it describes
- * whichever Free is live.
+ * initiates the process to upgrade"; the homepage #pricing has upgrade buttons). Follows the change cap (FREE_CHANGE_CAP).
  */
 export function plansPage(baseUrl: string): string {
-  const free = fp.kind === "one_service"
-    ? `<p>Every tool, with ${freeChanges()} and undo, on <strong>one Google service at a time</strong>:
-${freeServices()}. Your AI asks which one before the first is used; another opens
-${ACCOUNT_WINDOW_DAYS} days after the current one was last used.</p>`
-    : `<p>Every tool, with ${freeChanges()} and undo, on <strong>1 Google Ads account</strong> at a time; another opens
-once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Search Console, Google Analytics and Tag Manager are included and don't count. Merchant Center is included too, on 1 Merchant Center account.${soon()}</p>`;
+  const free = `<p>Every tool, with ${freeChanges()} and undo, on <strong>1 Google Ads account</strong> at a time; another opens
+once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Search Console, Google Analytics and Tag Manager are included and don't count. Merchant Center is included too, on 1 Merchant Center account.</p>`;
   const all = paidCovers();
   return layout({
     baseUrl, path: "/plans",
@@ -1520,8 +1482,8 @@ once it has gone ${ACCOUNT_WINDOW_DAYS} days unused. Search Console, Google Anal
 <h1>Plans</h1>
 <h2>Free · $0</h2>
 ${free}
-${!plusShown() ? "" : `<h2>Plus · ${PLUS_PRICE_LABEL}</h2>
-<p>${plusCovers()}, on <strong>1 Google Ads account</strong>.${fp.kind === "upcoming" ? ` From ${dateLabel(fp.from)}.` : ""} Cancel any time.</p>
+${!capOn() ? "" : `<h2>Plus · ${PLUS_PRICE_LABEL}</h2>
+<p>Unlimited applied changes, on <strong>1 Google Ads account</strong>. Cancel any time.</p>
 `}<h2>Pro · ${PRO_PRICE_LABEL}</h2>
 <p>${all} <strong>up to ${PRO_ACCOUNTS} Google Ads accounts</strong>. Cancel any time.</p>
 <h2>Agency · ${AGENCY_PRICE_LABEL}</h2>
@@ -1738,8 +1700,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - Merchant Center (optional): account and product issues, Shopping and free-listing reports, disapproved products joined with their ad spend; approved changes override product attributes (price, GTIN, title, …) through Camberstack's own supplemental source, exclude or include products, add Camberstack's own products, and link Merchant Center to Google Ads. The feed itself is never edited.
 - Tag Manager (optional): web containers, each container's tags and triggers with tracking problems (Ads conversion tag on every page, no Conversion Linker, tags that never fire, Universal Analytics), and what's unpublished; approved changes add a Google tag, Google Ads conversion tag, GA4 event tag or Conversion Linker, pause, unpause or delete tags, create or delete a container, and publish.
 - Demo: account 000-000-0001 is a sample business (sample data) anyone can try every tool on; changes there never touch Google. Logins with no Google Ads access get it automatically.
-- Pricing: ${fp.kind === "one_service" ? `Free plan covers ${oneServiceFree()} (every tool, ${freeChanges()}); Plus ${PLUS_PRICE_LABEL} covers all five together on 1 Google Ads account; Pro and Agency cover all five on more accounts.`
-  : `Free plan covers 1 Google Ads account (every tool, ${freeChanges()}).${capOn() ? ` Plus ${PLUS_PRICE_LABEL} has unlimited applied changes on 1 Google Ads account.` : ""}${soon()}`} Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with no switching in between; manager (MCC) and demo accounts don't count. Undo is always free.
+- Pricing: ${`Free plan covers 1 Google Ads account (every tool, ${freeChanges()}).${capOn() ? ` Plus ${PLUS_PRICE_LABEL} has unlimited applied changes on 1 Google Ads account.` : ""}`} Pro ${PRO_PRICE_LABEL} covers up to ${PRO_ACCOUNTS}; Agency ${AGENCY_PRICE_LABEL} up to ${AGENCY_ACCOUNTS}. Accounts are counted as those used in the last ${ACCOUNT_WINDOW_DAYS} days, with no switching in between; manager (MCC) and demo accounts don't count. Undo is always free.
 - [Documentation](${baseUrl}/docs)
 - [Setup](${baseUrl}/#setup)
 - [Pricing](${baseUrl}/#pricing)

@@ -15,7 +15,7 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { SC_TARGET } from "./search-console-changes.js";
 import { GTM_TARGET } from "./gtm-changes.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, SERVICE_LABELS, allServices, changeCap, freeChanges, listedServices, planLabel } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, freeChanges, planLabel } from "./plans.js";
 
 interface AccountDeps {
   db: DB;
@@ -201,20 +201,17 @@ Your AI app can no longer use Camberstack until you connect again.</p>
 
     const planCard = plan.plan !== "free"
       ? `<div class="card"><p class="label">Plan</p><p class="big">${planLabel(plan.plan)}${"complimentary" in plan ? ` <span class="chip">complimentary</span>` : ""}</p>
-<p class="muted">${plan.plan === "plus" ? (changeCap() ? "Unlimited applied changes. " : `${allServices()}. `) : ""}${plan.accounts_in_use.length} of ${plan.accounts_included} Google Ads account${plan.accounts_included === 1 ? "" : "s"} in use (last ${ACCOUNT_WINDOW_DAYS} days).${"complimentary" in plan ? " No subscription on this account, so nothing to manage or cancel." : ""}</p>
+<p class="muted">${plan.plan === "plus" ? "Unlimited applied changes. " : ""}${plan.accounts_in_use.length} of ${plan.accounts_included} Google Ads account${plan.accounts_included === 1 ? "" : "s"} in use (last ${ACCOUNT_WINDOW_DAYS} days).${"complimentary" in plan ? " No subscription on this account, so nothing to manage or cancel." : ""}</p>
 ${!by && "manage_billing" in plan && plan.manage_billing ? `<a class="btn" href="${esc(plan.manage_billing)}">Manage billing</a>` : ""}
 ${!by && "pro_upgrade_url" in plan && plan.pro_upgrade_url ? `<a class="btn" href="${esc(plan.pro_upgrade_url)}">Switch to Pro · ${PRO_PRICE_LABEL}</a>` : ""}
 ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="btn" href="${esc(plan.agency_upgrade_url)}">Switch to Agency · ${AGENCY_PRICE_LABEL}</a>` : ""}</div>`
       : (() => {
         const used = plan.accounts_in_use;
         return `<div class="card"><p class="label">Plan</p><p class="big">Free</p>
-<p class="muted">${"services_included" in plan
-  ? `Every tool, with ${freeChanges()}, on one Google service at a time (${listedServices().map((s) => s === "ads" || s === "merchant" ? `${SERVICE_LABELS[s]} on ${plan.accounts_included} account` : SERVICE_LABELS[s]).join(", ").replace(/, ([^,]+)$/, " or $1")}). In use: <strong style="color:var(--fg)">${esc(plan.service_in_use ?? "none yet; your AI asks which before the first")}</strong>.`
-  : `Every tool, with ${freeChanges()}, on ${plan.accounts_included} Google Ads account.`}
+<p class="muted">Every tool, with ${freeChanges()}, on ${plan.accounts_included} Google Ads account.
 ${"changes_included" in plan && plan.changes_included ? `Changes applied (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${plan.changes_applied} of ${plan.changes_included}</strong>.` : ""}
 ${used.length ? `Google Ads accounts in use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on a Google Ads account yet."}
-${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? ("services_included" in plan ? `Plus covers all five together on 1 account; ` : `Plus has unlimited changes on 1 account; `) : ""}Pro covers ${"services_included" in plan ? `all five together, on ` : ""}up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
-${"free_plan_change" in plan && plan.free_plan_change ? `<p class="muted"><strong style="color:var(--fg)">${esc(plan.free_plan_change)}</strong></p>` : ""}
+${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? `Plus has unlimited changes on 1 account; ` : ""}Pro covers up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>
 <p class="muted">Another Google Ads account opens on Free once the one in use has gone ${ACCOUNT_WINDOW_DAYS} days unused.</p>
 ${!by && "plus_upgrade_url" in plan && plan.plus_upgrade_url ? `<a class="btn" href="${esc(plan.plus_upgrade_url)}">Plus · ${PLUS_PRICE_LABEL}</a>` : ""}
 ${!by && "upgrade_url" in plan && plan.upgrade_url ? `<a class="btn" href="${esc(plan.upgrade_url)}">Upgrade to Pro · ${PRO_PRICE_LABEL}</a>` : ""}

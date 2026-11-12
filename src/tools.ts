@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.31.1";
+export const SERVER_VERSION = "0.32.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -60,37 +60,30 @@ const GA_PROPOSES = new Set(PUBLIC_GA_CHANGES.map((c) => `propose_${c.shape.type
 const SC_PROPOSES = new Set(PUBLIC_SC_CHANGES.map((c) => `propose_${c.shape.type.value}`));
 const GTM_PROPOSES = new Set(PUBLIC_GTM_CHANGES.map((c) => `propose_${c.shape.type.value}`));
 /**
- * The Google services a call uses on real data, for the one-service Free plan (session.ts checkService). Listing what a
+ * The Google services a call uses on real data, logged per call (tool_calls.service) for the reports. Listing what a
  * login can reach (list_accounts, search_console_sites, analytics_properties, merchant_accounts) and the demo account, site, property and store
- * use none; nor do apply/undo/history, which act on a proposal the gate already let through.
+ * use none; nor do apply/undo/history, which act on an existing proposal.
  */
-/**
- * Test only (projects/camberstack/UNPROMPTED-STOPS.md): GATE_DEMO=1 makes the plan gate treat the demo account, site,
- * property and store as real, so the one-service gate can be tested on the demo's live-looking data. Never set in prod.
- */
-let gateDemo = false;
-export function gateDemoCalls(on: boolean): void { gateDemo = on; }
 
 export function servicesOf(name: string, a: unknown): Service[] {
   const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; container?: unknown;
     account?: unknown; changes?: { property_id?: unknown; site_url?: unknown; type?: unknown; container?: unknown; account?: unknown }[] };
-  const realGa = (p: unknown) => gateDemo || p !== DEMO_PROPERTY;
-  const realMc = typeof x.account_id === "string" && (gateDemo || x.account_id !== DEMO_MERCHANT);
-  // Reads Ads and Merchant Center together, so like paid_organic_overlap it needs a paid plan on one-service Free.
-  // Linking touches both, so it's paid too; undo isn't gated, so a link can always be reversed.
+  const realGa = (p: unknown) => p !== DEMO_PROPERTY;
+  const realMc = typeof x.account_id === "string" && x.account_id !== DEMO_MERCHANT;
+  // Linking touches Ads and Merchant Center both.
   if (LINK_TOOLS.has(name) || (name === "propose_changes" && x.changes?.some((c) => LINK_CHANGES.has(String(c?.type)))))
-    return typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) ? ["ads", "merchant"] : [];
+    return typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads", "merchant"] : [];
   if (name === "merchant_ad_spend")
-    return [...(typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) ? ["ads" as const] : []), ...(realMc ? ["merchant" as const] : [])];
+    return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(realMc ? ["merchant" as const] : [])];
   if (MC_GATED.has(name)) return realMc ? ["merchant"] : [];
   if (name === "paid_organic_overlap")
-    return [...(typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) ? ["ads" as const] : []), ...((gateDemo || x.site_url !== DEMO_SITE) ? ["search_console" as const] : [])];
-  if (GATED.has(name) && !PICK_TOOLS.has(name)) return typeof x.customer_id === "string" && (gateDemo || !isDemo(x.customer_id)) && !isLookup(name, a) ? ["ads"] : [];
-  if ((name.startsWith("search_console_") && name !== "search_console_sites") || SC_PROPOSES.has(name)) return (gateDemo || x.site_url !== DEMO_SITE) ? ["search_console"] : [];
-  if (name === "propose_search_console_changes") return (x.changes ?? []).some((c) => (gateDemo || c?.site_url !== DEMO_SITE)) ? ["search_console"] : [];
+    return [...(typeof x.customer_id === "string" && !isDemo(x.customer_id) ? ["ads" as const] : []), ...(x.site_url !== DEMO_SITE ? ["search_console" as const] : [])];
+  if (GATED.has(name) && !PICK_TOOLS.has(name)) return typeof x.customer_id === "string" && !isDemo(x.customer_id) && !isLookup(name, a) ? ["ads"] : [];
+  if ((name.startsWith("search_console_") && name !== "search_console_sites") || SC_PROPOSES.has(name)) return x.site_url !== DEMO_SITE ? ["search_console"] : [];
+  if (name === "propose_search_console_changes") return (x.changes ?? []).some((c) => c?.site_url !== DEMO_SITE) ? ["search_console"] : [];
   if (["analytics_report", "analytics_landing_pages", "analytics_setup"].includes(name) || GA_PROPOSES.has(name)) return realGa(x.property_id) ? ["analytics"] : [];
   // The demo account and everything in it (its container, and containers created there) are sample data.
-  const realGtm = (c: unknown) => gateDemo || !(typeof c === "string" && (c === DEMO_GTM_ACCOUNT || c.startsWith(`${DEMO_GTM_ACCOUNT}/`)));
+  const realGtm = (c: unknown) => !(typeof c === "string" && (c === DEMO_GTM_ACCOUNT || c.startsWith(`${DEMO_GTM_ACCOUNT}/`)));
   if (name === "tag_manager_setup" || GTM_PROPOSES.has(name)) return realGtm(x.container ?? x.account) ? ["tag_manager"] : [];
   if (name === "propose_tag_manager_changes") return (x.changes ?? []).some((c) => realGtm(c?.container ?? c?.account)) ? ["tag_manager"] : [];
   // create_ga4_property has no property_id: a new property is real.
@@ -166,8 +159,6 @@ interface ToolCall {
   queryShape?: string | null;
   /** servicesOf, comma-joined, on a call that ran (null when it used none, or was refused). */
   service?: string | null;
-  /** servicesOf on a call a notice stopped: what it was after, for reading the paywall by service. Never counts as use. */
-  serviceWanted?: string | null;
   /** The grant link this call handed out (google.ts grantName), in an error or a result's grant_url. */
   grantOffered?: string | null;
 }
@@ -179,9 +170,9 @@ const GRANT_LINK = /\/connect\/([a-z-]+)\?t=/;
 export interface ToolDoc { name: string; title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations }
 
 export function buildServer(session: () => UserSession, log: (c: ToolCall) => void = () => {}, catalog: ToolDoc[] = [],
-  o: { chatgpt?: boolean; planNote?: string | null; pagespeed?: PageSpeedClient; stuck?: (tool: string, error: string) => string | null;
+  o: { chatgpt?: boolean; pagespeed?: PageSpeedClient; stuck?: (tool: string, error: string) => string | null;
     feedback?: (kind: FeedbackKind, message: string) => Promise<{ sent: boolean; email: string }> } = {}): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + MERCHANT_INSTRUCTIONS + (o.planNote ? `\n${o.planNote}` : "") });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: (o.chatgpt ? CHATGPT_INSTRUCTIONS : INSTRUCTIONS) + MERCHANT_INSTRUCTIONS });
   const wrap = <A>(name: string, fn: (a: A) => Promise<unknown> | unknown) => {
     return async (a: A) => {
       const t0 = Date.now();
@@ -195,11 +186,6 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       let offered: string | null = null;
       const services = servicesOf(name, a);
       try {
-        if (services.length) {
-          const done = session().checkService(services);
-          const prev = release;
-          release = () => { prev(); done(); };
-        }
         if ((GATED.has(name) || MC_GATED.has(name)) && typeof cid === "string") {
           // switch_account/choose_account is the user's pick after an "Account choice:" notice: it takes the account without asking again.
           const done = await session().checkAccount(cid, PICK_TOOLS.has(name));
@@ -226,7 +212,6 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           ms: Date.now() - t0, bytes: out.content[0]!.text.length,
           queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
           service: services.length && !("isError" in out) && !notice ? services.join(",") : null,
-          serviceWanted: services.length && notice ? services.join(",") : null,
           // A result's grant_url (search_console_sites, analytics_properties, …) names only the service, never edit.
           grantOffered: offered ?? GRANT_LINK.exec(out.content[0]!.text)?.[1] ?? null,
         });
@@ -354,7 +339,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "List Search Console sites",
     description: "Lists the websites (Search Console properties) this Google login can read. Use a site_url from here in the other Search Console tools.",
     annotations: read,
-  }, async () => { const s = session(); return s.withListingNote("search_console", await s.searchConsoleSites()); });
+  }, async () => { const s = session(); return s.searchConsoleSites(); });
 
   tool("search_console_summary", {
     title: "Search Console summary",
@@ -461,7 +446,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     description: "Lists the Google Analytics 4 properties this Google login can read. Use a property_id from here in the other Google Analytics tools. "
       + "If Google Analytics isn't part of the connection yet, says so and returns grant_url, a personal link the user opens to add it.",
     annotations: read,
-  }, async () => { const s = session(); return s.withListingNote("analytics", await listProperties(s.ga)); });
+  }, async () => { const s = session(); return listProperties(s.ga); });
 
   tool("analytics_setup", {
     title: "Google Analytics setup",
@@ -529,7 +514,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       + "and an account_id to create a container in (create_container). "
       + "If Tag Manager isn't part of the connection yet, says so and returns grant_url, a personal link the user opens to add it.",
     annotations: read,
-  }, async () => { const s = session(); return s.withListingNote("tag_manager", await listContainers(s.gtm)); });
+  }, async () => { const s = session(); return listContainers(s.gtm); });
 
   tool("tag_manager_setup", {
     title: "Tag Manager setup and tracking check",
@@ -557,7 +542,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       + "Use an account_id from here in the other Merchant Center tools. If Merchant Center isn't part of the connection yet, says so and returns grant_url, "
       + "a personal link the user opens to add it.",
     annotations: read,
-  }, async () => { const s = session(); return s.withListingNote("merchant", await listMerchantAccounts(s.merchant)); });
+  }, async () => { const s = session(); return listMerchantAccounts(s.merchant); });
 
   tool("merchant_product_issues", {
     title: "Merchant Center product issues",

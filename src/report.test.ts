@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDb, now } from "./db.js";
-import { buildReport, capUsage, MONTHLY, ON_REQUEST_GAP, userDetail, windowStart } from "./report.js";
+import { buildReport, capUsage, MONTHLY, userDetail, windowStart } from "./report.js";
 import { setChangeCap } from "./plans.js";
 
 describe("buildReport", () => {
@@ -112,61 +112,37 @@ describe("buildReport", () => {
     expect(ch.watched).toBe(3);
   });
 
-  it("reads the one-service paywall from switch-on, by existing vs new signups and ChatGPT vs other apps", () => {
+  it("reads the change-cap paywall from switch-on, by existing vs new signups and ChatGPT vs other apps", () => {
     const db = openDb(":memory:");
     const t = now(), on = t - 5 * 86400;
-    expect(buildReport(db, { days: 7, exclude: [] }).paywall).toEqual({ since: null, gate: "service", rows: [] });
+    expect(buildReport(db, { days: 7, exclude: [] }).paywall).toEqual({ since: null, rows: [] });
     db.prepare("INSERT INTO clients (client_id, info, created_at) VALUES ('gpt', ?, 0), ('claude', ?, 0)")
       .run(JSON.stringify({ redirect_uris: ["https://chatgpt.com/connector/oauth/x"] }), JSON.stringify({ redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] }));
     const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, last_seen_at) VALUES (?, ?, ?, 'free', ?, ?)");
     u.run("old", "g1", "o@x.com", t - 20 * 86400, t);      // existing, Claude: stopped, clicked, paid
     u.run("gone", "g2", "g@x.com", t - 20 * 86400, t - 10 * 86400);  // idle since before switch-on: not in the read
     u.run("gptnew", "g3", "n@x.com", t - 86400, t);        // new, ChatGPT: stopped, emailed, viewed /plans
-    const c = db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, ok, error, ms, bytes) VALUES (?, ?, ?, 'run_gaql', 1, ?, 1, 1)");
-    c.run(on, "old", "claude", "Service choice: The Free plan covers one Google service at a time");
-    c.run(on + 60, "old", "claude", "Service limit: the Free plan covers one Google service at a time");
-    c.run(t - 3600, "gptnew", "gpt", "Service limit: the Free plan covers one Google service at a time");
-    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('gptnew', 'service_limit', ?)").run(t);
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, ok, error, ms, bytes) VALUES (?, ?, ?, 'apply_changes', 1, ?, 1, 1)");
+    c.run(on, "old", "claude", "Change limit: nothing was applied.");
+    c.run(t - 3600, "gptnew", "gpt", "Change limit: nothing was applied.");
+    c.run(on - 60, "old", "claude", "Plan limit: another account");  // other stops aren't this paywall
+    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('gptnew', 'change_limit', ?)").run(t);
     const e = db.prepare("INSERT INTO plan_events (user_id, kind, src, at) VALUES (?, ?, ?, ?)");
     e.run("old", "upgrade_click", "tool", on + 120); e.run("old", "paid", "sub_1", on + 180);
     e.run("old", "upgrade_click", "email", on - 86400);    // before switch-on: doesn't count
     e.run("gptnew", "plans_view", null, t - 60);
     const p = buildReport(db, { days: 7, exclude: [] }).paywall;
-    expect(p.since).toBe(on);
+    expect(p.since).toBe(on);  // no start set: the first Change limit stop
     expect(p.rows).toEqual([
-      { existing: 1, chatgpt: 0, merchant: 0, users: 1, stopped: 1, emailed: 0, viewed: 0, clicked: 1, paid: 1, offered: 1, offered_paid: 1,
-        stopped_req: 1, offered_req: 1, offered_req_paid: 1, applied: 0 },
-      { existing: 0, chatgpt: 1, merchant: 0, users: 1, stopped: 1, emailed: 1, viewed: 1, clicked: 0, paid: 0, offered: 1, offered_paid: 0,
-        stopped_req: 1, offered_req: 1, offered_req_paid: 0, applied: 0 },
+      { existing: 1, chatgpt: 0, users: 1, stopped: 1, emailed: 0, viewed: 0, clicked: 1, paid: 1, offered: 1, offered_paid: 1, applied: 0 },
+      { existing: 0, chatgpt: 1, users: 1, stopped: 1, emailed: 1, viewed: 1, clicked: 0, paid: 0, offered: 1, offered_paid: 0, applied: 0 },
     ]);
-    // A stop that asked for Merchant Center splits them out, a complimentary plan leaves the read, and the flag's date sets existing vs new.
-    db.prepare("INSERT INTO tool_calls (at, user_id, client_id, tool, ok, error, ms, bytes, service_wanted) VALUES (?, 'gptnew', 'gpt', 'merchant_report', 1, 'Service limit: x', 1, 1, 'merchant')").run(t - 60);
+    // A complimentary plan leaves the read, and the cap's start sets existing vs new.
     u.run("comp", "g4", "c@x.com", t - 20 * 86400, t);
     db.prepare("UPDATE users SET plan = 'plus' WHERE id = 'comp'").run();
-    const split = buildReport(db, { days: 7, exclude: [], freeOneServiceFrom: t - 2 * 86400 }).paywall;
+    const split = buildReport(db, { days: 7, exclude: [], changeCapFrom: t - 2 * 86400 }).paywall;
     expect(split.since).toBe(t - 2 * 86400);
-    expect(split.rows.map((r) => [r.existing, r.chatgpt, r.merchant, r.users])).toEqual([[1, 0, 0, 1], [0, 1, 1, 1]]);
-  });
-
-  it("labels a stop on request only when it starts more than ON_REQUEST_GAP after the user's previous call ended (C3)", () => {
-    const db = openDb(":memory:");
-    const t = now(), on = t - 5 * 86400;
-    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, last_seen_at) VALUES (?, ?, ?, 'free', ?, ?)");
-    u.run("chain", "g1", "a@x.com", t - 86400, t);   // the AI reached for a second service mid-answer
-    u.run("asked", "g2", "b@x.com", t - 86400, t);   // the user's next message asked for it
-    u.run("par", "g3", "c@x.com", t - 86400, t);     // a stop in parallel with a covered call: same answer
-    const c = db.prepare("INSERT INTO tool_calls (id, at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, ?, ?, 1, ?, ?, 1)");
-    c.run(1, on, "chain", "run_gaql", "Service choice: x", 10);
-    c.run(2, t - 600, "chain", "account_overview", null, 4000);       // ends at t-600
-    c.run(3, t - 590, "chain", "analytics_report", "Service limit: x", 2000);   // starts t-592: 8 s later → in an answer
-    c.run(4, t - 600, "asked", "account_overview", null, 4000);
-    c.run(5, t - 500, "asked", "analytics_report", "Service limit: x", 2000);   // starts t-502: 98 s later → on request
-    c.run(6, t - 400, "par", "account_overview", null, 20000);        // started t-420, ended t-400
-    c.run(7, t - 419, "par", "analytics_report", "Service limit: x", 500);      // started t-419.5, while the covered call ran
-    const byUser = (rows: { users: number; stopped: number; stopped_req: number }[]) => rows.reduce((a, r) => ({ s: a.s + r.stopped, q: a.q + r.stopped_req }), { s: 0, q: 0 });
-    const p = buildReport(db, { days: 7, exclude: [] }).paywall;
-    expect(byUser(p.rows)).toEqual({ s: 3, q: 1 });  // all three stopped; only "asked" on request
-    expect(ON_REQUEST_GAP).toBe(45);
+    expect(split.rows.map((r) => [r.existing, r.chatgpt, r.users])).toEqual([[1, 0, 1], [0, 1, 1]]);
   });
 
   it("counts signups by hour today and by day otherwise, and retention by weeks since each user's own signup", () => {

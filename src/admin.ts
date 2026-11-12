@@ -27,8 +27,6 @@ export interface AdminDeps {
   adminEmails: Set<string>;
   /** Always left out of the numbers (operator + testers: ADMIN_EMAILS, PRO_EMAILS). */
   internalEmails: Set<string>;
-  /** FREE_ONE_SERVICE's start, for the paywall read. */
-  freeOneServiceFrom?: number;
   /** Announcement emails (announce.ts); unset = no Announcements page. */
   announcements: Announcements;
   fetch?: typeof fetch;
@@ -67,7 +65,7 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
   // (ADMIN_EMAILS, PRO_EMAILS) are always left out. ?all=1 lists every user on /users, whenever last seen.
   const view = (req: Request) => {
     const days = [1, 7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
-    const report = buildReport(d.db, { days, exclude: [...d.internalEmails], freeOneServiceFrom: d.freeOneServiceFrom });
+    const report = buildReport(d.db, { days, exclude: [...d.internalEmails] });
     return { days, all: req.query.all === "1", report, feedback: feedbackCount(d.db, windowStart(days)),
       cap: capUsage(d.db, [...d.internalEmails]) };
   };
@@ -391,14 +389,14 @@ function retentionCard(v: View): string {
     `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="Of each week's users who ever applied a real-account change, the share that applied one 7n–7n+7 days after their own signup. Demo account excluded. Paid: on a paid plan now.">all time · applied in week N, of appliers</small>`);
 }
 
-/** The one-service paywall funnel (report.ts paywall; PRICING-TEST.md): read by group, existing vs new signups, ChatGPT vs other apps. */
+/** The change-cap paywall funnel (report.ts paywall; PRICING-TEST.md): read by group, existing vs new signups, ChatGPT vs other apps. */
 function paywallCard(v: View): string {
   const p = v.report.paywall;
   if (!p.since) return "";
-  return card(p.gate === "change" ? "Paywall · change cap" : "Paywall · one service", table(["signed up", "app", "Merchant", ["users", "r"], ["stopped", "r"], ["emailed", "r"], ["viewed /plans", "r"], ["clicked upgrade", "r"], ["paid", "r"], ["stopped + offered", "r"], ["of those, paid", "r"], ["stopped on request", "r"], ["on request + offered", "r"], ["of those, paid", "r"], ["applied", "r"]],
-    p.rows.map((r) => [r.existing ? "before switch-on" : "after", r.chatgpt ? "ChatGPT" : "other", r.merchant ? "yes" : "no", num(r.users), num(r.stopped), num(r.emailed),
-      r.chatgpt ? num(r.viewed) : `<span class="muted">—</span>`, num(r.clicked), num(r.paid), num(r.offered), num(r.offered_paid), num(r.stopped_req), num(r.offered_req), num(r.offered_req_paid), num(r.applied)]), "Nobody active since switch-on."),
-    `<small title="From switch-on. Users seen since then, complimentary plans left out. Merchant: used it, or a stop asked for it. Stopped: got Service limit (one service) or Change limit (change cap). On request: at least one stop came more than 45 s after the user's previous call ended (or had none before it), so a new message likely asked for it; closer than that, the AI made the call inside one answer, often on its own (UNPROMPTED-STOPS.md). ChatGPT gets /plans, not an upgrade link; others get the link in the stop itself. Clicked: any personal upgrade link (tool, email, account page). Paid: a checkout since switch-on.">since ${when(p.since)}</small>`);
+  return card("Paywall · change cap", table(["signed up", "app", ["users", "r"], ["stopped", "r"], ["emailed", "r"], ["viewed /plans", "r"], ["clicked upgrade", "r"], ["paid", "r"], ["stopped + offered", "r"], ["of those, paid", "r"], ["applied", "r"]],
+    p.rows.map((r) => [r.existing ? "before switch-on" : "after", r.chatgpt ? "ChatGPT" : "other", num(r.users), num(r.stopped), num(r.emailed),
+      r.chatgpt ? num(r.viewed) : `<span class="muted">—</span>`, num(r.clicked), num(r.paid), num(r.offered), num(r.offered_paid), num(r.applied)]), "Nobody active since switch-on."),
+    `<small title="From switch-on (FREE_CHANGE_CAP_FROM). Users seen since then, complimentary plans left out. Stopped: got Change limit. Offered: stopped and then emailed, viewed /plans or clicked an upgrade link. Applied: applied a real change since switch-on (the guardrail). Bars in projects/camberstack/PRICING-TEST.md.">since ${date(p.since)} UTC · hover for definitions</small>`);
 }
 
 function usersPage(v: View): string {

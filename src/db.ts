@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   ms           INTEGER NOT NULL,
   bytes        INTEGER NOT NULL, -- size of the result text
   query_shape  TEXT,             -- run_gaql only: the query with every value replaced by ? (gaql.ts queryShape)
-  service      TEXT              -- Google services a real (non-demo) call used, comma-joined (tools.ts servicesOf); plan gate for Option C
+  service      TEXT              -- Google services a real (non-demo) call used, comma-joined (tools.ts servicesOf), for the reports
 );
 CREATE INDEX IF NOT EXISTS tool_calls_at ON tool_calls(at);
 -- Per-user lookups (the admin report's per-user columns, session gates): without it each one scanned the table (2.2 s a page).
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS email_log (
 
 -- The paywall funnel past the stop itself (billing.ts track; PRICING-TEST.md): a click on a personal upgrade link
 -- (src = where the link was handed out), a view of /plans through a personal link, a paid checkout. The stops are
--- tool_calls rows already (error 'Service limit:' etc.), and the emails are email_log.
+-- tool_calls rows already (error 'Change limit:' etc.), and the emails are email_log.
 CREATE TABLE IF NOT EXISTS plan_events (
   user_id  TEXT NOT NULL,
   kind     TEXT NOT NULL CHECK (kind IN ('upgrade_click','plans_view','paid')),
@@ -261,9 +261,10 @@ export function openDb(dataDir: string): DB {
   // run_gaql's query shape (2026-10-15): which fields custom queries ask for, never the values in them.
   const tc = new Set((db.prepare("PRAGMA table_info(tool_calls)").all() as { name: string }[]).map((c) => c.name));
   if (!tc.has("query_shape")) db.exec("ALTER TABLE tool_calls ADD COLUMN query_shape TEXT");
-  // Which Google service each call used (2026-10-28), for the one-service Free plan behind FREE_ONE_SERVICE.
+  // Which Google service each call used (2026-10-28), for the reports.
   if (!tc.has("service")) db.exec("ALTER TABLE tool_calls ADD COLUMN service TEXT");
-  // Which services a call stopped by a notice was after (2026-10-31): `service` stays null there, or a stop would count as use.
+  // Which services a call stopped by the one-service gate was after (2026-10-31). Unwritten since that gate was removed
+  // (2026-11-11); the column stays for the rows it has.
   if (!tc.has("service_wanted")) db.exec("ALTER TABLE tool_calls ADD COLUMN service_wanted TEXT");
   // Which grant link the call handed the user (2026-11-02): grantName(), e.g. search-console-edit. Offered vs grant_added in Matomo.
   if (!tc.has("grant_offered")) db.exec("ALTER TABLE tool_calls ADD COLUMN grant_offered TEXT");

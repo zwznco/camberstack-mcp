@@ -2,8 +2,8 @@
 
 export const PRO_PRICE_LABEL = "$15/month";
 /**
- * Plus (2026-10-28, projects/camberstack/PRICING-TEST.md): Google Ads, Search Console and Google Analytics together on one
- * Google Ads account, for people who want the bridge, not more accounts. Offered once one-service Free is announced.
+ * Plus (projects/camberstack/PRICING-TEST.md): unlimited applied changes on one Google Ads account. Sold while the change
+ * cap is on (FREE_CHANGE_CAP); without it, Plus would equal Free.
  */
 export const PLUS_PRICE_LABEL = "$7/month";
 export const PLUS_ACCOUNTS = 1;
@@ -50,69 +50,20 @@ export const freeChangesShort = () => (changeCapValue ? `${changeCapValue} chang
 /** Text of the change cap's stop. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
 export const CHANGE_LIMIT_PREFIX = "Change limit:";
 
-/**
- * Option C (projects/camberstack/PRICING-TEST.md), behind FREE_ONE_SERVICE: Free covers one Google service at a time,
- * the most recently used one over ACCOUNT_WINDOW_DAYS; paid plans cover them all together. Off by default.
- * FREE_ONE_SERVICE=YYYY-MM-DD announces it until that day (UTC) and starts it then; =1 starts it now.
- */
+/** The Google services a call can use (tools.ts servicesOf), logged per call in tool_calls.service for the reports. */
 export type Service = "ads" | "search_console" | "analytics" | "merchant" | "tag_manager";
 export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", search_console: "Search Console", analytics: "Google Analytics", merchant: "Merchant Center", tag_manager: "Tag Manager" };
 /** The services every page, email and tool result names, in order. Merchant Center is the 4th (public since 2026-11-04), Tag Manager the 5th. */
 export const listedServices = (): Service[] => ["ads", "search_console", "analytics", "merchant", "tag_manager"];
-/** "Google Ads, Search Console, Google Analytics or Merchant Center". */
+/** "Google Ads, Search Console, Google Analytics, Merchant Center or Tag Manager". */
 export const servicesOr = () => joinLabels(listedServices().map((s) => SERVICE_LABELS[s]), "or");
 /** "Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager". */
 export const servicesAnd = () => joinLabels(listedServices().map((s) => SERVICE_LABELS[s]), "and");
 const joinLabels = (xs: string[], word: string) => `${xs.slice(0, -1).join(", ")} ${word} ${xs.at(-1)}`;
-/** Text of the service gate's refusal. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
-export const SERVICE_LIMIT_PREFIX = "Service limit:";
-/**
- * What the AI should do with a Service limit stop (projects/camberstack/UNPROMPTED-STOPS.md, C1). Most stops come from
- * calls the AI made on its own while answering, so the user shouldn't get a plan notice in place of the answer they asked for.
- */
-export const serviceLimitScope = (have: string, want: string, options: string) =>
-  `If the user's request didn't ask for ${want}, answer it with ${have} and don't lead with this: at most one sentence at the end saying ${want} isn't on this plan. `
-  + `If it did ask for ${want}, tell them it isn't on this plan, with ${options}.`;
-/** Text of the notice before Free's one service is picked: the user chooses, so 30 days aren't spent on whatever the AI called first. */
-export const SERVICE_CHOICE_PREFIX = "Service choice:";
-/** How long after a Service choice notice the next real call counts as the user's answer (session.ts checkService). */
-export const SERVICE_CHOICE_SECONDS = 15 * 60;
-
-/**
- * Which Free plan is live: by Google Ads account (FREE_ONE_SERVICE unset), one-service Free announced for a date, or on
- * since `from`. Every page, email and tool result that describes Free reads this, so the copy flips with the gate.
- */
-export type FreePlan = { kind: "accounts" } | { kind: "upcoming"; from: number } | { kind: "one_service"; from: number };
-export function freePlan(from: number | undefined, t = Math.floor(Date.now() / 1000)): FreePlan {
-  return from === undefined ? { kind: "accounts" } : t < from ? { kind: "upcoming", from } : { kind: "one_service", from };
-}
-/**
- * A flag that starts on a date (FREE_ONE_SERVICE) → when: "1" = always (0), "YYYY-MM-DD" = that day at 08:00 UTC, else off.
- * 08:00 UTC is midnight Pacific (PST), so it's already that date in the Americas, Europe and Asia when it starts; at 00:00
- * UTC it would still be the day before across the Americas, while the notice names the day.
- */
-export function parseDateFlag(v: string | undefined): number | undefined {
-  if (v === "1") return 0;
-  const m = /^\d{4}-\d{2}-\d{2}$/.test(v ?? "") ? Date.parse(`${v}T08:00:00Z`) : NaN;
-  return Number.isNaN(m) ? undefined : m / 1000;
-}
 /** "November 16". */
 export const dateLabel = (t: number) => new Date(t * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
-/** Free under one-service, as a clause: "one Google service at a time: Google Ads (1 account), Search Console or Google Analytics". */
-export const oneServiceFree = () => `one Google service at a time: ${freeServices()}`;
-/** The choice itself: "Google Ads (1 account), Search Console or Google Analytics". */
-export const freeServices = () => joinLabels(listedServices().map((s) =>
-  s === "ads" || s === "merchant" ? `${SERVICE_LABELS[s]} (1 account)` : SERVICE_LABELS[s]), "or");
-/** What Plus, Pro and Agency cover beyond account count, once one-service Free is announced: "Google Ads, … and Google Analytics together". */
+/** Every service together: "Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together". */
 export const allServices = () => `${joinLabels(listedServices().map((s) => SERVICE_LABELS[s]), "and")} together`;
-/**
- * The announcement sentence while one-service Free is upcoming; empty otherwise. `neutral` names no paid plan, for ChatGPT
- * connections (its plugin guidelines bar promoting upgrades; saying a feature needs a different plan is allowed).
- */
-export const freePlanChange = (fp: FreePlan, neutral = false) =>
-  fp.kind !== "upcoming" ? ""
-    : `From ${dateLabel(fp.from)}, ${neutral ? "the current plan" : "Free"} covers ${oneServiceFree()}; `
-      + (neutral ? "using several together needs a different plan." : `Plus (${PLUS_PRICE_LABEL}) covers all five together on 1 Google Ads account, and Pro and Agency on more.`);
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number, pool: Pool = "ads") => `${n} ${pool === "mc" ? "Merchant Center" : "Google Ads"} account${n === 1 ? "" : "s"}`;
@@ -132,8 +83,8 @@ export class PlanLimitError extends Error {
 }
 
 /**
- * The account choice notice (ACCOUNT_CHOICE_PREFIX), the plan-limit refusal, and the service gate's choice and refusal
- * (SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX). Thrown to stop the tool, but returned as a normal result, not isError:
+ * The account choice notice (ACCOUNT_CHOICE_PREFIX), the plan-limit refusal, and the change cap's stop
+ * (CHANGE_LIMIT_PREFIX). Thrown to stop the tool, but returned as a normal result, not isError:
  * nothing failed, and an error here counted against the directory's reliability metrics.
  */
 export class SwitchNotice extends PlanLimitError {}

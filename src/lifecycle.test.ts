@@ -3,6 +3,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import { openDb, now } from "./db.js";
 import { Lifecycle } from "./lifecycle.js";
+import { setChangeCap } from "./plans.js";
 
 const DAY = 86400;
 /** 10am in Chicago (the fallback zone), so the morning window is open unless a test says otherwise. */
@@ -59,38 +60,6 @@ describe("lifecycle emails", () => {
     expect(sent.map((m) => m.to[0])).toEqual(["lookup@example.com"]);
   });
 
-  it("sends service_limit once, the morning after the one-service gate stopped a second service, naming both and the open date", async () => {
-    const { db, lc, sent, user, call } = setup();
-    // A stop is a SwitchNotice: logged ok, its text in error (tools.ts).
-    const stopped = (userId: string, daysAgo: number, error: string | null) =>
-      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'account_overview', 1, ?, 10, 10)")
-        .run(now() - daysAgo * DAY, userId, error);
-    const limit = "Service limit: the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and this login "
-      + "uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used.";
-    user("sc", "sc@example.com", 10); stopped("sc", 1.3, null); stopped("sc", 0.3, limit);  // used Search Console a day before
-    user("both", "both@example.com", 10); stopped("both", 0.3, "Service limit: the Free plan covers one Google service at a time "
-      + "(Google Ads, Search Console or Google Analytics), and Search Console and Google Ads together need more than one.");
-    user("recent", "recent@example.com", 10); stopped("recent", 0.2, limit);                 // under 6 hours ago
-    user("chose", "chose@example.com", 10); stopped("chose", 0.3, "Service choice: The Free plan covers one Google service");  // not a stop
-    user("pro", "pro@example.com", 10, "pro"); stopped("pro", 0.3, limit);
-    // One upgrade email per user: an account-limit email already sent rules this one out.
-    user("had", "had@example.com", 10); stopped("had", 0.3, limit);
-    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - DAY);
-    expect(await lc.run()).toBe(2);
-    const sc = sent.find((m) => m.to[0] === "sc@example.com"), both = sent.find((m) => m.to[0] === "both@example.com");
-    expect(sc.subject).toBe("Using Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together");
-    expect(sc.text).toContain("stopped when your AI tried to use Google Ads. The Free plan covers one Google service at a time, "
-      + "and you're using it for Search Console; Google Ads opens on Free on November 27.");
-    expect(sc.text).toContain("https://camberstack.io/upgrade?t=sc.sig");
-    expect(sc.text).toContain("every tool and unlimited changes keep working on Search Console");
-    expect(both.text).toContain("tried to use Search Console and Google Ads. The Free plan covers one Google service at a time.");
-    expect(await lc.run()).toBe(0);
-    // ...and the other way: after service_limit, an account-limit refusal sends nothing.
-    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'sc', 'account_overview', 0, ?, 10, 10)")
-      .run(now() - 0.3 * DAY, "Plan limit: Camberstack has been used on 2 Google Ads accounts; the next opens 2026-11-13.");
-    expect(await lc.run()).toBe(0);
-  });
-
   it("sends change_limit once, the morning after the change cap stopped an apply, even after an account-limit email", async () => {
     const { db, lc, sent, user, call } = setup();
     // Each has used Camberstack (so no first_steps), then been stopped.
@@ -115,62 +84,42 @@ describe("lifecycle emails", () => {
     expect(await lc.run()).toBe(0);
   });
 
-  it("sends service_limit only for a stop on request, not one inside an AI answer (UNPROMPTED-STOPS.md)", async () => {
-    const { db, lc, sent, user } = setup();
-    // ms is how long the call ran; `at` is when it ended, so it started at at - ms/1000.
-    const log = (userId: string, secsAgo: number, error: string | null, ms = 10) =>
-      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'analytics_report', 1, ?, ?, 10)")
-        .run(now() - 0.3 * DAY - secsAgo, userId, error, ms);
-    const limit = "Service limit: the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and this login "
-      + "uses it for Google Ads. Google Analytics opens on Free on 2026-12-10, 30 days after Google Ads was last used.";
-    // The AI pulled GA4 on its own 5 s after an Ads call in the same answer: no email.
-    user("auto", "auto@example.com", 10); log("auto", 5, null); log("auto", 0, limit);
-    // A stop 2 minutes after the last call: a new message asked for it.
-    user("asked", "asked@example.com", 10); log("asked", 120, null); log("asked", 0, limit);
-    // A stop with nothing before it is on request too.
-    user("first", "first@example.com", 10); log("first", 0, limit);
-    // 40 s gap but the stopped call itself ran 10 s, so it started 30 s after the last one ended: still inside the answer.
-    user("slow", "slow@example.com", 10); log("slow", 40, null); log("slow", 0, limit, 10_000);
-    // One stop inside an answer and a later one on request: the on-request one sends, with its own text.
-    user("mixed", "mixed@example.com", 10); log("mixed", 600, null); log("mixed", 598, limit.replace("2026-12-10", "2026-12-01")); log("mixed", 0, limit);
-    expect(await lc.run()).toBe(3);
-    expect(sent.map((m) => m.to[0]).sort()).toEqual(["asked@example.com", "first@example.com", "mixed@example.com"]);
-    expect(sent.find((m) => m.to[0] === "mixed@example.com").text).toContain("Google Analytics opens on Free on December 10");
-  });
-
-  it("pitches Plus in service_limit when it's sold, and welcomes a Plus subscriber with what Plus adds", async () => {
-    const { db, lc, sent, user } = setup();
+  it("pitches Plus in change_limit when it's sold, and welcomes a Plus subscriber with what Plus adds", async () => {
+    const { db, lc, sent, user, call } = setup();
     (lc as any).d.plusLink = (u: string) => `https://camberstack.io/upgrade?t=${u}.sig&plan=plus`;
-    user("sc", "sc@example.com", 10);
-    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'sc', 'account_overview', 1, ?, 10, 10)").run(now() - 0.3 * DAY,
-      "Service limit: the Free plan covers one Google service at a time (Google Ads, Search Console or Google Analytics), and this login "
-      + "uses it for Search Console. Google Ads opens on Free on 2026-11-27, 30 days after Search Console was last used.");
-    expect(await lc.run()).toBe(1);
-    expect(sent[0].text).toContain("Camberstack Plus covers Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together on one Google Ads account");
-    expect(sent[0].text).toContain("for $7/month; cancel any time. Pro ($15/month) does the same on up to 5 accounts.");
-    expect(sent[0].text).toContain("https://camberstack.io/upgrade?t=sc.sig&plan=plus");
-    expect(sent[0].html).toContain(">Get Plus</a>");
-    db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES ('pl', 'g-pl', 'pl@example.com', 'plus', 'sub_pl', ?)").run(now());
-    expect(await lc.transactional()).toBe(1);
-    expect(sent.at(-1).subject).toBe("You're on Camberstack Plus");
-    expect(sent.at(-1).text).toContain("What Plus adds: Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together, on one Google Ads account.");
-    expect(sent.at(-1).text).toContain("$7/month, renewing monthly");
+    setChangeCap(10);
+    try {
+      user("cap", "cap@example.com", 10); call("cap", "account_overview");
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'cap', 'apply_changes', 1, ?, 10, 10)").run(now() - 0.3 * DAY,
+        "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days, and this login has used them; the next opens on 2026-12-02.");
+      expect(await lc.run()).toBe(1);
+      expect(sent[0].text).toContain("Camberstack Plus has unlimited changes on one Google Ads account, for $7/month; cancel any time. Pro ($15/month) does the same on up to 5 accounts.");
+      expect(sent[0].text).toContain("https://camberstack.io/upgrade?t=cap.sig&plan=plus");
+      expect(sent[0].html).toContain(">Get Plus</a>");
+      db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES ('pl', 'g-pl', 'pl@example.com', 'plus', 'sub_pl', ?)").run(now());
+      expect(await lc.transactional()).toBe(1);
+      expect(sent.at(-1).subject).toBe("You're on Camberstack Plus");
+      expect(sent.at(-1).text).toContain("What Plus adds: unlimited applied changes on one Google Ads account, where Free stops at 10 every 30 days.");
+      expect(sent.at(-1).text).toContain("$7/month, renewing monthly");
+    } finally { setChangeCap(null); }
   });
 
-  it("describes whichever Free is live in the welcome: by account, announced with its date, or one service", async () => {
-    const welcomeText = async (freeOneServiceFrom?: number) => {
+  it("describes Free in the welcome with the change cap off and on", async () => {
+    const welcomeText = async () => {
       const sent: any[] = [];
       const lc = new Lifecycle({ db: openDb(":memory:"), baseUrl: "https://camberstack.io", signingKey: Buffer.alloc(32, 7), internalEmails: new Set(),
-        mail: { apiKey: "re_test", from: "a <adam@camberstack.io>", replyTo: "adam@camberstack.io" }, upgradeLink: () => null, freeOneServiceFrom,
+        mail: { apiKey: "re_test", from: "a <adam@camberstack.io>", replyTo: "adam@camberstack.io" }, upgradeLink: () => null,
         fetch: (async (_url: string, init: RequestInit) => { sent.push(JSON.parse(String(init.body))); return new Response("{}", { status: 200 }); }) as any });
       await lc.preview("me@example.com");
       return sent.find((m) => m.subject === "Welcome to Camberstack").text as string;
     };
-    const off = await welcomeText(), soon = await welcomeText(Date.UTC(2099, 10, 16) / 1000), on = await welcomeText(0);
+    const off = await welcomeText();
+    setChangeCap(10);
+    let on: string;
+    try { on = await welcomeText(); } finally { setChangeCap(null); }
     expect(off).toContain("Free covers one Google Ads account; Pro ($15/month) covers up to 5, and Agency ($49/month) up to 25.\n");
-    expect(soon).toContain("up to 25. From November 16, Free covers one Google service at a time: Google Ads (1 account), Search Console, Google Analytics, Merchant Center (1 account) or Tag Manager; Plus ($7/month) covers all five together on 1 Google Ads account, and Pro and Agency on more.");
-    expect(on).toContain("Free covers one Google service at a time: Google Ads (1 account), Search Console, Google Analytics, Merchant Center (1 account) or Tag Manager; Plus ($7/month) covers Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together on 1 Google Ads account, Pro ($15/month) on up to 5");
-    expect(on).not.toContain("From November");
+    expect(on).toContain("Free covers one Google Ads account, with 10 applied changes every 30 days; Plus ($7/month) has unlimited changes on it, Pro ($15/month) on up to 5 accounts, and Agency ($49/month) up to 25.\n");
+    for (const t of [off, on]) expect(t).not.toMatch(/one Google service|November 1[56]/);
   });
 
   it("sends limit_reached once, the morning after the plan gate refused a second account, with when another account opens", async () => {

@@ -1,4 +1,4 @@
-import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, parseCapFrom, parseChangeCap, parseDateFlag } from "./plans.js";
+import { AGENCY_ACCOUNTS, PRO_ACCOUNTS, parseCapFrom, parseChangeCap } from "./plans.js";
 /** The environment variables the service reads; LOG_FILE (server.ts), SENTRY_* (sentry.ts) and funnel.ts's DATA_DIR are read where used. */
 
 /** A comma-separated list of emails, lowercased. */
@@ -25,14 +25,10 @@ export interface Config {
   freeAccounts: number;
   proAccounts: number;
   agencyAccounts: number;
-  /** FREE_ONE_SERVICE: when Free starts covering one Google service at a time (plans.ts parseDateFlag). Off unless set. */
-  freeOneServiceFrom?: number;
   /** FREE_CHANGE_CAP: approvals Free may apply per 30 days (plans.ts changeCap). Unset = unlimited. */
   freeChangeCap: number | null;
   /** FREE_CHANGE_CAP_FROM: when the cap went on; approvals before it don't count (plans.ts parseCapFrom). */
   freeChangeCapFrom: number;
-  /** GATE_DEMO=1, test only (UNPROMPTED-STOPS.md): the plan gate treats demo IDs as real. Dev's test runs set it; prod never does. */
-  gateDemo: boolean;
   /**
    * Pro subscription; unset = no upgrade links (free users stop at the limit with no way to pay).
    * agencyPriceId: STRIPE_AGENCY_PRICE_ID, plusPriceId: STRIPE_PLUS_PRICE_ID; unset = that plan isn't offered.
@@ -89,10 +85,8 @@ export function loadConfig(): Config {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
     },
     freeAccounts: 1,
-    freeOneServiceFrom: parseDateFlag(process.env.FREE_ONE_SERVICE),
     freeChangeCap: parseChangeCap(process.env.FREE_CHANGE_CAP),
     freeChangeCapFrom: parseCapFrom(process.env.FREE_CHANGE_CAP_FROM),
-    gateDemo: process.env.GATE_DEMO === "1",
     proAccounts: PRO_ACCOUNTS,
     agencyAccounts: AGENCY_ACCOUNTS,
     stripe: process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID

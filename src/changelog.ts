@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.32.0", date: "2026-11-11",
+    summary: "Free's 10 changes a month are counted the same however they're applied.",
+    items: [
+      "**Several approvals at once** count each one: applying many proposals in parallel can't go past Free's 10 changes every 30 days.",
+      "**Undo is still free**, but undoing an undo counts as a change: it applies the original change again.",
+      "**\"Change limit\" in the docs**: what it means, and what keeps working (asking, reading, proposing, undo and change history).",
+    ],
+  },
+  {
     version: "0.31.1", date: "2026-11-11",
     summary: "Free includes 10 applied changes every 30 days, and keeps every Google service. Plus has unlimited changes.",
     items: [
