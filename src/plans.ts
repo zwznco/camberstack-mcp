@@ -35,8 +35,13 @@ export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
  * from FREE_CHANGE_CAP (a whole number; unset = unlimited), and read by every page, email and tool result that describes Free.
  */
 let changeCapValue: number | null = null;
-export const setChangeCap = (n: number | null) => { changeCapValue = n && n > 0 ? Math.floor(n) : null; };
+let changeCapStart = 0;
+/** `from` (FREE_CHANGE_CAP_FROM, unix seconds): only approvals since then count, so everyone starts at 0 when it goes on. */
+export const setChangeCap = (n: number | null, from = 0) => { changeCapValue = n && n > 0 ? Math.floor(n) : null; changeCapStart = from; };
 export const changeCap = () => changeCapValue;
+export const changeCapFrom = () => changeCapStart;
+/** FREE_CHANGE_CAP_FROM: an ISO time ("2026-11-12T02:00:00Z") → unix seconds; unset or unreadable = 0 (the whole window counts). */
+export const parseCapFrom = (v: string | undefined): number => { const t = Date.parse(v ?? ""); return Number.isNaN(t) ? 0 : Math.floor(t / 1000); };
 export const parseChangeCap = (v: string | undefined): number | null => (/^\d+$/.test(v ?? "") && Number(v) > 0 ? Number(v) : null);
 /** "unlimited applied changes" / "10 applied changes every 30 days". */
 export const freeChanges = () => (changeCapValue ? `${changeCapValue} applied changes every ${ACCOUNT_WINDOW_DAYS} days` : "unlimited applied changes");

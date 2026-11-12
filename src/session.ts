@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, changeCapFrom, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_CHOICE_SECONDS, SERVICE_LABELS, SERVICE_LIMIT_PREFIX, SwitchNotice, accountsLabel, allServices, freePlan, freePlanChange, isPaid, listedServices, poolOf, planLabel, servicesOr, serviceLimitScope, type FreePlan, type Plan, type Pool, type Service } from "./plans.js";
 import { AnalyticsClient, DEMO_PROPERTY, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -1527,12 +1527,12 @@ export class UserSession {
    *  re-sent apply_changes 8s after it succeeded). Nothing is written again; the first apply's results are returned. */
   /**
    * Real proposals this user applied in the window, oldest first: what the change cap counts (plans.ts changeCap). Undos
-   * and the demo (account, site, property, store, container) don't count, nor anything before plan_reset_at.
+   * and the demo (account, site, property, store, container) don't count, nor anything before plan_reset_at or the cap's start.
    */
   changesApplied(): number[] {
     const rows = this.deps.db.prepare(`SELECT customer_id, changes, applied_at FROM proposals
         WHERE user_id = ? AND status = 'applied' AND undo_of IS NULL AND applied_at >= ? ORDER BY applied_at`)
-      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0)) as { customer_id: string; changes: string; applied_at: number }[];
+      .all(this.user.id, Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0, changeCapFrom())) as { customer_id: string; changes: string; applied_at: number }[];
     return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes)).map((r) => r.applied_at);
   }
 

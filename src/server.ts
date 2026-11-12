@@ -66,7 +66,7 @@ export interface Service {
 
 export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Service {
   gateDemoCalls(cfg.gateDemo);
-  setChangeCap(cfg.freeChangeCap);
+  setChangeCap(cfg.freeChangeCap, cfg.freeChangeCapFrom);
   const app = express();
   app.set("trust proxy", 1); // behind Traefik: one hop
   app.disable("x-powered-by");

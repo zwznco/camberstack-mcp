@@ -21,7 +21,7 @@ import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, gateDemoCalls, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
 import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, merchantCenterPage, plansPage, searchConsolePage, withFreePlan } from "./pages.js";
-import { allServices, freePlan, oneServiceFree, parseChangeCap, parseDateFlag, setChangeCap, type FreePlan } from "./plans.js";
+import { allServices, freePlan, oneServiceFree, parseCapFrom, parseChangeCap, parseDateFlag, setChangeCap, type FreePlan } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 import { UserSession, clearGoogleCache } from "./session.js";
@@ -3036,6 +3036,10 @@ describe("OAuth + MCP end to end", () => {
       expect((await call(t, "apply_changes", { proposal_id: first })).json.status).toBe("applied");
       expect((await call(t, "apply_changes", { proposal_id: await negative("cap two") })).json.status).toBe("applied");
       expect((await call(t, "billing")).json).toMatchObject({ plan: "free", changes_applied: 2, changes_included: 2 });
+      // Approvals before the cap's start don't count: everyone starts at 0 when it goes on.
+      setChangeCap(2, now() + 1);
+      expect((await call(t, "billing")).json.changes_applied).toBe(0);
+      setChangeCap(2);
       // The third approval stops: a normal result, nothing written, the proposal still open.
       const before = ads.negatives.length;
       const third = await negative("cap three");
@@ -3082,6 +3086,8 @@ describe("OAuth + MCP end to end", () => {
     expect(parseChangeCap("10")).toBe(10);
     expect(parseChangeCap(undefined)).toBeNull();
     expect(parseChangeCap("0")).toBeNull();
+    expect(parseCapFrom("2026-11-12T02:00:00Z")).toBe(Date.parse("2026-11-12T02:00:00Z") / 1000);
+    expect(parseCapFrom(undefined)).toBe(0);
     expect(plansPage("https://x.test")).toContain("unlimited applied changes and undo, on <strong>1 Google Ads account");
     expect(plansPage("https://x.test")).not.toContain("Plus");
     setChangeCap(10);

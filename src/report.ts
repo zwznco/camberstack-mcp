@@ -8,7 +8,7 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES } from "./google.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, changeCapFrom, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
 /**
  * A paying customer: a paid plan with a live Stripe subscription. Complimentary plans (PRO_EMAILS, grandfathered Plus with no
@@ -144,7 +144,7 @@ export function buildReport(db: DB, o: ReportOptions) {
     signupsHourly: o.days === 1 ? q<{ hour: number; n: number }>(
       `SELECT cast(strftime('%H', created_at, 'unixepoch') AS int) hour, count(*) n FROM {U} u WHERE created_at >= ? GROUP BY 1 ORDER BY 1`, since) : [],
     retention: retention(q),
-    paywall: changeCap() ? paywall(q, o.changeCapFrom, "change") : paywall(q, o.freeOneServiceFrom),
+    paywall: changeCap() ? paywall(q, o.changeCapFrom || changeCapFrom() || undefined, "change") : paywall(q, o.freeOneServiceFrom),
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
