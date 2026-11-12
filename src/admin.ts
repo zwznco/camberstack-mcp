@@ -13,7 +13,7 @@ import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { esc } from "./pages.js";
-import { changeCap, changeCapFrom, planLabel } from "./plans.js";
+import { changeCap, planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
 import { AUDIENCES, DAILY_LIMIT, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
@@ -424,13 +424,13 @@ function sharingCard(v: View, always = false): string {
   }), "No ad or manager account is shared by two logins."), `<small>ad account: tools run by 2+ users · manager: reachable by 2+</small>`);
 }
 
-/** Regular users who have gone quiet for longer than is normal (report.ts churn). Active again, they drop off. */
+/** How many regular users have gone quiet for longer than is normal (report.ts churn): a count only (operator, 2026-11-12). */
 function churnCard(v: View): string {
   const c = v.report.churn;
-  return card("Regular users gone quiet", table(["user", ["quiet for", "r"]],
-    c.overdue.map((o) => [`${userLink(v, o.id, o.email)} ${planBadge(o.plan, true)}`, `<span class="n">${o.silent}d</span>`]),
-    "No regular user has gone quiet."),
-    `<small title="Regular: active on 2+ days, and applied a real change or made more requests than the median user (${c.medianCalls}). Listed once quiet longer than ${c.p90} days (90% of users are back by then) and longer than their own longest break. Active again, they drop off.">regular users · quiet past the norm</small>`);
+  return `<div class="stats" title="Regular: active on 2+ days, and applied a real change or made more requests than the median user (${c.medianCalls}). Counted once quiet longer than ${c.p90} days (90% of users are back by then) and longer than their own longest break. Active again, they drop off.">
+${stat("Regulars gone quiet", bad(c.overdue.length), "quiet past the norm")}
+</div>
+`;
 }
 
 /** Users who tried to move to another Google Ads account after their first day (report.ts switching). */
@@ -518,15 +518,15 @@ const ends = (t: number | null) => {
 };
 
 /**
- * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): who is at it, when their next change opens, who
- * was stopped, emailed and who paid since. Kept narrow for a phone (operator, 2026-11-11): five columns, short labels, the
- * plan and app as chips beside the email, details on hover. Not filtered by ?days: the cap's own 30-day window decides.
+ * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): only users who hit it (operator, 2026-11-12: no
+ * "counting" list). Hit = at the cap now, or stopped by it in the window (so one who then paid or rolled off stays listed).
+ * Kept narrow for a phone: five columns, short labels, plan and app as chips beside the email, details on hover. Not
+ * filtered by ?days: the cap's own 30-day window decides.
  */
 function capPage(v: View): string {
   const cap = changeCap();
   if (!cap) return card("Change cap", `<p class="empty">Cap is off.</p>`);
-  const rows = v.cap, at = rows.filter((r) => r.atCap), stopped = rows.filter((r) => r.stops), paid = stopped.filter((r) => r.paying);
-  const nearAt = Math.ceil(cap * 0.7), near = rows.filter((r) => r.plan === "free" && !r.atCap && r.used >= nearAt);
+  const rows = v.cap, at = rows.filter((r) => r.atCap), hit = rows.filter((r) => r.atCap || r.stops), stopped = rows.filter((r) => r.stops), paid = stopped.filter((r) => r.paying);
   const line = (r: (typeof rows)[number]) => [
     `${userLink(v, r.id, r.email)}${r.plan === "free" ? "" : ` ${planBadge(r.plan, r.paying)}`}${r.chatgpt ? ` <span class="chip">GPT</span>` : ""}`,
     `${num(r.used)}<span class="dim">/${cap}</span>`, ends(r.windowEnds),
@@ -535,13 +535,10 @@ function capPage(v: View): string {
   const cols: (string | [string, "r"])[] = ["user", ["used", "r"], "opens", ["stops", "r"], "mail"];
   return `<div class="stats">
 ${stat("At cap", num(at.length))}
-${stat(`Near (${nearAt}+)`, num(near.length))}
 ${stat("Stopped", num(stopped.length))}
 ${stat("Paid after", num(paid.length))}
 </div>
-${card("At cap", table(cols, at.map(line), "Nobody yet."), `<small>opens = next change frees up</small>`)}
-${card("Counting", table(cols, rows.filter((r) => !r.atCap).map(line), "Nothing yet."),
-    `<small>since ${new Date(changeCapFrom() * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · opens = oldest rolls off</small>`)}`;
+${card("Hit the cap", table(cols, hit.map(line), "Nobody yet."), `<small>at the cap now, or stopped by it · opens = next change frees up</small>`)}`;
 }
 
 function activityPage(v: View): string {

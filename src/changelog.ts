@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.34.1", date: "2026-11-12",
+    summary: "On Free, a heads-up before your 10 changes run out.",
+    items: [
+      "**From your 7th applied change,** each apply says how many of Free's 10 changes are left this month and when the next one opens, so the limit never comes as a surprise.",
+    ],
+  },
+  {
     version: "0.34.0", date: "2026-11-12",
     summary: "See what your changes did: before vs after, from Google's own numbers.",
     items: [

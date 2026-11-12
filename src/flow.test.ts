@@ -2242,7 +2242,8 @@ describe("OAuth + MCP end to end", () => {
     try {
       const capHtml = await (await fetch(`${admin}/cap`, { headers: { cookie } })).text();
       expect(capHtml).toContain("At cap");
-      expect(capHtml).toContain("opens = next change frees up");
+      expect(capHtml).toContain("Hit the cap");
+      expect(capHtml).not.toContain("Counting");
       expect(capHtml).toContain('href="/cap?days=');
       // First in the nav while the cap is on.
       expect(capHtml.indexOf('href="/cap?days=')).toBeLessThan(capHtml.indexOf('href="/?days='));
@@ -3117,8 +3118,14 @@ describe("OAuth + MCP end to end", () => {
       const negative = async (text: string, customer_id = "1112223333") => (await call(t, "propose_changes", { customer_id,
         changes: [{ type: "add_negative_keywords", campaign_id: customer_id === "0000000001" ? "2001" : "10", keywords: [{ text, match_type: "PHRASE" }] }] })).json.proposal_id as string;
       const first = await negative("cap one");
-      expect((await call(t, "apply_changes", { proposal_id: first })).json.status).toBe("applied");
-      expect((await call(t, "apply_changes", { proposal_id: await negative("cap two") })).json.status).toBe("applied");
+      const one = (await call(t, "apply_changes", { proposal_id: first })).json;
+      expect(one.status).toBe("applied");
+      expect(one.change_limit).toBeUndefined();  // under 70% of the cap: nothing said
+      // At 70%+ the apply result says how many are left, before the stop comes.
+      const two = await call(t, "apply_changes", { proposal_id: await negative("cap two") });
+      expect(two.json).toMatchObject({ status: "applied", change_limit: { changes_applied: 2, changes_included: 2, changes_left: 0,
+        next_change_opens: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) } });
+      expect(two.json.change_limit.note).toContain("Plus or Pro has unlimited changes");
       expect((await call(t, "billing")).json).toMatchObject({ plan: "free", changes_applied: 2, changes_included: 2 });
       // Approvals before the cap's start don't count: everyone starts at 0 when it goes on.
       setChangeCap(2, now() + 1);
@@ -3140,9 +3147,13 @@ describe("OAuth + MCP end to end", () => {
         .toMatchObject({ ok: 1, error: expect.stringMatching(/^Change limit:/) });
       // Undo is never capped, and an applied undo doesn't count.
       const undo = (await call(t, "undo_changes", { proposal_id: first })).json.proposal_id as string;
-      expect((await call(t, "apply_changes", { proposal_id: undo })).json.status).toBe("applied");
+      const undone = (await call(t, "apply_changes", { proposal_id: undo })).json;
+      expect(undone.status).toBe("applied");
+      expect(undone.change_limit).toBeUndefined();
       // Nor is the demo.
-      expect((await call(t, "apply_changes", { proposal_id: await negative("demo", "0000000001") })).json.status).toBe("applied");
+      const demo = (await call(t, "apply_changes", { proposal_id: await negative("demo", "0000000001") })).json;
+      expect(demo.status).toBe("applied");
+      expect(demo.change_limit).toBeUndefined();
       expect((await call(t, "billing")).json.changes_applied).toBe(2);
       // ChatGPT connections: the same stop, no price and no checkout link, only the plans page.
       const gptClient = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
@@ -3160,7 +3171,9 @@ describe("OAuth + MCP end to end", () => {
       db.prepare("UPDATE proposals SET applied_at = NULL WHERE id = ?").run(third);
       // A paid plan has no cap.
       db.prepare("UPDATE users SET plan = 'plus' WHERE id = ?").run(uid);
-      expect((await call(t, "apply_changes", { proposal_id: third })).json.status).toBe("applied");
+      const paid = (await call(t, "apply_changes", { proposal_id: third })).json;
+      expect(paid.status).toBe("applied");
+      expect(paid.change_limit).toBeUndefined();
     } finally {
       setChangeCap(null);
       googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";

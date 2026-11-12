@@ -1405,7 +1405,8 @@ export class UserSession {
       save("applied", outcomes);
       return { proposal_id: p.id, status: "applied", results: publicResults(outcomes),
         // A removal has no inverse (a removed campaign can't be restored), so don't offer an undo that would fail.
-        undo: outcomes.some((o) => o.inverse) ? `To reverse this, call ${this.tool("undo_changes")} with proposal_id "${p.id}".` : undefined };
+        undo: outcomes.some((o) => o.inverse) ? `To reverse this, call ${this.tool("undo_changes")} with proposal_id "${p.id}".` : undefined,
+        ...this.capWarning(p) };
     }
 
     // A write failed despite validating (the account changed in between, or Google hiccuped): roll back the
@@ -1489,6 +1490,24 @@ export class UserSession {
         .run(id, this.user.id, first.customer_id, first.login_customer_id, merged.changes, summary, merged.created_at);
     })();
     return { ...(await this.apply(id)), combined: unique };
+  }
+
+  /**
+   * After a counted apply on Free, once 70% of the cap is used: how many are left and when the next opens, so the user
+   * hears before the stop (operator, 2026-11-12: the first Plus buyer only knew at 8/10 because their AI kept calling
+   * billing). Nothing for paid plans, undos, the demo or a publish on its own, which the cap doesn't count.
+   */
+  private capWarning(p: ProposalRow): { change_limit?: { changes_applied: number; changes_included: number; changes_left: number; next_change_opens: string; note: string } } {
+    const cap = changeCap();
+    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes) || isPublishOnly(p.changes)) return {};
+    const used = this.changesApplied();
+    if (used.length < Math.ceil(cap * 0.7)) return {};
+    const left = Math.max(0, cap - used.length);
+    const opens = new Date((used[Math.max(0, used.length - cap)]! + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
+    const plan = this.chatgpt ? "The current plan" : "The Free plan";
+    return { change_limit: { changes_applied: used.length, changes_included: cap, changes_left: left, next_change_opens: opens,
+      note: `${plan} includes ${cap} applied changes every ${ACCOUNT_WINDOW_DAYS} days; ${left ? `${left} left` : "none left"}, the next opens on ${opens}. `
+        + `Tell the user${this.chatgpt ? "." : `, and that ${this.plusOffered ? "Plus or Pro" : "Pro"} has unlimited changes (billing has the link).`}` } };
   }
 
   /** What the change cap counts for this user now (capCounted). */
