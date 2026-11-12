@@ -23,7 +23,7 @@ import { writeFileSync } from "node:fs";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, queryShape } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 import {
-  ChangeSchema, MAX_CHANGES, inverseAfterApply, sameSummary, pendingOf, resolveChange, summarize,
+  ChangeSchema, MAX_CHANGES, inverseAfterApply, quotedKeywords, sameSummary, pendingOf, resolveChange, summarize,
   type Change, type ResolvedChange,
 } from "./changes.js";
 
@@ -1276,6 +1276,12 @@ export class UserSession {
   async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<Proposed | AlreadyInPlace> {
     const ga = customerId === GA_TARGET, mc = isMcTarget(customerId), sc = customerId === SC_TARGET, gtm = customerId === GTM_TARGET;
     const a = ga || mc || sc || gtm ? { customerId, loginCustomerId: null } : await this.account(customerId);
+    // A new request only (undo and the drift re-proposal replay text already in the account): see quotedKeywords.
+    const quoted = undoOf === undefined ? quotedKeywords(rawChanges) : [];
+    if (quoted.length) {
+      throw new Error(`Keyword text has quote marks or brackets: ${quoted.map((t) => JSON.stringify(t)).join(", ")}. Nothing was proposed. `
+        + "Give the bare words and set match_type instead: PHRASE for \"words\", EXACT for [words].");
+    }
     let changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : sc ? ScChangeSchema : gtm ? GtmChangeSchema : ChangeSchema).parse(c));
     if (gtm) changes = orderGtmChanges(changes as GtmChange[]);
     // Connections from before 0.25.0 can only read, and Search Console has no dry run: ask for the scope now, not after the
@@ -1424,6 +1430,52 @@ export class UserSession {
       results: publicResults(outcomes),
       undo: stuck ? `To reverse what stayed applied, call ${this.tool("undo_changes")} with proposal_id "${p.id}".` : undefined,
     };
+  }
+
+  /**
+   * Several proposals the user approved together, applied as one: all or nothing, and one approval under the change cap.
+   * ChatGPT's propose_ tools make one change type per proposal, so a single request (swap broad negatives for exact ones:
+   * an add and a delete) took two approvals there and one in Claude's propose_changes (prod, 2026-11-12). The proposals
+   * are merged into a new one, the originals discarded, and that runs through apply() as it is: its claim, its drift check
+   * (against the approved summaries, renumbered), its rollback. Undos go on their own (they're free anyway).
+   */
+  async applyMany(ids: string[]) {
+    const unique = [...new Set(ids)];
+    if (unique.length === 1) return this.apply(unique[0]!);
+    const ps = unique.map((id) => this.proposal(id));
+    const done = ps.filter((p) => p.status !== "proposed");
+    if (done.length) throw new Error(`Nothing was applied: ${done.map((p) => `${p.id} is already ${p.status}`).join("; ")}. Pass only open proposals.`);
+    if (ps.some((p) => p.applied_at)) throw new Error(`Nothing was applied: ${ps.filter((p) => p.applied_at).map((p) => p.id).join(", ")} is already being applied.`);
+    if (ps.some((p) => p.undo_of)) throw new Error("Nothing was applied: apply an undo on its own, not with other proposals.");
+    const first = ps[0]!;
+    if (ps.some((p) => p.customer_id !== first.customer_id || p.login_customer_id !== first.login_customer_id)) {
+      throw new Error("Nothing was applied: proposals applied together must all be for the same account (or the same Google service). Apply the others separately.");
+    }
+    const changes = ps.flatMap((p) => JSON.parse(p.changes) as unknown[]);
+    let n = 0;
+    const summary = ps.map((p) => p.summary.replace(/^\d+\. /gm, () => `${++n}. `)).join("\n");
+    const id = `p_${randomUUID().slice(0, 8)}`;
+    const merged = { ...first, id, changes: JSON.stringify(changes), summary, created_at: now(), applied_at: null } as ProposalRow;
+    // At the cap nothing should move: the originals stay open, as a single apply leaves its proposal open.
+    const cap = changeCap();
+    if (cap && !this.isPro && this.changesApplied().length >= cap && await this.deps.refreshPlan?.(this.user.id)) this.reloadPlan();
+    try { this.checkChangeCap(merged); } catch (e) {
+      if (e instanceof SwitchNotice) {
+        const { proposal_id: _, ...detail } = e.detail;
+        throw new SwitchNotice(e.message.replace(`Proposal ${id} stays open`, `Proposals ${unique.join(", ")} stay open`), { ...detail, proposal_ids: unique });
+      }
+      throw e;
+    }
+    const db = this.deps.db;
+    db.transaction(() => {
+      const taken = db.prepare(`UPDATE proposals SET status = 'discarded' WHERE user_id = ? AND status = 'proposed' AND applied_at IS NULL
+          AND id IN (${unique.map(() => "?").join(",")})`).run(this.user.id, ...unique).changes;
+      if (taken !== unique.length) throw new Error(`Nothing was applied: one of ${unique.join(", ")} changed while applying. Check change_history.`);
+      db.prepare(`INSERT INTO proposals (id, user_id, customer_id, login_customer_id, changes, summary, status, undo_of, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'proposed', NULL, ?)`)
+        .run(id, this.user.id, first.customer_id, first.login_customer_id, merged.changes, summary, merged.created_at);
+    })();
+    return { ...(await this.apply(id)), combined: unique };
   }
 
   /** What the change cap counts for this user now (capCounted). */

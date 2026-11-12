@@ -39,6 +39,26 @@ const campaignId = id.describe("Digits only (campaign_id from account_overview o
 const adGroupId = id.describe("Digits only (ad_group.id from run_gaql)");
 const criterionId = id.describe("Keyword criterion id, digits only (ad_group_criterion.criterion_id from run_gaql)");
 const matchType = z.enum(["EXACT", "PHRASE", "BROAD"]);
+const keywordText = (describe: string) => z.string().min(1).max(80).describe(describe);
+
+/**
+ * Keyword text is the bare words. Quote marks and brackets are match-type notation, not text: Google takes them as part of
+ * the keyword, and the summary then reads like a phrase list (`champion"`, `"fighter jet'` applied as broad, prod 2026-11-12).
+ * Checked on new proposals only (session.ts propose), not in the schemas: an undo or a re-proposal replays text already in an
+ * account, which may carry them.
+ */
+export function quotedKeywords(changes: unknown): string[] {
+  const found: string[] = [];
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) { v.forEach(walk); return; }
+    if (!v || typeof v !== "object") return;
+    const o = v as Record<string, unknown>;
+    if (typeof o.text === "string" && typeof o.match_type === "string" && (/["[\]]/.test(o.text) || /^'|'$/.test(o.text.trim()))) found.push(o.text);
+    Object.values(o).forEach(walk);
+  };
+  walk(changes);
+  return found;
+}
 const bid = z.number().positive().max(1000);
 const url = z.string().url().regex(/^https?:\/\//, "http(s) URL").max(2048);
 /**
@@ -56,7 +76,7 @@ const distinctTexts = <T extends z.ZodArray<z.ZodString>>(xs: T) => xs.superRefi
 });
 
 const keywordSpec = z.object({
-  text: z.string().min(1).max(80).describe("The keyword, e.g. \"cleaning invoice template\""),
+  text: keywordText("The keyword's words, without quotes or brackets, e.g. cleaning invoice template"),
   match_type: matchType.describe("PHRASE matches searches containing the words in order; the usual choice"),
   max_cpc: bid.optional().describe("Max cost per click for this keyword in the account's currency (manual CPC only); omit to use the ad group's"),
 });
@@ -82,7 +102,7 @@ const sitelinkSpec = z.object({
   description1: z.string().min(1).max(35).optional().describe("At most 35 characters; give both descriptions or neither"),
   description2: z.string().min(1).max(35).optional(),
 });
-const negativeSpec = z.object({ text: z.string().min(1).max(80), match_type: matchType });
+const negativeSpec = z.object({ text: keywordText("The search words to block, without quotes or brackets"), match_type: matchType });
 const SNIPPET_HEADERS = ["Amenities", "Brands", "Courses", "Degree programs", "Destinations", "Featured hotels", "Insurance coverage", "Models", "Neighborhoods", "Service catalog", "Shows", "Styles", "Types"] as const;
 const scheduleSpec = z.object({ day: z.enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]),
   start_hour: z.number().int().min(0).max(23), end_hour: z.number().int().min(1).max(24),
@@ -157,7 +177,7 @@ export const PUBLIC_CHANGES = [
     type: z.literal("add_negative_keywords"),
     campaign_id: campaignId,
     keywords: z.array(z.object({
-      text: z.string().min(1).max(80).describe('The search words to block, e.g. "free"'),
+      text: keywordText("The search words to block, without quotes or brackets, e.g. free"),
       match_type: z.enum(["EXACT", "PHRASE", "BROAD"]).describe("PHRASE blocks any search containing the words in order; the usual choice"),
     })).min(1).max(MAX_CHANGES),
   }).describe("Block searches containing these words in one campaign"),

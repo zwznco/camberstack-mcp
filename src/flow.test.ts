@@ -13,7 +13,7 @@ import { now, openDb } from "./db.js";
 import type { Config } from "./config.js";
 import { decrypt, encrypt } from "./crypto.js";
 import { AdsApiError, NotGrantedError } from "./google.js";
-import { ChangeSchema, io, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES } from "./changes.js";
+import { ChangeSchema, io, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES, quotedKeywords } from "./changes.js";
 import { PUBLIC_GA_CHANGES } from "./ga4-changes.js";
 import { PUBLIC_SC_CHANGES } from "./search-console-changes.js";
 import { PUBLIC_GTM_CHANGES } from "./gtm-changes.js";
@@ -665,8 +665,8 @@ describe("OAuth + MCP end to end", () => {
     // Merchant Center (2026-10-28) is listed for this internal user: +15K for its five tools, +0.6K in propose_changes for link/unlink; +1K with main through 0.20.0 (2026-10-29); +3.5K for the delete_ changes (2026-10-30).
     // Search Console changes (2026-10-31): +1K for propose_search_console_changes; +1K for send_feedback.
     // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +7.2K for its three tools;
-    // +0.2K for create_container and delete_container.
-    expectToolBudget(tools, { total: 117_200, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800 } });
+    // +0.2K for create_container and delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
+    expectToolBudget(tools, { total: 118_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1262,8 +1262,8 @@ describe("OAuth + MCP end to end", () => {
       // Merchant Center (2026-10-28): its tools and one propose tool per Merchant Center operation add 19K; +2K with main through 0.20.0 (2026-10-29); +7K for the propose_delete_ tools (2026-10-30).
       // Search Console changes (2026-10-31): +3K for its four propose tools; +1K for send_feedback.
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
-      // +1.1K for propose_create_container and propose_delete_container.
-      expectToolBudget(tools, { total: 156_200, perTool: 6_000 });
+      // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
+      expectToolBudget(tools, { total: 157_100, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -3086,6 +3086,110 @@ describe("OAuth + MCP end to end", () => {
       if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
       db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-change-cap");
     }
+  });
+
+  it("applies several proposals approved together as one: all or nothing, one approval under the cap (ChatGPT's per-type tools)", async () => {
+    // Prod, 2026-11-12: a ChatGPT user swapping broad negatives for exact ones needed an add and a delete, two proposals,
+    // so two approvals, where Claude's propose_changes made it one.
+    googleUser.sub = "google-sub-batch"; googleUser.email = "batch@example.com";
+    setChangeCap(3);
+    try {
+      const t = await connect(undefined, "xyz", "203.0.113.9");
+      const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-batch") as { id: string }).id;
+      const gptClient = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
+      const gptInfo = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(gptClient) as { info: string }).info;
+      db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(gptInfo), redirect_uris: ["https://chatgpt.com/connector/oauth/batch"] }), gptClient);
+      const negative = async (text: string, customer_id = "111-222-3333") => {
+        const r = await call(t, "propose_add_negative_keywords", { customer_id, campaign_id: customer_id === "0000000001" ? "2001" : "10", keywords: [{ text, match_type: "EXACT" }] });
+        if (r.isError) throw new Error(r.text);
+        return r.json.proposal_id as string;
+      };
+      const pause = async () => (await call(t, "propose_pause_keyword", { customer_id: "111-222-3333", ad_group_id: "5", criterion_id: "7" })).json.proposal_id as string;
+      const status = (id: string) => (db.prepare("SELECT status FROM proposals WHERE id = ?").get(id) as { status: string }).status;
+      const count = () => db.prepare("SELECT count(*) n FROM proposals WHERE user_id = ? AND status = 'applied'").get(uid) as { n: number };
+
+      // Two proposals applied together: one merged proposal, both changes in, one approval.
+      const a = await negative("batch one"), b = await pause();
+      const both = await call(t, "apply_changes", { proposal_ids: [a, b] });
+      expect(both.json).toMatchObject({ status: "applied", combined: [a, b] });
+      expect(both.json.results).toHaveLength(2);
+      expect(ads.negatives.map((n) => n.text)).toContain("batch one");
+      expect(ads.kwStatus).toBe("PAUSED");
+      expect([status(a), status(b)]).toEqual(["discarded", "discarded"]);
+      expect(count().n).toBe(1);
+      expect((await call(t, "billing")).json.changes_applied).toBe(1);
+      // The merged proposal undoes as one, for free.
+      const u = await call(t, "propose_undo", { proposal_id: both.json.proposal_id });
+      expect((await call(t, "apply_changes", { proposal_id: u.json.proposal_id })).json.status).toBe("applied");
+      expect(ads.kwStatus).toBe("ENABLED");
+      expect(ads.negatives.map((n) => n.text)).not.toContain("batch one");
+
+      // All or nothing: Google would refuse one, so neither is written, and neither original stays open (as a failed single apply).
+      const c = await negative("batch refused"), d = await pause();
+      ads.failOn = { text: "batch refused" };
+      const failed = (await call(t, "apply_changes", { proposal_ids: [c, d] })).json;
+      ads.failOn = undefined;
+      expect(failed).toMatchObject({ status: "failed", note: "Nothing was changed." });
+      expect(ads.kwStatus).toBe("ENABLED");
+
+      // Refused before anything moves: an applied one, an undo, or two accounts in one batch.
+      const e = await negative("batch e");
+      expect((await call(t, "apply_changes", { proposal_ids: [e, a] })).text).toContain(`${a} is already discarded`);
+      expect((await call(t, "apply_changes", { proposal_ids: [e, u.json.proposal_id] })).text).toContain("already applied");
+      expect((await call(t, "apply_changes", { proposal_ids: [e, await negative("batch demo", "0000000001")] })).text).toContain("same account");
+      expect(status(e)).toBe("proposed");
+      expect((await call(t, "apply_changes", {})).text).toContain("Give proposal_id");
+
+      // 2 of 3, then a batch of two still fits: one approval.
+      expect((await call(t, "apply_changes", { proposal_id: e })).json.status).toBe("applied");
+      const f = await negative("batch f"), g = await negative("batch g");
+      expect((await call(t, "apply_changes", { proposal_ids: [f, g] })).json.status).toBe("applied");
+      expect((await call(t, "billing")).json.changes_applied).toBe(3);
+      // At the cap, a batch stops like a single apply: nothing written, every original still open.
+      const h = await negative("batch h"), i = await pause();
+      const before = ads.negatives.length;
+      const stop = await call(t, "apply_changes", { proposal_ids: [h, i] });
+      expect(stop.isError).toBe(false);
+      expect(stop.json).toMatchObject({ stop: "change_limit", proposal_ids: [h, i], plans_page: expect.stringContaining("/plans") });
+      expect(stop.json.proposal_id).toBeUndefined();
+      expect(stop.text).toContain(`Proposals ${h}, ${i} stay open`);
+      expect(ads.negatives.length).toBe(before);
+      expect(ads.kwStatus).toBe("ENABLED");
+      expect([status(h), status(i)]).toEqual(["proposed", "proposed"]);
+    } finally {
+      ads.failOn = undefined;
+      setChangeCap(null);
+      googleUser.sub = "google-sub-1"; googleUser.email = "Owner@Example.com";
+      const u = db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-batch") as { id: string } | undefined;
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name)
+        .filter((t) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).some((c) => c.name === "user_id"));
+      if (u) for (const t of tables) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(u.id);
+      db.prepare("DELETE FROM users WHERE google_sub = ?").run("google-sub-batch");
+      ads.kwStatus = "ENABLED";
+      ads.negatives = ads.negatives.filter((n) => !n.text.startsWith("batch"));
+    }
+  });
+
+  it("refuses keyword text written with quote marks or brackets", async () => {
+    // Prod, 2026-11-12: ChatGPT sent `champion"` and `"fighter jet'` as broad negatives; Google took them, and the summary read like phrase match.
+    const propose = (keywords: { text: string; match_type: string }[]) => call(token, "propose_changes", { customer_id: "111-222-3333",
+      changes: [{ type: "add_negative_keywords", campaign_id: "10", keywords }] });
+    for (const text of ['champion"', '"fighter jet\'', "[exact words]", "'quoted'"]) {
+      const r = await propose([{ text, match_type: "BROAD" }]);
+      expect(r.text, text).toContain("Keyword text has quote marks or brackets");
+      expect(r.text).toContain("Nothing was proposed");
+    }
+    const kw = await call(token, "propose_changes", { customer_id: "111-222-3333",
+      changes: [{ type: "add_keywords", ad_group_id: "5", keywords: [{ text: '"phrase words"', match_type: "PHRASE" }] }] });
+    expect(kw.text).toContain("Keyword text has quote marks or brackets");
+    // An apostrophe inside the words is text, not notation.
+    const ok = await propose([{ text: "fisherman's hat", match_type: "EXACT" }]);
+    if (ok.isError) throw new Error(ok.text);
+    expect(ok.json.summary).toContain("[fisherman's hat]");
+    // Nested keywords (a campaign's ad groups) are found too. Undo and the drift re-proposal skip the check (session.ts propose):
+    // they replay text already in an account, which may carry quotes.
+    expect(quotedKeywords([{ type: "create_campaign", ad_groups: [{ keywords: [{ text: "ok words", match_type: "PHRASE" }, { text: "[bad]", match_type: "EXACT" }] }] }]))
+      .toEqual(["[bad]"]);
   });
 
   it("with FREE_CHANGE_CAP, parallel applies can't pass on one count, and an undo of an undo counts", async () => {
