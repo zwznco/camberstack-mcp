@@ -390,24 +390,13 @@ function retentionCard(v: View): string {
     `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="Of each week's users who ever applied a real-account change, the share that applied one 7n–7n+7 days after their own signup. Demo account excluded. Paid: on a paid plan now.">all time · applied in week N, of appliers</small>`);
 }
 
-/** The change-cap paywall funnel (report.ts paywall; PRICING-TEST.md), ChatGPT vs other apps. Signups since switch-on
- *  only: the before-switch-on rows were dropped as not useful (operator, 2026-11-12). */
-function paywallCard(v: View): string {
-  const p = v.report.paywall;
-  if (!p.since) return "";
-  return card("Paywall · change cap", table(["app", ["users", "r"], ["stopped", "r"], ["emailed", "r"], ["viewed /plans", "r"], ["clicked upgrade", "r"], ["paid", "r"], ["stopped + offered", "r"], ["of those, paid", "r"], ["applied", "r"]],
-    p.rows.filter((r) => !r.existing).map((r) => [r.chatgpt ? "ChatGPT" : "other", num(r.users), num(r.stopped), num(r.emailed),
-      r.chatgpt ? num(r.viewed) : `<span class="muted">—</span>`, num(r.clicked), num(r.paid), num(r.offered), num(r.offered_paid), num(r.applied)]), "Nobody has signed up since switch-on."),
-    `<small title="From switch-on (FREE_CHANGE_CAP_FROM). Users who signed up since then, complimentary plans left out. Stopped: got Change limit. Offered: stopped and then emailed, viewed /plans or clicked an upgrade link. Applied: applied a real change since switch-on (the guardrail). Bars in projects/camberstack/PRICING-TEST.md.">signups since ${date(p.since)} UTC · hover for definitions</small>`);
-}
-
 function usersPage(v: View): string {
   const r = v.report, since = windowStart(v.days);
   // Users seen in the window (last seen, else signed up); ?all=1 keeps everyone, so users idle past 90d stay reachable.
   const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
   const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
   const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
-  return churnCard(v) + switchingCard(v) + signupsChart(v) + paywallCard(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
+  return churnCard(v) + switchingCard(v) + signupsChart(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
