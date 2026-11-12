@@ -13,7 +13,7 @@ import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { esc } from "./pages.js";
-import { ACCOUNT_WINDOW_DAYS, changeCap, changeCapFrom, planLabel } from "./plans.js";
+import { changeCap, changeCapFrom, planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
 import { AUDIENCES, DAILY_LIMIT, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
@@ -509,35 +509,38 @@ function callsTable(rows: { at: number; email: string | null; id?: string; tool:
     .replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">');
 }
 
-/** Absolute date with the relative time on hover: "Dec 2 (in 6d)". */
+/** "Dec 2 · 6d" (when, and days from now), the exact UTC time on hover. */
 const ends = (t: number | null) => {
   if (!t) return `<span class="dim">—</span>`;
   const d = Math.ceil((t - now()) / 86400);
-  return `<span title="${date(t)} UTC">${new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} <span class="dim">(${d <= 0 ? "now" : `in ${d}d`})</span></span>`;
+  return `<span title="${date(t)} UTC">${new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} <span class="dim">· ${d <= 0 ? "now" : `${d}d`}</span></span>`;
 };
 
 /**
- * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): who is at it, when their window frees the next
- * change, who was stopped, emailed and who paid since. Not filtered by ?days: the cap's own 30-day window decides.
+ * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): who is at it, when their next change opens, who
+ * was stopped, emailed and who paid since. Kept narrow for a phone (operator, 2026-11-11): five columns, short labels, the
+ * plan and app as chips beside the email, details on hover. Not filtered by ?days: the cap's own 30-day window decides.
  */
 function capPage(v: View): string {
   const cap = changeCap();
-  if (!cap) return card("Change cap", `<p class="empty">The change cap is off (FREE_CHANGE_CAP unset).</p>`);
+  if (!cap) return card("Change cap", `<p class="empty">Cap is off.</p>`);
   const rows = v.cap, at = rows.filter((r) => r.atCap), stopped = rows.filter((r) => r.stops), paid = stopped.filter((r) => r.paying);
-  const near = rows.filter((r) => r.plan === "free" && !r.atCap && r.used >= Math.ceil(cap * 0.7));
-  const line = (r: (typeof rows)[number]) => [userLink(v, r.id, r.email), planBadge(r.plan, r.paying), r.chatgpt ? "ChatGPT" : `<span class="dim">other</span>`,
-    `${num(r.used)} <span class="dim">/ ${cap}</span>`, ends(r.windowEnds), r.stops ? bad(r.stops) : `<span class="n dim">0</span>`, when(r.lastStop), when(r.emailed)];
-  const cols: (string | [string, "r"])[] = ["user", "plan", "app", ["approvals", "r"], "window ends", ["stops", "r"], "last stop", "emailed"];
+  const nearAt = Math.ceil(cap * 0.7), near = rows.filter((r) => r.plan === "free" && !r.atCap && r.used >= nearAt);
+  const line = (r: (typeof rows)[number]) => [
+    `${userLink(v, r.id, r.email)}${r.plan === "free" ? "" : ` ${planBadge(r.plan, r.paying)}`}${r.chatgpt ? ` <span class="chip">GPT</span>` : ""}`,
+    `${num(r.used)}<span class="dim">/${cap}</span>`, ends(r.windowEnds),
+    r.stops ? `<span title="last ${r.lastStop ? date(r.lastStop) : ""} UTC">${bad(r.stops)}</span>` : `<span class="n dim">0</span>`,
+    r.emailed ? `<span title="${date(r.emailed)} UTC">✓</span>` : `<span class="dim">—</span>`];
+  const cols: (string | [string, "r"])[] = ["user", ["used", "r"], "opens", ["stops", "r"], "mail"];
   return `<div class="stats">
-${stat("At the cap", num(at.length), `Free users at ${cap} approvals now`)}
-${stat("Near it", num(near.length), `Free users at ${Math.ceil(cap * 0.7)}+`)}
-${stat("Stopped", num(stopped.length), "got a Change limit since the start")}
-${stat("Stopped, then paid", num(paid.length), "on a paid plan with a subscription now")}
+${stat("At cap", num(at.length))}
+${stat(`Near (${nearAt}+)`, num(near.length))}
+${stat("Stopped", num(stopped.length))}
+${stat("Paid after", num(paid.length))}
 </div>
-${card("At the cap", table(cols, at.map(line), "Nobody is at the cap."),
-    `<small>window ends = when their next change opens (the ${cap}th most recent approval turns ${ACCOUNT_WINDOW_DAYS} days old)</small>`)}
-${card("Everyone counting", table(cols, rows.filter((r) => !r.atCap).map(line), "No approvals counted yet."),
-    `<small>since ${date(changeCapFrom())} UTC · window ends = when their oldest counted approval rolls off · paid plans aren't capped, shown for who converted</small>`)}`;
+${card("At cap", table(cols, at.map(line), "Nobody yet."), `<small>opens = next change frees up</small>`)}
+${card("Counting", table(cols, rows.filter((r) => !r.atCap).map(line), "Nothing yet."),
+    `<small>since ${new Date(changeCapFrom() * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · opens = oldest rolls off</small>`)}`;
 }
 
 function activityPage(v: View): string {

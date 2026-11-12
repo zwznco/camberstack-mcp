@@ -2153,12 +2153,12 @@ describe("OAuth + MCP end to end", () => {
     expect(await (await fetch(`${admin}/activity?days=30`, { headers: { cookie } })).text()).toContain("account_overview");
     expect((await fetch(`${admin}/revenue`, { headers: { cookie } })).status).toBe(200);
     // The Cap tab: in the nav and rendered only with the change cap on.
-    expect(await (await fetch(`${admin}/cap`, { headers: { cookie } })).text()).toContain("The change cap is off");
+    expect(await (await fetch(`${admin}/cap`, { headers: { cookie } })).text()).toContain("Cap is off.");
     setChangeCap(10);
     try {
       const capHtml = await (await fetch(`${admin}/cap`, { headers: { cookie } })).text();
-      expect(capHtml).toContain("At the cap");
-      expect(capHtml).toContain("window ends");
+      expect(capHtml).toContain("At cap");
+      expect(capHtml).toContain("opens = next change frees up");
       expect(capHtml).toContain('href="/cap?days=');
     } finally { setChangeCap(null); }
     expect((await fetch(`${admin}/users`, { redirect: "manual" })).status).toBe(302);  // every page is behind sign-in
