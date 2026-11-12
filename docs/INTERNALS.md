@@ -47,7 +47,8 @@ Camberstack's own tokens, which are stored only as SHA-256 hashes.
 | `switch_account` (`choose_account` on ChatGPT) | plan only | takes the account the user picked after an "Account choice:" notice as one of the plan's; changes nothing in Google Ads. No switching since 0.29.0; ChatGPT's review flagged the old name as inconsistent with that (0.30.1) |
 | `billing` | no | plan, Google Ads accounts in use (last 30 days) vs. the plan's limit, and a personal upgrade or manage-billing link |
 | `discard_proposal` | no | marks an open proposal discarded so it can't be applied |
-| `change_history` | no | every proposal, with what was applied, what failed and what was undone |
+| `change_history` | no | every proposal, with what was applied, what failed and what was undone; measurable Ads proposals say when `change_results` is ready |
+| `change_results` | no | before vs after for applied Ads changes (`results.ts`): blocked searches' cost for negatives, spend stopped and the rest of the campaign for pauses, the campaign for budget/bidding/enable/schedule, since-added for new campaigns, ad groups and keywords. Equal windows either side of the apply day in the account's time zone, 7–30 days; the demo shows results at once. Each result names other changes to the same campaigns in the after window (pauses, budgets, bid strategy spelled out, the rest counted) from Google's `change_event`, which only reaches back 30 days |
 | `disconnect` | no | revokes Camberstack's Google access and deletes the stored credentials (the user confirms) |
 
 The Search Console tools take either `days` or exact `start_date`/`end_date`, and `fresh: true` to include the last 2-3

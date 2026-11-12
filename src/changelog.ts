@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.34.0", date: "2026-11-12",
+    summary: "See what your changes did: before vs after, from Google's own numbers.",
+    items: [
+      "**Ask \"how did my changes do?\"** From 7 days after a change, your AI can compare the days before and after it: what the searches your negative keywords block cost, what a paused keyword or campaign was spending and how the rest of its campaign did, a campaign before and after a budget or bid strategy change, and what new campaigns, ad groups and keywords have done since.",
+      "**If something else changed the campaign meanwhile** (it was paused, or its budget or bid strategy changed, in Google Ads or anywhere else), the result says so, so a drop isn't credited to the wrong change.",
+      "**Change history says when** each change's results are ready. Try it now on the demo account, which shows results straight away.",
+    ],
+  },
+  {
     version: "0.33.2", date: "2026-11-12",
     summary: "On Plus or Pro, one email when you reach your plan's accounts.",
     items: [

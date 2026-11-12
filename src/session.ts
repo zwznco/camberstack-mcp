@@ -22,6 +22,7 @@ import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole }
 import { writeFileSync } from "node:fs";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, queryShape } from "./gaql.js";
 import { reportBug } from "./sentry.js";
+import { CAVEATS, MIN_DAYS, add, changeLogQuery, changeLogWindow, overlapNote, overlaps, addDays, between, blocks, localDay, measurable, minus, reading, shown, targets, windows, zero, type Metrics, type Target, type Windows } from "./results.js";
 import {
   ChangeSchema, MAX_CHANGES, inverseAfterApply, quotedKeywords, sameSummary, pendingOf, resolveChange, summarize,
   type Change, type ResolvedChange,
@@ -1687,7 +1688,134 @@ export class UserSession {
       applied_at: p.applied_at ? new Date(p.applied_at * 1000).toISOString() : null,
       undo_of: p.undo_of,
       results: p.result ? publicResults(JSON.parse(p.result) as Outcome[]) : undefined,
+      ...(p.status === "applied" && !p.undo_of && measurable(p.changes, p.result)
+        ? { change_results: (p.applied_at ?? 0) <= now() - (MIN_DAYS + 1) * 86400 ? "ready: call change_results"
+          : isDemo(p.customer_id) ? "ready (demo): call change_results"
+          : `from ${isoDay(((p.applied_at ?? 0) + (MIN_DAYS + 1) * 86400) * 1000)}` }
+        : {}),
     }));
+  }
+
+  /**
+   * What applied Google Ads changes did, before vs after (results.ts has the method). The latest `limit` measurable
+   * proposals on the account, or one by id. The demo shows results right away, as if 14 days had passed.
+   */
+  async changeResults(customerId: string, proposalId: string | undefined, limit: number) {
+    const a = await this.account(customerId);
+    const demo = isDemo(a.customerId), cur = a.currency;
+    const rows = (proposalId
+      ? this.deps.db.prepare("SELECT * FROM proposals WHERE id = ? AND user_id = ? AND customer_id = ?").all(proposalId, this.user.id, a.customerId)
+      : this.deps.db.prepare("SELECT * FROM proposals WHERE user_id = ? AND customer_id = ? AND status = 'applied' AND undo_of IS NULL ORDER BY applied_at DESC, rowid DESC LIMIT 200")
+        .all(this.user.id, a.customerId)) as ProposalRow[];
+    if (proposalId && !rows.length) throw new Error(`No proposal ${proposalId} on account ${a.customerId} for this user. change_history lists them.`);
+    const undone = new Set((this.deps.db.prepare("SELECT undo_of FROM proposals WHERE user_id = ? AND status = 'applied' AND undo_of IS NOT NULL")
+      .all(this.user.id) as { undo_of: string }[]).map((r) => r.undo_of));
+    const tz = a.timeZone ?? "UTC", today = localDay(now(), tz);
+
+    const ready: { p: ProposalRow; w: Windows; t: ReturnType<typeof targets> }[] = [], waiting: object[] = [], skipped: object[] = [];
+    for (const p of rows) {
+      if (p.status !== "applied" || p.undo_of) { skipped.push({ proposal_id: p.id, why: p.undo_of ? "it's an undo" : `it was ${p.status}, not applied` }); continue; }
+      if (undone.has(p.id)) { if (proposalId) skipped.push({ proposal_id: p.id, why: "it was undone" }); continue; }
+      const t = targets(JSON.parse(p.changes), JSON.parse(p.result ?? "[]"));
+      if (!t.measured.length) { if (proposalId) skipped.push({ proposal_id: p.id, why: "none of its changes has a before/after measure", not_measured: t.notMeasured }); continue; }
+      const w = windows(demo ? addDays(today, -15) : localDay(p.applied_at ?? 0, tz), today);
+      if ("readyOn" in w) { waiting.push({ proposal_id: p.id, summary: p.summary.split("\n")[0], results_from: w.readyOn }); continue; }
+      if (ready.length < limit) ready.push({ p, w, t });
+    }
+
+    const read = (q: string) => this.ads.search(a.customerId, q, a.loginCustomerId);
+    const sum = (rs: any[], keep: (r: any) => boolean = () => true) => rs.filter(keep).reduce((m, r) => add(m, r), zero());
+    const measure = async (t: Target, w: Windows) => {
+      const both = async (q: (range: string) => string) => {
+        const before = await read(q(between(w.before)));
+        return { before, after: demo ? before : await read(q(between(w.after))) };
+      };
+      if (t.kind === "blocked") {
+        const scope = t.campaigns ? ` AND campaign.id IN (${t.campaigns.join(", ")})` : t.adGroup ? ` AND ad_group.id = ${t.adGroup}` : "";
+        const r = await both((d) => `SELECT campaign.id, search_term_view.search_term, metrics.cost_micros, metrics.clicks, metrics.conversions FROM search_term_view WHERE ${d}${scope}`);
+        const hit = (x: any) => t.negatives.some((n) => blocks(String(x.searchTermView?.searchTerm ?? ""), n));
+        const before = sum(r.before, hit), after = demo ? zero() : sum(r.after, hit);
+        const terms = new Map<string, number>();
+        for (const x of r.before.filter(hit)) terms.set(x.searchTermView.searchTerm, (terms.get(x.searchTermView.searchTerm) ?? 0) + micros(x.metrics?.costMicros));
+        const top = [...terms].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([search_term, cost]) => ({ search_term, cost: Math.round(cost * 100) / 100 }));
+        const campaigns = t.campaigns ?? (t.adGroup ? [...new Set(r.before.concat(r.after).map((x) => String(x.campaign?.id)).filter((x) => x !== "undefined"))] : []);
+        return { before, after, campaigns, extra: top.length ? { top_blocked_searches_before: top } : {} };
+      }
+      if (t.kind === "stopped") {
+        const fields = "campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions";
+        const q = t.level === "keyword" ? (d: string) => `SELECT ${fields} FROM keyword_view WHERE ${d} AND ad_group.id = ${t.adGroup} AND ad_group_criterion.criterion_id = ${t.id}`
+          : t.level === "ad_group" ? (d: string) => `SELECT ${fields} FROM ad_group WHERE ${d} AND ad_group.id = ${t.id}`
+          : t.level === "ad" ? (d: string) => `SELECT ${fields} FROM ad_group_ad WHERE ${d} AND ad_group.id = ${t.adGroup} AND ad_group_ad.ad.id = ${t.id}`
+          : (d: string) => `SELECT ${fields} FROM campaign WHERE ${d} AND campaign.id = ${t.id}`;
+        const r = await both(q);
+        const before = sum(r.before), after = demo ? zero() : sum(r.after);
+        const camp = r.before[0]?.campaign?.id ?? r.after[0]?.campaign?.id;
+        if (t.level === "campaign" || !camp) return { before, after, campaigns: t.level === "campaign" ? [t.id] : [] };
+        const c = await both((d) => `SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${d} AND campaign.id = ${camp}`);
+        const cb = sum(c.before), ca = demo ? cb : sum(c.after);
+        return { before, after, campaigns: [String(camp)], context: { before: minus(cb, before), after: minus(ca, after) } };
+      }
+      if (t.kind === "campaign") {
+        const r = await both((d) => `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${d} AND campaign.id = ${t.campaign}`);
+        return { before: sum(r.before), after: sum(r.after), campaigns: [t.campaign], extra: r.before[0]?.campaign?.name ? { campaign: r.before[0].campaign.name } : {} };
+      }
+      // New: only the after window means anything. Keywords are "<ad group>~<criterion>" pairs.
+      const ids = t.ids.map((x) => x.split("~"));
+      const q = t.level === "campaign" ? `SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${between(w.after)} AND campaign.id IN (${t.ids.join(", ")})`
+        : t.level === "ad_group" ? `SELECT campaign.id, ad_group.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM ad_group WHERE ${between(w.after)} AND ad_group.id IN (${t.ids.join(", ")})`
+        : `SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM keyword_view WHERE ${between(w.after)} AND ad_group_criterion.criterion_id IN (${ids.map((x) => x[1]).join(", ")})`;
+      const pairs = new Set(t.ids);
+      const rs = (await read(q)).filter((r) => t.level !== "keyword" || pairs.has(`${r.adGroup?.id}~${r.adGroupCriterion?.criterionId}`));
+      return { before: undefined, after: sum(rs), campaigns: t.level === "campaign" ? t.ids : [...new Set(rs.map((r) => String(r.campaign?.id)))] };
+    };
+
+    // Google's change log for each result's after window: other changes to the same campaigns (results.ts overlaps).
+    const changeLog = async (w: Windows) => {
+      if (demo) return { rows: [] as any[], window: null as [string, string] | null, note: undefined as string | undefined };
+      const cw = changeLogWindow(w.after, today);
+      if (!cw) return { rows: [], window: null, note: "Google's change log only reaches back 30 days, so other changes in this after window can't be checked." };
+      const rows = await read(changeLogQuery(cw)).catch(() => null);
+      if (!rows) return { rows: [], window: null, note: "Couldn't read Google's change log, so other changes in the after window weren't checked." };
+      return { rows, window: cw, note: cw[0] > w.after[0] ? `Other changes checked from ${cw[0]}: Google's change log only reaches back 30 days.` : undefined };
+    };
+
+    const results = await mapLimited(ready, async ({ p, w, t }) => { const log = await changeLog(w); return {
+      proposal_id: p.id,
+      applied_at: new Date((p.applied_at ?? 0) * 1000).toISOString(),
+      days_compared: w.days,
+      before_window: `${w.before[0]} to ${w.before[1]}`,
+      after_window: `${w.after[0]} to ${w.after[1]}`,
+      changes: await Promise.all(t.measured.map(async (m) => {
+        try {
+          const r = await measure(m, w) as { before?: Metrics; after: Metrics; campaigns: string[]; context?: { before: Metrics; after: Metrics }; extra?: object };
+          const o = log.window && r.campaigns.length ? overlaps(log.rows, new Set(r.campaigns), log.window) : { notable: [], other: 0 };
+          return {
+            change: m.describe, measure: m.kind, ...(r.extra ?? {}),
+            ...(r.before ? { before: shown(r.before) } : {}), [m.kind === "new" ? "since" : "after"]: shown(r.after),
+            ...(r.context ? { rest_of_campaign: { before: shown(r.context.before), after: shown(r.context.after) } } : {}),
+            ...(o.notable.length || o.other ? { also_changed_after: { notable: o.notable, other_changes: o.other } } : {}),
+            reading: reading(m, w.days, cur, r.before ?? zero(), r.after, r.context) + overlapNote(o),
+          };
+        } catch (e) {
+          return { change: m.describe, measure: m.kind, error: `Couldn't read it from Google: ${(e as Error).message}` };
+        }
+      })),
+      ...(t.notMeasured.length ? { not_measured: t.notMeasured } : {}),
+      ...(log.note ? { change_log_note: log.note } : {}),
+    }; }, 3);
+
+    return {
+      account: { customer_id: a.customerId, name: a.name, currency: cur, time_zone: tz },
+      ...demoNote(a.customerId),
+      ...(demo ? { demo_timing: "The demo shows results right away, as if the changes were applied 15 days ago." } : {}),
+      results,
+      ...(waiting.length ? { waiting: waiting.slice(0, 10) } : {}),
+      ...(skipped.length ? { skipped } : {}),
+      ...(!results.length && !waiting.length && !skipped.length
+        ? { note: "No applied changes with a before/after measure on this account yet. Negative keywords, pauses, budgets, bid strategies and new campaigns, ad groups and keywords are measured." }
+        : {}),
+      caveats: CAVEATS,
+    };
   }
 
   private forgetGoogle(): void {

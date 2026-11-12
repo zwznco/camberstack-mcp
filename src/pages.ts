@@ -1267,6 +1267,9 @@ ${cmd(`{ "mcpServers": { "camberstack": { "url": "${mcpUrl}" } } }`)}
 or belongs to someone else, and checks it against the account first: if the account changed since, you get an updated proposal to approve instead. Keep your AI app's confirmation prompt on for <code>apply_changes</code>.</li>
 <li><strong>Undo.</strong> <code>undo_changes</code> builds the reverse of an applied proposal, which you approve and apply the same way.
 <code>change_history</code> lists everything applied.</li>
+<li><strong>See what it did.</strong> From 7 days after a change, <code>change_results</code> compares equal windows before and after it, from Google's own numbers:
+what the searches your negatives block cost, what a paused keyword or campaign spent and how the rest of its campaign did, a campaign before and after a budget
+or bid strategy change, and what new campaigns, ad groups and keywords have done since. If the campaign was paused or its budget or bidding changed in the meantime, the result says so. Before vs after, not proof of cause.</li>
 </ol>
 ${CAN_CHANGE}
 

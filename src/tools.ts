@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.33.2";
+export const SERVER_VERSION = "0.34.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -48,7 +48,7 @@ For a site's tags and conversion tracking, start with tag_manager_containers, th
 const PICK_TOOLS = new Set(["switch_account", "choose_account"]);
 
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
-const GATED = new Set(["merchant_ad_spend", "account_overview", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account", "choose_account",
+const GATED = new Set(["merchant_ad_spend", "account_overview", "change_results", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account", "choose_account",
   ...[...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES].map((c) => `propose_${c.shape.type.value}`)]);
 
 const LINK_CHANGES = new Set(MERCHANT_LINK_CHANGES.map((c) => c.shape.type.value as string));
@@ -722,10 +722,24 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("change_history", {
     title: "Change history",
-    description: "Every proposal made through Camberstack, with what was applied, what failed, and what was undone.",
+    description: "Every proposal made through Camberstack, with what was applied, what failed, and what was undone. Applied Google Ads changes that can be measured carry change_results: ready, or the date their results start.",
     inputSchema: { customer_id: customerId.optional(), limit: z.number().int().min(1).max(100).default(20).describe("Most proposals to return, newest first") },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, ({ customer_id, limit }: { customer_id?: string; limit: number }) => session().history(customer_id, limit));
+
+  tool("change_results", {
+    title: "Results of applied changes",
+    description: "What applied Google Ads changes did, before vs after, from Google's numbers: negatives (what the searches they block cost), "
+      + "pauses (what it spent; the rest of its campaign), budgets, bidding and enabling (the campaign), and new campaigns, ad groups and keywords "
+      + "(since added). Ready 7 days after applying (change_history says when). Offer it when the user returns to an account with results ready, "
+      + "and give each reading with the caveats.",
+    inputSchema: {
+      customer_id: customerId,
+      proposal_id: z.string().optional().describe("One applied proposal; omit for the latest"),
+      limit: z.number().int().min(1).max(25).default(10).describe("Most proposals to measure"),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, ({ customer_id, proposal_id, limit }: { customer_id: string; proposal_id?: string; limit: number }) => session().changeResults(customer_id, proposal_id, limit));
 
   const picked = o.chatgpt ? "chosen" : "switched_to";
   tool(o.chatgpt ? "choose_account" : "switch_account", {

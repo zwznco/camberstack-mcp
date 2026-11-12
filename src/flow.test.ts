@@ -666,7 +666,8 @@ describe("OAuth + MCP end to end", () => {
     // Search Console changes (2026-10-31): +1K for propose_search_console_changes; +1K for send_feedback.
     // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +7.2K for its three tools;
     // +0.2K for create_container and delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
-    expectToolBudget(tools, { total: 118_000, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800 } });
+    // change_results (2026-11-12): +1.2K.
+    expectToolBudget(tools, { total: 119_200, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1263,7 +1264,8 @@ describe("OAuth + MCP end to end", () => {
       // Search Console changes (2026-10-31): +3K for its four propose tools; +1K for send_feedback.
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
-      expectToolBudget(tools, { total: 157_100, perTool: 6_000 });
+      // change_results (2026-11-12): +1.2K.
+      expectToolBudget(tools, { total: 158_300, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -2075,6 +2077,88 @@ describe("OAuth + MCP end to end", () => {
     expect(ads.mutations.length).toBe(before);  // Google was never called
     const now = (await call(token, "billing", {})).json;  // allowance untouched (the signed link's expiry may tick)
     expect({ plan: now.plan, used: now.accounts_in_use }).toEqual({ plan: left.plan, used: left.accounts_in_use });
+  });
+
+  it("change_results on the demo: right away, blocked searches go to zero, a pause shows what it spent and the rest of its campaign", async () => {
+    const p = (await call(token, "propose_changes", { customer_id: "0000000001", changes: [
+      { type: "add_negative_keywords", campaign_id: "2002", keywords: [{ text: "reviews", match_type: "PHRASE" }, { text: "how to", match_type: "PHRASE" }] },
+      { type: "pause_keyword", ad_group_id: "3005", criterion_id: "4009" },
+      { type: "set_daily_budget", campaign_id: "2001", amount: 45 },
+      { type: "set_url_suffix", campaign_id: "2001", suffix: "utm_source=google" },
+    ] })).json;
+    expect((await call(token, "apply_changes", { proposal_id: p.proposal_id })).json.status).toBe("applied");
+    const h = (await call(token, "change_history", { customer_id: "0000000001" })).json;
+    expect(h[0].change_results).toBe("ready (demo): call change_results");
+
+    const r = await call(token, "change_results", { customer_id: "000-000-0001" });
+    expect(r.isError).toBeFalsy();
+    expect(r.json.note).toContain("Sample data");
+    const [res] = r.json.results;
+    expect(res.proposal_id).toBe(p.proposal_id);
+    expect(res.days_compared).toBe(14);
+    const [neg, pause, budget] = res.changes;
+    expect(neg.measure).toBe("blocked");
+    expect(neg.before.cost).toBeGreaterThan(0);
+    expect(neg.after.cost).toBe(0);
+    expect(neg.top_blocked_searches_before.map((x: any) => x.search_term)).toContain("tankless water heater reviews");
+    expect(neg.reading).toMatch(/^Searches these negatives block cost \$[\d.]+ .* in the 14 days before; \$0\.00/);
+    expect(pause.measure).toBe("stopped");
+    expect(pause.before.cost).toBeGreaterThan(0);
+    expect(pause.rest_of_campaign.before.cost).toBeGreaterThanOrEqual(0);
+    expect(budget).toMatchObject({ measure: "campaign", campaign: "Emergency Plumbing – Search" });
+    expect(res.not_measured).toHaveLength(1);
+    expect(r.json.caveats[0]).toContain("not cause and effect");
+
+    // Undone proposals drop out.
+    const u = (await call(token, "undo_changes", { proposal_id: p.proposal_id })).json;
+    await call(token, "apply_changes", { proposal_id: u.proposal_id });
+    expect((await call(token, "change_results", { customer_id: "0000000001" })).json.results.map((x: any) => x.proposal_id)).not.toContain(p.proposal_id);
+  });
+
+  it("change_results on a real account: waits 7 days, then reads Google for equal windows either side of the apply day", async () => {
+    const p = (await call(token, "propose_changes", { customer_id: "1112223333", changes: [
+      { type: "add_negative_keywords", campaign_id: "10", keywords: [{ text: "free", match_type: "PHRASE" }] },
+    ] })).json;
+    await call(token, "apply_changes", { proposal_id: p.proposal_id });
+    const early = (await call(token, "change_results", { customer_id: "1112223333" })).json;
+    expect(early.results).toEqual([]);
+    expect(early.waiting[0].proposal_id).toBe(p.proposal_id);
+    expect((await call(token, "change_history", { customer_id: "1112223333" })).json[0].change_results).toMatch(/^from \d{4}-\d{2}-\d{2}$/);
+
+    db.prepare("UPDATE proposals SET applied_at = ? WHERE id = ?").run(now() - 20 * 86400, p.proposal_id);
+    const queries: string[] = [];
+    const real = ads.search.bind(ads);
+    ads.search = async (cid: string, q: string) => {
+      if (q.includes("FROM change_event")) {
+        queries.push(q);
+        const day = new Date(Date.now() - 12 * 86400_000).toISOString().slice(0, 10);
+        return [{ changeEvent: { changeDateTime: `${day} 09:00:00.5`, changeResourceType: "CAMPAIGN", resourceChangeOperation: "UPDATE",
+          changedFields: "status", clientType: "GOOGLE_ADS_WEB_CLIENT", campaign: "customers/1112223333/campaigns/10", newResource: { campaign: { status: "PAUSED" } } } }];
+      }
+      if (!q.includes("FROM search_term_view")) return real(cid, q);
+      queries.push(q);
+      const start = /BETWEEN '([\d-]+)'/.exec(q)![1]!;
+      const isBefore = Date.parse(start) < (now() - 20 * 86400) * 1000;
+      return isBefore
+        ? [{ searchTermView: { searchTerm: "free invoice template" }, metrics: { costMicros: "12500000", clicks: "6", conversions: 0 } },
+           { searchTermView: { searchTerm: "invoice software" }, metrics: { costMicros: "30000000", clicks: "9", conversions: 2 } }]
+        : [{ searchTermView: { searchTerm: "invoice software" }, metrics: { costMicros: "28000000", clicks: "8", conversions: 2 } }];
+    };
+    try {
+      const r = (await call(token, "change_results", { customer_id: "1112223333", proposal_id: p.proposal_id })).json;
+      expect(queries).toHaveLength(3);  // before, after, and Google's change log for the after window
+      expect(queries.filter((q) => q.includes("FROM search_term_view")).every((q) => q.includes("AND campaign.id IN (10)"))).toBe(true);
+      expect(r.results[0].days_compared).toBe(19);
+      expect(r.results[0].changes[0]).toMatchObject({ measure: "blocked", before: { cost: 12.5, clicks: 6 }, after: { cost: 0, clicks: 0 } });
+      // Something else stopped the campaign 12 days ago, inside the after window: the result says so.
+      const paused = new Date(Date.now() - 12 * 86400_000).toISOString().slice(0, 10);
+      expect(r.results[0].changes[0].also_changed_after).toEqual({ notable: [{ date: paused, what: "campaign paused", by: "in Google Ads" }], other_changes: 0 });
+      expect(r.results[0].changes[0].reading).toBe("Searches these negatives block cost $12.50 (6 clicks, 0 conversions) in the 19 days before; $0.00 (0 clicks) in the 19 days after."
+        + ` Also in the after window: campaign paused on ${paused} in Google Ads, so the after figures aren't this change alone.`);
+      expect((await call(token, "change_history", { customer_id: "1112223333" })).json[0].change_results).toBe("ready: call change_results");
+    } finally {
+      ads.search = real;
+    }
   });
 
   it("logs each tool call by name, without arguments or results; for run_gaql only the query's shape", async () => {
