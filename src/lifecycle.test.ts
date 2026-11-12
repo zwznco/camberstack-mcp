@@ -17,6 +17,7 @@ function setup(clock = () => MORNING) {
     mail: { apiKey: "re_test", from: "Adam at Camberstack <adam@camberstack.io>", replyTo: "adam@camberstack.io" },
     internalEmails: new Set(["me@example.com"]),
     upgradeLink: (u) => `https://camberstack.io/upgrade?t=${u}.sig`,
+    agencyLink: (u) => `https://camberstack.io/agency?t=${u}.sig`,
     fetch: (async (_url: string, init: RequestInit) => { sent.push(JSON.parse(String(init.body))); return new Response("{}", { status: 200 }); }) as any,
   });
   const user = (id: string, email: string, ageDays: number, extra = "") =>
@@ -163,6 +164,39 @@ describe("lifecycle emails", () => {
     expect(sent[0].text).toContain("another opens once your current one has gone 30 days unused: on November 13, if you don't use it before then.");
     expect(sent[0].text).not.toMatch(/switch/i);
     expect(sent[0].html).toContain("on November 13");
+    expect(await lc.run()).toBe(0);
+  });
+
+  it("sends paid_limit once to a paying Plus or Pro user refused another account on that plan, offering the plan above", async () => {
+    // Prod, 2026-11-12: a Pro user with 16 accounts was refused, clicked Agency twice, and no email reached them.
+    const { db, lc, sent, user, call } = setup();
+    const refused = (userId: string, daysAgo: number, plan: string, n: number) =>
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'switch_account', 1, ?, 10, 10)")
+        .run(now() - daysAgo * DAY, userId, `Plan limit: Camberstack has been used on ${n} Google Ads accounts in the last 30 days; ${plan} covers ${n} at a time `
+          + "(active: 1112223333), with no switching between them. Another opens on 2026-12-06, if 2250112931 isn't used again before then.");
+    const paying = (id: string, plan: string) => { user(id, `${id}@example.com`, 20, plan); call(id, "account_overview");
+      db.prepare("UPDATE users SET stripe_sub = ? WHERE id = ?").run(`sub_${id}`, id); };
+    paying("pro", "pro"); refused("pro", 0.3, "Pro", 5);
+    paying("plus", "plus"); refused("plus", 0.4, "Plus", 1);
+    paying("soon", "pro"); refused("soon", 0.2, "Pro", 5);                  // under 6 hours ago
+    paying("upgraded", "pro"); refused("upgraded", 0.3, "Free", 1);        // refused on Free, before paying: not this email
+    paying("agency", "agency"); refused("agency", 0.3, "Agency", 25);       // nothing above Agency
+    user("comp", "comp@example.com", 20, "pro"); call("comp", "account_overview"); refused("comp", 0.3, "Pro", 5);  // complimentary
+    expect(await lc.run()).toBe(2);
+    const pro = sent.find((m) => m.to[0] === "pro@example.com"), plus = sent.find((m) => m.to[0] === "plus@example.com");
+    expect(pro.subject).toBe("Using Camberstack on more Google Ads accounts");
+    expect(pro.text).toContain("Your Pro plan covers 5 accounts at a time");
+    expect(pro.text).toContain("on December 6, if it isn't used before then");
+    expect(pro.text).toContain("Agency covers up to 25");
+    expect(pro.text).toContain("https://camberstack.io/agency?t=pro.sig");
+    expect(pro.html).toContain("Switch to Agency");
+    expect(plus.text).toContain("Your Plus plan covers one account at a time");
+    expect(plus.text).toContain("Pro covers up to 5");
+    expect(plus.text).toContain("https://camberstack.io/upgrade?t=plus.sig");
+    for (const m of sent) expect(m.text).not.toMatch(/On Free|Free plan/);
+    expect(db.prepare("SELECT user_id FROM email_log WHERE kind = 'paid_limit' ORDER BY user_id").all()).toEqual([{ user_id: "plus" }, { user_id: "pro" }]);
+    // Once per user, even after another refusal.
+    refused("pro", 0.3, "Pro", 5);
     expect(await lc.run()).toBe(0);
   });
 

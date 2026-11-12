@@ -12,6 +12,10 @@
  *                  another upgrade email: the cap is the main paywall, and this email is how ChatGPT users see the offer (2026-11-11)
  *                  limit_reached isn't sent after any upgrade email (limit_reached, switch_wanted or change_limit), nor
  *                  in the same run as change_limit
+ *   paid_limit     a paying Plus or Pro user (Stripe, not complimentary) was refused another Google Ads account on that plan,
+ *                  the next morning (6+ hours later) → one note: when another account opens, and the plan above (Plus → Pro,
+ *                  Pro → Agency) with a personal link to switch. Once per user. Added 2026-11-12: a Pro user with 16 accounts was
+ *                  refused, clicked Agency twice and got no email, since every other upgrade email is for Free only
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on a paid plan (Plus, Pro, Agency) with a Stripe subscription → what it adds, where billing lives
@@ -83,7 +87,7 @@ function localHour(at: Date, tz: string | null | undefined): number {
   const fmt = (zone: string) => Number(new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hourCycle: "h23" }).format(at));
   try { return fmt(tz || FALLBACK_TZ); } catch { return fmt(FALLBACK_TZ); }
 }
-type Kind = "first_steps" | "limit_reached" | "switch_wanted" | "change_limit" | "check_in" | "welcome" | "pro_welcome";
+type Kind = "first_steps" | "limit_reached" | "paid_limit" | "switch_wanted" | "change_limit" | "check_in" | "welcome" | "pro_welcome";
 /** welcome shipped at this time (2026-10-14); everyone who signed up before it never gets one. */
 const WELCOME_SINCE = 1792001873;
 /** A welcome that hasn't gone out a day after signup (mail down that long) is dropped, not sent late. */
@@ -107,7 +111,7 @@ export class Lifecycle {
   }
 
   /** Who is due each email right now. */
-  private due(): { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string }[] {
+  private due(): { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string; plan?: string }[] {
     const t = now();
     const eligible = `u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan = 'free'`;
     const notSent = (k: string) => `NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = '${k}')`;
@@ -144,6 +148,16 @@ export class Lifecycle {
       if (!cap || used.length < cap) return [];
       return [{ ...u, opens: new Date((used[used.length - cap]! + ACCOUNT_WINDOW_DAYS * DAY) * 1000).toISOString().slice(0, 10) }];
     });
+    // A paying Plus or Pro user refused another Ads account on that plan (the refusal names it: "; Pro covers 5 at a time"),
+    // so a refusal from before they upgraded doesn't count. Comps have no stripe_sub; Agency has no plan above it.
+    const paid = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.plan, max(c.at) last, c.error
+      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
+        AND instr(c.error, '; ' || CASE u.plan WHEN 'pro' THEN 'Pro' ELSE 'Plus' END || ' covers ') > 0
+        AND coalesce(c.customer_id, '') NOT LIKE 'mc:%' AND c.error NOT LIKE '%Merchant Center account%'
+      WHERE u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan IN ('plus', 'pro') AND coalesce(u.stripe_sub, '') != ''
+        AND ${notSent("paid_limit")}
+      GROUP BY u.id HAVING last BETWEEN ? AND ?`)
+      .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; plan: string; last: number; error: string }[];
     // First applied change to a real account (not the demo, not an undo) 2–14 days ago; any plan, connected or not.
     const checkIn = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, min(p.applied_at) first FROM users u
       JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.undo_of IS NULL AND p.customer_id <> ? AND p.customer_id <> 'mc:${DEMO_MERCHANT}'
@@ -160,6 +174,8 @@ export class Lifecycle {
       // Both stops by the same morning: change_limit only, so one upgrade email, not two.
       ...limit.filter((u) => ok(u) && !atCap.some((c) => c.id === u.id)).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
         opens: /opens (?:again )?(?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
+      ...paid.filter(ok).filter((u) => u.plan === "plus" || this.d.agencyLink?.(u.id)).map((u) => ({ kind: "paid_limit" as const, id: u.id, email: u.email, days: 0, plan: u.plan,
+        opens: /opens (?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
       ...atCap.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0, opens: u.opens })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];
@@ -170,6 +186,8 @@ export class Lifecycle {
     if (!this.d.mail) return 0;
     return this.deliver(this.due(), (u) => u.kind === "first_steps" ? firstSteps(u.days)
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
+      : u.kind === "paid_limit" ? paidLimit(this.d.baseUrl, u.plan === "pro" ? "pro" : "plus",
+        u.plan === "pro" ? this.d.agencyLink?.(u.id) ?? null : this.d.upgradeLink(u.id), u.opens)
       : u.kind === "change_limit" ? changeLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.opens) : checkInEmail());
   }
 
@@ -325,6 +343,18 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
     + `and Agency up to ${AGENCY_ACCOUNTS}, for ${AGENCY_PRICE_LABEL}; cancel any time.`;
   const free = `On Free, every tool and ${freeChangesShort()} keep working on your active account, and undo and history always work.`;
   return upgradeEmail({ subject: "Using Camberstack on more than one Google Ads account", stopped, pitch: pro, link: upgrade, cta: "Upgrade to Pro", free, base });
+}
+
+/** A paying Plus or Pro user was refused another account: when one opens, and the plan above with its link (Stripe's billing portal switches the subscription). */
+function paidLimit(base: string, plan: "plus" | "pro", link: string | null, opens?: string) {
+  const when = opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
+  const [name, covers] = plan === "pro" ? ["Pro", PRO_ACCOUNTS] : ["Plus", 1];
+  const [next, nextCovers, price] = plan === "pro" ? ["Agency", AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL] : ["Pro", PRO_ACCOUNTS, PRO_PRICE_LABEL];
+  const stopped = `Camberstack stopped when you tried it on another Google Ads account. Your ${name} plan covers ${covers === 1 ? "one account" : `${covers} accounts`} at a time, `
+    + `and another opens once one of them has gone ${ACCOUNT_WINDOW_DAYS} days unused${when ? `: on ${when}, if it isn't used before then` : ""}.`;
+  const pitch = `If you're working on more accounts than that, ${next} covers up to ${nextCovers}, for ${price}. You can switch with the link below; cancel any time.`;
+  const keep = `On ${name}, everything keeps working on your active account${covers === 1 ? "" : "s"} as it does now.`;
+  return upgradeEmail({ subject: "Using Camberstack on more Google Ads accounts", stopped, pitch: pitch, link, cta: `Switch to ${next}`, free: keep, base });
 }
 
 /** The change cap stopped an apply: when the next one opens (the date the stop named), and Plus's unlimited changes. */

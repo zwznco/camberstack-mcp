@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.33.2", date: "2026-11-12",
+    summary: "On Plus or Pro, one email when you reach your plan's accounts.",
+    items: [
+      "**Reached your plan's Google Ads accounts?** The next morning, one email says when another account opens and what the plan above covers, with a link to switch.",
+    ],
+  },
+  {
     version: "0.33.1", date: "2026-11-12",
     summary: "Undoing several changes at once works in one step.",
     items: [
