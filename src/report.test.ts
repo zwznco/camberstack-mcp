@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDb, now } from "./db.js";
-import { buildReport, MONTHLY, ON_REQUEST_GAP, userDetail, windowStart } from "./report.js";
+import { buildReport, capUsage, MONTHLY, ON_REQUEST_GAP, userDetail, windowStart } from "./report.js";
+import { setChangeCap } from "./plans.js";
 
 describe("buildReport", () => {
   // The seeds sit 25-30 min back; between 00:00 and 00:30 UTC that is yesterday, outside a "today" window. Pin to noon.
@@ -317,5 +318,40 @@ describe("windowStart", () => {
     const t = Date.parse("2026-10-20T00:52:00Z") / 1000;
     expect(new Date(windowStart(1, t) * 1000).toISOString()).toBe("2026-10-20T00:00:00.000Z");
     expect(new Date(windowStart(7, t) * 1000).toISOString()).toBe("2026-10-14T00:00:00.000Z");
+  });
+});
+
+describe("capUsage", () => {
+  it("lists who is at the change cap and when their window frees the next change, counted like the gate", () => {
+    const db = openDb(":memory:"), t = now(), DAY = 86400;
+    const user = db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES (?, ?, ?, ?, ?, ?)");
+    const applied = db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, undo_of, created_at, applied_at)
+      VALUES (?, ?, ?, '[]', 's', 'applied', ?, ?, ?)`);
+    let n = 0;
+    const apply = (u: string, daysAgo: number, cid = "1112223333", undo: string | null = null) => applied.run(`p${n++}`, u, cid, undo, t - daysAgo * DAY, t - daysAgo * DAY);
+    user.run("full", "g1", "full@example.com", "free", null, t - 40 * DAY);
+    for (const d of [20, 12, 5]) apply("full", d);           // 3 of 3: at the cap
+    apply("full", 1, "0000000001"); apply("full", 1, "1112223333", "p0");  // the demo and an undo don't count
+    apply("full", 31);                                       // out of the window
+    user.run("some", "g2", "some@example.com", "free", null, t - 40 * DAY);
+    apply("some", 10);
+    user.run("payer", "g3", "payer@example.com", "plus", "sub_x", t - 40 * DAY);
+    for (const d of [3, 2, 1]) apply("payer", d);
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'payer', 'apply_changes', 1, 'Change limit: nothing was applied.', 5, 10)").run(t - 4 * DAY);
+    user.run("me", "g4", "me@example.com", "free", null, t - 40 * DAY);
+    for (const d of [3, 2, 1]) apply("me", d);
+    user.run("idle", "g5", "idle@example.com", "free", null, t - 40 * DAY);
+    expect(capUsage(db, [], t)).toEqual([]);  // cap off
+    setChangeCap(3, t - 25 * DAY);
+    try {
+      const rows = capUsage(db, ["ME@example.com"], t);
+      expect(rows.map((r) => r.id)).toEqual(["full", "payer", "some"]);  // internal and idle left out; at the cap first, then stops
+      expect(rows[0]).toMatchObject({ used: 3, atCap: true, windowEnds: t - 20 * DAY + 30 * DAY, stops: 0 });
+      expect(rows[1]).toMatchObject({ plan: "plus", paying: true, atCap: false, stops: 1 });
+      expect(rows[2]).toMatchObject({ used: 1, atCap: false, windowEnds: t - 10 * DAY + 30 * DAY });
+      // The cap's start cuts the count: approvals before it don't count.
+      setChangeCap(3, t - 15 * DAY);
+      expect(capUsage(db, [], t).find((r) => r.id === "full")).toMatchObject({ used: 2, atCap: false });
+    } finally { setChangeCap(null); }
   });
 });

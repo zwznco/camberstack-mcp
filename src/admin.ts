@@ -8,12 +8,12 @@ import type { DB } from "./db.js";
 import type { GoogleCreds } from "./google.js";
 import { SignIn } from "./signin.js";
 import { startLoginAs } from "./account.js";
-import { buildReport, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, SWITCH_DAYS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
+import { buildReport, capUsage, type CapRow, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, SWITCH_DAYS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
 import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { esc } from "./pages.js";
-import { planLabel } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, changeCap, changeCapFrom, planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
 import { AUDIENCES, DAILY_LIMIT, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
@@ -68,11 +68,12 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
   const view = (req: Request) => {
     const days = [1, 7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
     const report = buildReport(d.db, { days, exclude: [...d.internalEmails], freeOneServiceFrom: d.freeOneServiceFrom });
-    return { days, all: req.query.all === "1", report, feedback: feedbackCount(d.db, windowStart(days)) };
+    return { days, all: req.query.all === "1", report, feedback: feedbackCount(d.db, windowStart(days)),
+      cap: capUsage(d.db, [...d.internalEmails]) };
   };
   const pages: Record<string, (v: ReturnType<typeof view>) => string> = {
     "/": overviewPage, "/users": usersPage, "/activity": activityPage, "/revenue": revenuePage,
-    "/feedback": (v) => feedbackPage(recentFeedback(d.db), v),
+    "/feedback": (v) => feedbackPage(recentFeedback(d.db), v), "/cap": capPage,
   };
   for (const [path, render] of Object.entries(pages)) {
     site.get(path, (req, res) => {
@@ -145,7 +146,7 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
 
 // ---------------------------------------------------------------- views
 
-type View = { days: number; all: boolean; report: Report; feedback: number };
+type View = { days: number; all: boolean; report: Report; feedback: number; cap: CapRow[] };
 
 /** Monthly recurring revenue: each paying customer at their plan's price (report.ts MONTHLY). Complimentary plans aren't in it. */
 const mrr = (r: Report) => r.payingByPlan.reduce((a, p) => a + p.n * (MONTHLY[p.plan] ?? 0), 0);
@@ -217,6 +218,7 @@ function shell(path: string, who: string, v: View, body: string, heading?: strin
     ["/revenue", "Revenue", String(v.report.funnel.all.paid || "")],
     ["/announcements", "Announcements", ""],
     ["/feedback", "Feedback", String(v.feedback || "")],
+    ...(changeCap() ? [["/cap", "Cap", (() => { const n = v.cap.filter((r) => r.atCap).length; return n ? `<b class="bad" title="${n} Free users at the cap now">${n}</b>` : ""; })()] as [string, string, string]] : []),
   ];
   const title = nav.find(([p]) => p === path)?.[1] ?? "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -507,6 +509,37 @@ function callsTable(rows: { at: number; email: string | null; id?: string; tool:
     `<code>${esc(c.tool)}</code>`, cid(c.customer_id), num(c.ms),
     c.ok ? `<span class="ok">ok</span>` : `<span class="err">${errorText(c.error)}</span>`, `<span class="muted">${esc(c.client)}</span>`]))
     .replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">');
+}
+
+/** Absolute date with the relative time on hover: "Dec 2 (in 6d)". */
+const ends = (t: number | null) => {
+  if (!t) return `<span class="dim">—</span>`;
+  const d = Math.ceil((t - now()) / 86400);
+  return `<span title="${date(t)} UTC">${new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} <span class="dim">(${d <= 0 ? "now" : `in ${d}d`})</span></span>`;
+};
+
+/**
+ * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): who is at it, when their window frees the next
+ * change, who was stopped, emailed and who paid since. Not filtered by ?days: the cap's own 30-day window decides.
+ */
+function capPage(v: View): string {
+  const cap = changeCap();
+  if (!cap) return card("Change cap", `<p class="empty">The change cap is off (FREE_CHANGE_CAP unset).</p>`);
+  const rows = v.cap, at = rows.filter((r) => r.atCap), stopped = rows.filter((r) => r.stops), paid = stopped.filter((r) => r.paying);
+  const near = rows.filter((r) => r.plan === "free" && !r.atCap && r.used >= Math.ceil(cap * 0.7));
+  const line = (r: (typeof rows)[number]) => [userLink(v, r.id, r.email), planBadge(r.plan, r.paying), r.chatgpt ? "ChatGPT" : `<span class="dim">other</span>`,
+    `${num(r.used)} <span class="dim">/ ${cap}</span>`, ends(r.windowEnds), r.stops ? bad(r.stops) : `<span class="n dim">0</span>`, when(r.lastStop), when(r.emailed)];
+  const cols: (string | [string, "r"])[] = ["user", "plan", "app", ["approvals", "r"], "window ends", ["stops", "r"], "last stop", "emailed"];
+  return `<div class="stats">
+${stat("At the cap", num(at.length), `Free users at ${cap} approvals now`)}
+${stat("Near it", num(near.length), `Free users at ${Math.ceil(cap * 0.7)}+`)}
+${stat("Stopped", num(stopped.length), "got a Change limit since the start")}
+${stat("Stopped, then paid", num(paid.length), "on a paid plan with a subscription now")}
+</div>
+${card("At the cap", table(cols, at.map(line), "Nobody is at the cap."),
+    `<small>window ends = when their next change opens (the ${cap}th most recent approval turns ${ACCOUNT_WINDOW_DAYS} days old)</small>`)}
+${card("Everyone counting", table(cols, rows.filter((r) => !r.atCap).map(line), "No approvals counted yet."),
+    `<small>since ${date(changeCapFrom())} UTC · window ends = when their oldest counted approval rolls off · paid plans aren't capped, shown for who converted</small>`)}`;
 }
 
 function activityPage(v: View): string {

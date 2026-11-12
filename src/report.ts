@@ -7,6 +7,7 @@ import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { now } from "./db.js";
+import { isDemoProposal } from "./session.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES } from "./google.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, changeCapFrom, PRO_PRICE_LABEL, SERVICE_CHOICE_PREFIX, SERVICE_LIMIT_PREFIX, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
@@ -70,6 +71,48 @@ function byApp<R extends { app: string | null; connected: number; in_window: num
     m.connected += r.connected; m.in_window += r.in_window; m.used_real += r.used_real; m.applied += r.applied;
   }
   return [...out.values()].sort((a, b) => Number(a.app === null) - Number(b.app === null) || b.connected - a.connected);
+}
+
+/** One user on the change cap (admin Cap tab): approvals counted now, when the window frees one, stops, the email, the plan. */
+export interface CapRow {
+  id: string; email: string; plan: string; paying: boolean; chatgpt: boolean;
+  /** Approvals the cap counts right now (session.ts changesApplied). Paid plans: what it would be, for context. */
+  used: number; cap: number; atCap: boolean;
+  /** At the cap: when the next change opens. Below it: when the oldest counted approval rolls off (null with none). */
+  windowEnds: number | null;
+  stops: number; lastStop: number | null; emailed: number | null;
+}
+
+/**
+ * The change cap (FREE_CHANGE_CAP) per user, counted the way the gate counts (session.ts changesApplied: real approvals,
+ * no undo or demo, since the cap's start, plan_reset_at and 30 days ago). Users with a counted approval or a stop since
+ * the start; internal accounts left out. At the cap first, then by approvals. Empty with the cap off.
+ */
+export function capUsage(db: DB, exclude: string[], t = Math.floor(Date.now() / 1000)): CapRow[] {
+  const cap = changeCap();
+  if (!cap) return [];
+  const from = changeCapFrom(), win = ACCOUNT_WINDOW_DAYS * 86400, ex = new Set(exclude.map((e) => e.toLowerCase()));
+  const users = (db.prepare(`SELECT id, email, plan, coalesce(stripe_sub, '') != '' paying, plan_reset_at FROM users`).all() as
+    { id: string; email: string; plan: string; paying: number; plan_reset_at: number | null }[]).filter((u) => !ex.has(u.email.toLowerCase()));
+  const applied = db.prepare(`SELECT customer_id, changes, applied_at FROM proposals WHERE user_id = ? AND status = 'applied' AND undo_of IS NULL
+      AND applied_at >= ? ORDER BY applied_at`);
+  const stops = db.prepare(`SELECT count(*) n, max(at) last FROM tool_calls WHERE user_id = ? AND error LIKE '${CHANGE_LIMIT_PREFIX}%' AND at >= ?`);
+  const mailed = db.prepare(`SELECT sent_at FROM email_log WHERE user_id = ? AND kind = 'change_limit'`);
+  const gpt = db.prepare(`SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = ?
+      AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%') LIMIT 1`);
+  const rows: CapRow[] = [];
+  for (const u of users) {
+    const counted = (applied.all(u.id, Math.max(t - win, u.plan_reset_at ?? 0, from)) as { customer_id: string; changes: string; applied_at: number }[])
+      .filter((r) => !isDemoProposal(r.customer_id, r.changes)).map((r) => r.applied_at);
+    const st = stops.get(u.id, from) as { n: number; last: number | null };
+    if (!counted.length && !st.n) continue;
+    const atCap = u.plan === "free" && counted.length >= cap;
+    rows.push({ id: u.id, email: u.email, plan: u.plan, paying: Boolean(u.paying), chatgpt: Boolean(gpt.get(u.id)),
+      used: counted.length, cap, atCap,
+      windowEnds: atCap ? counted[counted.length - cap]! + win : counted.length ? counted[0]! + win : null,
+      stops: st.n, lastStop: st.last, emailed: (mailed.get(u.id) as { sent_at: number } | undefined)?.sent_at ?? null });
+  }
+  return rows.sort((a, b) => Number(b.atCap) - Number(a.atCap) || b.stops - a.stops || b.used - a.used);
 }
 
 export function buildReport(db: DB, o: ReportOptions) {
