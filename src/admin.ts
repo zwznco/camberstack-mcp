@@ -521,7 +521,7 @@ const ends = (t: number | null) => {
 
 /**
  * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): who hit it, then everyone else counting toward it
- * (dropped 2026-11-12, back 2026-11-13 at the operator's ask). Hit = at the cap now, or stopped by it in the window (so one
+ * (dropped 2026-11-12, back 2026-11-13 at the operator's ask; Free only, since paid plans have no cap). Hit = at the cap now, or stopped by it in the window (so one
  * who then paid or rolled off stays listed).
  * Kept narrow for a phone: five columns, short labels, plan and app as chips beside the email, details on hover. Not
  * filtered by ?days: the cap's own 30-day window decides.
@@ -542,7 +542,7 @@ ${stat("Stopped", num(stopped.length))}
 ${stat("Paid after", num(paid.length))}
 </div>
 ${card("Hit the cap", table(cols, hit.map(line), "Nobody yet."), `<small>at the cap now, or stopped by it · opens = next change frees up</small>`)}
-${card("Counting", table(cols, rows.filter((r) => !r.atCap && !r.stops).map(line), "Nothing yet."),
+${card("Counting", table(cols, rows.filter((r) => r.plan === "free" && !r.atCap && !r.stops).map(line), "Nothing yet."),
     `<small>since ${new Date(changeCapFrom() * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · opens = oldest rolls off</small>`)}`;
 }
 
