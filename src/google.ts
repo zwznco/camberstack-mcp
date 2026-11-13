@@ -305,6 +305,11 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
         + "Find them: SELECT campaign.id, campaign.name FROM campaign WHERE campaign.missing_eu_political_advertising_declaration = TRUE "
         + "AND campaign.status != 'REMOVED'. Ask the user whether any of them run EU political ads (it is their legal declaration; most "
         + "businesses answer no), propose set_eu_political_advertising for each in one proposal, apply it, then retry this change.";
+    case "RESOURCE_LIMIT":
+      // Google names no limit. A user's add_negative_keywords hit it; the model found on its own that deleting old ones made room (prod, 2026-11-12).
+      return "Google caps how many of these one campaign, ad group, list or account can hold (e.g. 10,000 negative keywords per campaign, "
+        + "5,000 per shared negative list, 20 negative lists per account, 20,000 keywords per ad group). Count what's there with run_gaql, "
+        + "make room by deleting unused ones first (or move negatives into a shared list), then propose again.";
     case "CANNOT_MODIFY_FOR_TRIAL_CAMPAIGN":
       // Google's message says what's locked but not why or what to do; the model dropped the pause unexplained (prod, 2026-10-28).
       return "this campaign is the trial arm of a Google Ads experiment, which takes its dates, budget and status from the experiment. "

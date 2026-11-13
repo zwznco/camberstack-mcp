@@ -18,6 +18,7 @@ describe("AdsApiError fix hints", () => {
     [{ mutateError: "MUTATE_NOT_ALLOWED" }, "Mutates are not allowed for the requested resource.", "operations", "set_bidding_strategy can still move campaigns off it"],
     [{ mutateError: "MUTATE_NOT_ALLOWED" }, "Mutates are not allowed for the requested resource.", "operations.update.type", "type is managed by Google"],
     [{ mutateError: "MUTATE_NOT_ALLOWED" }, "Mutates are not allowed for the requested resource.", "operations.remove", "it's one Google creates and manages"],
+    [{ resourceCountLimitExceededError: "RESOURCE_LIMIT" }, "The request would cause a limit on the number of allowed resources of this type to be exceeded.", "operations", "10,000 negative keywords per campaign"],
     [{ queryError: "BAD_FIELD_NAME" }, "Error in WHERE clause: invalid field name '('.", undefined, "no parentheses or OR"],
     [{ queryError: "EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE" }, "The following field must be present in SELECT clause: 'campaign.id'.", undefined, "add that field to SELECT"],
     [{ queryError: "EXPECTED_FILTERS_ON_DATE_RANGE" }, "Expects filters on the following field to limit a finite date range: 'segments.date'.", undefined, "finite range"],
