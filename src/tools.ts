@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.35.4";
+export const SERVER_VERSION = "0.35.5";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -198,8 +198,16 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           // A question for the user, not a failure: a normal result (plans.ts SwitchNotice).
           notice = e.message;
           out = ok({ notice: e.message, ...e.detail });
+        } else if (e instanceof NotGrantedError) {
+          // A service the user hasn't added yet: the way forward, not a failure. A normal result shaped like the listing
+          // tools' (search_console_sites, …), logged like a notice (ok, no account or service, the text kept in error),
+          // so it stays out of error counts, alerts and the directories' reliability metrics.
+          if (e.link) offered = grantName(e.kind, e.edit);
+          notice = e.message;
+          out = ok({ not_granted: e.message, ...(e.link ? { grant_url: e.link } : {}),
+            note: "Nothing failed: this needs a Google service the user hasn't added yet. Say so plainly and give them grant_url "
+              + "(one click adds it, then ask again); never tell them to reconnect." });
         } else {
-          if (e instanceof NotGrantedError && e.link) offered = grantName(e.kind, e.edit);
           out = fail(e);
           if (isUnexpected(e)) reportError(e, name);
         }

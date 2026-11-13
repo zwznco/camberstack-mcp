@@ -77,8 +77,6 @@ export function verdict(code: string, error: string, recoveredLater: boolean, re
   if (error.startsWith(UNSUPPORTED_PREFIX))
     return { act: true, why: "Camberstack doesn't do this, and the user wanted it. Consider building it; email them when it ships." };
   if (/^HTTP_5\d\d$/.test(code)) return { act: false, why: "Google was down (5xx). Transient; act only if it keeps happening (Bugsink tracks these)." };
-  if (/access isn't part of this Google connection|needs its edit access/.test(error))
-    return { act: true, why: "Missing Google grant. The message carries the grant link; if they never clicked it, email them the link." };
   if (code === "METRIC_ACCESS_DENIED") return { act: false, why: "Data Google doesn't give Camberstack (auction insights). Nothing we can fix." };
   // Google's rate limit, not a bad request: a short "Retry in N seconds" is the per-account limit (Keyword Planner's is tight;
   // a ChatGPT user retried keyword_metrics 4× inside a minute, 2026-11-05, and was mailed as "kept writing a request Google
@@ -98,13 +96,13 @@ export function verdict(code: string, error: string, recoveredLater: boolean, re
 /**
  * Whether the error a call is about to return makes MIN_REPEATS in a row: the same tool and error code, with no success of
  * that tool since. Only the call that reaches it, so one episode shows the feedback link once. Errors that carry their own
- * way forward (a plan limit, a grant link) or that no one can fix (Google down, verdict() FYI) never count. Asked after
+ * way forward (a plan limit) or that no one can fix (Google down, verdict() FYI) never count. Asked after
  * the call is logged, so the error being returned is the latest row.
  */
 export function stuckNow(db: DB, userId: string, tool: string, error: string, t = now()): boolean {
   if (error.startsWith(UNSUPPORTED_PREFIX)) return true;
   const code = errorCode(error);
-  if (error.startsWith(PLAN_LIMIT_PREFIX) || /access isn't part of this Google connection|needs its edit access/.test(error)) return false;
+  if (error.startsWith(PLAN_LIMIT_PREFIX)) return false;  // a missing grant is a normal result (tools.ts wrap), never an error
   if (!verdict(code, error, false).act) return false;
   const fam = family(tool);
   const calls = db.prepare("SELECT tool, ok, error FROM tool_calls WHERE user_id = ? AND at >= ? ORDER BY id DESC").all(userId, t - RECOVERY) as Call[];

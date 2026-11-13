@@ -1810,8 +1810,14 @@ describe("OAuth + MCP end to end", () => {
       expect(s.grant_url).toBe(sc.notGranted);
       expect(lastOffered()).toBe("search-console");  // from the result's grant_url, not an error
       const r = await call(token, "search_console_performance", { site_url: "sc-domain:acme.test" });
-      expect(r.isError).toBe(true);
-      expect(r.text).toContain("/connect/search-console?t=");
+      // Not an error: the way forward, as a normal result (tools.ts wrap), logged ok with the grant offered.
+      expect(r.isError).toBe(false);
+      expect(r.json.grant_url).toContain("/connect/search-console?t=");
+      expect(r.json.not_granted).toContain("isn't part of this Google connection");
+      const row = db.prepare("SELECT ok, customer_id, service, error, grant_offered FROM tool_calls ORDER BY id DESC LIMIT 1").get() as
+        { ok: number; customer_id: string | null; service: string | null; error: string; grant_offered: string };
+      expect(row).toMatchObject({ ok: 1, customer_id: null, service: null, grant_offered: "search-console" });
+      expect(row.error).toContain("isn't part of this Google connection");
       const go = await fetch(s.grant_url, { redirect: "manual" });
       expect(new URL(go.headers.get("location")!).searchParams.get("scope")).toBe("openid email https://www.googleapis.com/auth/webmasters");
     } finally { sc.notGranted = ""; }
@@ -1835,10 +1841,11 @@ describe("OAuth + MCP end to end", () => {
       scopes("openid https://www.googleapis.com/auth/webmasters.readonly");
       try {
         const r = await propose({ type: "submit_sitemap", site_url: SITE, sitemap_url: "https://acme.test/new.xml" });
-        expect(r.isError).toBe(true);
-        expect(r.text).toContain("Changing Search Console needs its edit access");
+        expect(r.isError).toBe(false);
+        expect(r.json.not_granted).toContain("Changing Search Console needs its edit access");
         expect(lastOffered()).toBe("search-console-edit");
-        const link = r.text.match(/https?:\/\/\S+\/connect\/search-console\?t=\S+/)![0];
+        const link = r.json.grant_url as string;
+        expect(link).toMatch(/\/connect\/search-console\?t=/);
         events.length = 0;
         const go = await fetch(link, { redirect: "manual" });
         const g = new URL(go.headers.get("location")!);

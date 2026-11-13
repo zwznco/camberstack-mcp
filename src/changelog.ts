@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.5", date: "2026-11-13",
+    summary: "A Google service you haven't added yet no longer shows as an error.",
+    items: [
+      "**Asking for a Google service you haven't added no longer looks like a failure.** When a request needs Search Console, Analytics, Tag Manager, Merchant Center or Google Ads edit access that your connection doesn't have yet, your AI now gets a plain answer with the one-click link to add it, instead of an error.",
+    ],
+  },
+  {
     version: "0.35.4", date: "2026-11-13",
     summary: "A Google Analytics report Google gives up on gets a lighter retry.",
     items: [

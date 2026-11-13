@@ -143,8 +143,8 @@ export class Lifecycle {
     const notSent = (k: string) => `NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = '${k}')`;
     const first = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.created_at FROM users u WHERE ${eligible}
       AND u.created_at BETWEEN ? AND ? AND ${notSent("first_steps")}
-      AND NOT EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.tool IN ${USED_TOOLS}
-        AND NOT (c.tool = 'run_gaql' AND c.customer_id IS NULL))`)  // a run_gaql field lookup reads no account
+      AND NOT EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.error IS NULL AND c.tool IN ${USED_TOOLS}
+        AND NOT (c.tool = 'run_gaql' AND c.customer_id IS NULL))`)  // a run_gaql field lookup reads no account; error set = a notice or grant link, not use
       .all(t - (15 + GAP_DAYS) * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; created_at: number }[];
     // Refused a second account by the plan gate (session.ts checkAccount), the last refusal 6 hours to 30 days ago. A refusal
     // logs as ok since it became a notice (it was ok = 0 before), so it's matched on the text; Merchant ones by their wording.
