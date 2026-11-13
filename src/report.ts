@@ -141,6 +141,25 @@ export function buildReport(db: DB, o: ReportOptions) {
         JOIN {U} u ON u.id = p.user_id WHERE p.status = 'applied' AND p.applied_at >= ? AND p.customer_id != '${DEMO_CID}'`, since)[0]!,
     // Paying customers, counted here rather than from `users` (capped at 200), and by plan for MRR.
     paying: n(`SELECT count(*) n FROM {U} u WHERE ${PAYING}`),
+    /** Subscriptions that ended (billing.ts sets paid_ended_at when Stripe drops a plan to Free) and aren't paying again. */
+    cancelled: q<{ n: number; in_window: number }>(
+      `SELECT count(*) n, coalesce(sum(u.paid_ended_at >= ?), 0) in_window FROM {U} u WHERE u.paid_ended_at IS NOT NULL AND NOT (${PAYING})`, since)[0]!,
+    /**
+     * Users not paying who asked about plans: their AI called billing, or they opened the plans page or an upgrade link
+     * (plan_events). 5 of 6 payers called billing just before paying (2026-11-13), so this is the warm list. All time,
+     * newest ask first.
+     */
+    askedPlans: q<{ id: string; email: string; asks: number; clicks: number; last: number; last_seen_at: number | null }>(
+      `SELECT u.id, u.email,
+         (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing') asks,
+         (SELECT count(*) FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click')) clicks,
+         max(coalesce((SELECT max(at) FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing'), 0),
+             coalesce((SELECT max(at) FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click')), 0)) last,
+         u.last_seen_at
+       FROM {U} u WHERE NOT (${PAYING})
+         AND (EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing')
+           OR EXISTS (SELECT 1 FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click')))
+       ORDER BY last DESC`),
     payingByPlan: q<{ plan: string; n: number }>(`SELECT u.plan, count(*) n FROM {U} u WHERE ${PAYING} GROUP BY 1 ORDER BY 1`),
     // Counted on its own: summing `errors` would stop at its 15 groups and undercount wide windows.
     errorsInWindow: n("SELECT count(*) n FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.at >= ? AND c.ok = 0", since),

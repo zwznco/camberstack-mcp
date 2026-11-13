@@ -408,7 +408,7 @@ function usersPage(v: View): string {
   const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
   const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
   const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
-  return churnCard(v) + switchingCard(v) + signupsChart(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
+  return churnCard(v) + switchingCard(v) + askedPlansCard(v) + signupsChart(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
@@ -433,6 +433,15 @@ function churnCard(v: View): string {
 ${stat("Regulars gone quiet", bad(c.overdue.length), "quiet past the norm")}
 </div>
 `;
+}
+
+/** Users not paying who asked about plans (report.ts askedPlans): the warm list. */
+function askedPlansCard(v: View): string {
+  return card("Asked about plans", table(["user", ["asks", "r"], ["last asked", "r"], ["last seen", "r"]],
+    v.report.askedPlans.map((a) => [`${userLink(v, a.id, a.email)}${a.clicks ? ` <span class="chip" title="opened plans or an upgrade link ${a.clicks}×">clicked</span>` : ""}`,
+      num(a.asks), `<span class="r">${when(a.last)}</span>`, `<span class="r">${when(a.last_seen_at)}</span>`]),
+    "Nobody has asked about plans without buying."),
+    `<small title="Not paying, and their AI called billing (asks) or they opened plans or an upgrade link (clicked). 5 of the first 6 payers called billing just before paying.">not paying · all time</small>`);
 }
 
 /** Users who tried to move to another Google Ads account after their first day (report.ts switching). */
@@ -566,6 +575,7 @@ function revenuePage(v: View): string {
   return `<div class="stats">
 ${stat("Paying", num(paying), "live Stripe subscriptions; complimentary plans not counted")}
 ${stat("MRR", `$${mrr(r)}`, byPlan(r) || "no paid plans")}
+${stat("Cancelled", bad(r.cancelled.n), `${num(r.cancelled.in_window)} ${lastW(v.days)}`)}
 </div>
 ${card("Paying", table(["user", "plan", "permissions", "signed up", "last seen", ["calls", "r"]], pros.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
     perms(u.google_scopes, u.connected, { short: true }), when(u.created_at), when(u.last_seen_at), num(u.calls)]), "No paying users yet."))}

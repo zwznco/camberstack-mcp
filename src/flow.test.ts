@@ -2235,7 +2235,14 @@ describe("OAuth + MCP end to end", () => {
     expect(detail).toContain("account_overview");
     expect((await fetch(`${admin}/users/nope`, { headers: { cookie } })).status).toBe(404);
     expect(await (await fetch(`${admin}/activity?days=30`, { headers: { cookie } })).text()).toContain("account_overview");
-    expect((await fetch(`${admin}/revenue`, { headers: { cookie } })).status).toBe(200);
+    const revenue = await fetch(`${admin}/revenue`, { headers: { cookie } });
+    expect(revenue.status).toBe(200);
+    expect(await revenue.text()).toContain("Cancelled");
+    // A Free user whose AI asked about plans is on the Users tab's warm list.
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, ms, bytes) VALUES (?, ?, 'billing', 1, 10, 10)").run(Math.floor(Date.now() / 1000), id);
+    const asked = await (await fetch(`${admin}/users?days=30`, { headers: { cookie } })).text();
+    expect(asked).toContain("Asked about plans");
+    expect(asked.slice(asked.indexOf("Asked about plans"), asked.indexOf("Asked about plans") + 2000)).toContain(`href="/users/${id}`);
     // The Cap tab: in the nav and rendered only with the change cap on.
     expect(await (await fetch(`${admin}/cap`, { headers: { cookie } })).text()).toContain("Cap is off.");
     setChangeCap(10);
