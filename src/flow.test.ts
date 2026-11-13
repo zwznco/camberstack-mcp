@@ -2243,7 +2243,7 @@ describe("OAuth + MCP end to end", () => {
       const capHtml = await (await fetch(`${admin}/cap`, { headers: { cookie } })).text();
       expect(capHtml).toContain("At cap");
       expect(capHtml).toContain("Hit the cap");
-      expect(capHtml).not.toContain("Counting");
+      expect(capHtml).toContain("Counting");
       expect(capHtml).toContain('href="/cap?days=');
       // First in the nav while the cap is on.
       expect(capHtml.indexOf('href="/cap?days=')).toBeLessThan(capHtml.indexOf('href="/?days='));

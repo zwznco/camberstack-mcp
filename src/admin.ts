@@ -13,7 +13,7 @@ import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { esc } from "./pages.js";
-import { changeCap, planLabel } from "./plans.js";
+import { changeCap, changeCapFrom, planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
 import { AUDIENCES, DAILY_LIMIT, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
@@ -520,8 +520,9 @@ const ends = (t: number | null) => {
 };
 
 /**
- * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): only users who hit it (operator, 2026-11-12: no
- * "counting" list). Hit = at the cap now, or stopped by it in the window (so one who then paid or rolled off stays listed).
+ * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): who hit it, then everyone else counting toward it
+ * (dropped 2026-11-12, back 2026-11-13 at the operator's ask). Hit = at the cap now, or stopped by it in the window (so one
+ * who then paid or rolled off stays listed).
  * Kept narrow for a phone: five columns, short labels, plan and app as chips beside the email, details on hover. Not
  * filtered by ?days: the cap's own 30-day window decides.
  */
@@ -540,7 +541,9 @@ ${stat("At cap", num(at.length))}
 ${stat("Stopped", num(stopped.length))}
 ${stat("Paid after", num(paid.length))}
 </div>
-${card("Hit the cap", table(cols, hit.map(line), "Nobody yet."), `<small>at the cap now, or stopped by it · opens = next change frees up</small>`)}`;
+${card("Hit the cap", table(cols, hit.map(line), "Nobody yet."), `<small>at the cap now, or stopped by it · opens = next change frees up</small>`)}
+${card("Counting", table(cols, rows.filter((r) => !r.atCap && !r.stops).map(line), "Nothing yet."),
+    `<small>since ${new Date(changeCapFrom() * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · opens = oldest rolls off</small>`)}`;
 }
 
 function activityPage(v: View): string {
