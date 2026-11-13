@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openDb } from "./db.js";
 import { NotGrantedError } from "./google.js";
-import { AnalyticsClient, DEMO_PROPERTY, DemoAnalytics, landingPages, listProperties, report } from "./ga4.js";
+import { AnalyticsClient, DEMO_PROPERTY, DemoAnalytics, PropertySlots, landingPages, listProperties, report } from "./ga4.js";
 import { toolCatalog } from "./tools.js";
 import { gaInverseAfterApply, gaNoteAfterApply, gaSetup, resolveGaChange, writeGa } from "./ga4-changes.js";
 
@@ -81,6 +81,37 @@ describe("AnalyticsClient", () => {
     const ga3 = client((u) => u.endsWith("/metadata") ? json({ error: { code: 500, message: "x" } }, 500)
       : json({ error: { code: 400, message: "Field purchases is not a valid metric." } }, 400));
     await expect(report(ga3, "9", { days: 7, dimensions: [], metrics: ["purchases"], limit: 10 })).rejects.toThrow(/^Google Analytics API 400: Field purchases is not a valid metric\.$/);
+  });
+
+  it("runs at most four Data API calls at once per property; the rest queue (2026-11-13: nine at once hit 429)", async () => {
+    let live = 0, peak = 0, other = 0;
+    const releases: (() => void)[] = [];
+    const ga = new AnalyticsClient(async () => "t", () => null, (async (u: string) => {
+      if (String(u).includes("properties/2:")) { other++; return json({}); }
+      live++; peak = Math.max(peak, live);
+      await new Promise<void>((r) => releases.push(r));
+      live--;
+      return json({});
+    }) as typeof fetch, [], new PropertySlots(4));
+    const q = { startDate: "2026-11-01", endDate: "2026-11-07", dimensions: [], metrics: ["sessions"], limit: 10 };
+    const all = Array.from({ length: 9 }, () => ga.runReport("1", q));
+    await ga.runReport("2", q);  // another property isn't held up
+    expect(other).toBe(1);
+    while (releases.length || live) { await new Promise((r) => setTimeout(r, 0)); releases.shift()?.(); }
+    await Promise.all(all);
+    expect(peak).toBe(4);
+  });
+
+  it("waits and retries a 429, then says to slow down if it persists", async () => {
+    let n = 0;
+    const quota = () => json({ error: { code: 429, message: "Exhausted concurrent requests quota." } }, 429);
+    const q = { startDate: "2026-11-01", endDate: "2026-11-07", dimensions: [], metrics: ["sessions"], limit: 10 };
+    const mk = (f: () => Response) => new AnalyticsClient(async () => "t", () => null, (async () => f()) as typeof fetch, [1], new PropertySlots(4));
+    await expect(mk(() => (n++ === 0 ? quota() : json({ rowCount: 0 }))).runReport("1", q)).resolves.toMatchObject({ row_count: 0 });
+    expect(n).toBe(2);
+    n = 0;
+    await expect(mk(() => (n++, quota())).runReport("1", q)).rejects.toThrow(/^Google Analytics API 429: Exhausted concurrent requests quota\. → .*one at a time/);
+    expect(n).toBe(2);
   });
 
   it("passes other API errors through readably (e.g. the API not enabled)", async () => {

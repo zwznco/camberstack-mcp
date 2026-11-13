@@ -40,29 +40,70 @@ export type Analytics = {
   admin(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: object): Promise<any>;
 };
 
+/**
+ * At most `max` Data API calls in flight per property, across every user and session; the rest queue. The Data API
+ * caps concurrent requests per property (10 on standard properties) and answers over it with 429 "Exhausted concurrent
+ * requests quota". On 2026-11-13, while Google's Data API was slow, ChatGPT sent nine analytics_report calls at once:
+ * four hung 62s and came back 429, and every retry over the next two minutes hit the same 429, so the session ended on it.
+ */
+export class PropertySlots {
+  private live = new Map<string, { n: number; waiting: (() => void)[] }>();
+  constructor(private max: number) {}
+
+  async run<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    let s = this.live.get(key);
+    if (!s) { s = { n: 0, waiting: [] }; this.live.set(key, s); }
+    if (s.n >= this.max) await new Promise<void>((r) => s!.waiting.push(r));
+    else s.n++;
+    try { return await fn(); }
+    finally {
+      const next = s.waiting.shift();
+      if (next) next();  // the slot passes straight to the next in line
+      else if (--s.n === 0) this.live.delete(key);
+    }
+  }
+}
+const dataSlots = new PropertySlots(4);
+
+/** Appended to a 429 that survived its retry, so the AI waits and runs reports one at a time instead of firing again. */
+const QUOTA_HINT = " → Google Analytics is limiting reports on this property right now (too many at once, or its hourly quota)."
+  + " Wait a minute, then run reports one at a time; if it persists, the hourly quota is used up and resets within the hour.";
+
 /** One user's view of the GA4 Admin and Data APIs. */
 export class AnalyticsClient implements Analytics {
-  constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null, private f: typeof fetch = fetch) {}
+  /** `quotaWaits`: how long a read waits before each retry of a 429, while the in-flight requests holding the quota finish. */
+  constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null, private f: typeof fetch = fetch,
+    private quotaWaits: number[] = [10_000], private slots: PropertySlots = dataSlots) {}
 
   private async call(url: string, body?: object, method = body ? "POST" : "GET"): Promise<any> {
     // Reads retry a transient 5xx: the Admin API answers ~3% of analytics_setup's four parallel GETs with a 503 that the
     // same call clears seconds later (prod, 2026-10-14 → 11-03: 6 of 179, each followed by a success). Writes never retry.
+    // Only a 5xx that came back fast: on 2026-11-13 the Data API answered 502 after ~60s, and two retries made each call 181s.
     const read = method === "GET" || url.startsWith(DATA_API);
-    let res: Response, text: string;
-    for (let attempt = 0; ; attempt++) {
-      res = await this.f(url, {
+    const property = url.startsWith(DATA_API) ? /properties\/(\d+)/.exec(url)?.[1] : undefined;
+    const once = async () => {
+      const started = Date.now();
+      const res = await this.f(url, {
         method,
         headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
       });
-      text = await res.text();
-      if (!(read && attempt < 2 && [500, 502, 503, 504].includes(res.status))) break;
+      return { res, text: await res.text(), ms: Date.now() - started };
+    };
+    let res: Response, text: string, ms: number, quotaRetries = 0;
+    for (let attempt = 0; ; attempt++) {
+      ({ res, text, ms } = property ? await this.slots.run(property, once) : await once());
+      if (read && res.status === 429 && quotaRetries < this.quotaWaits.length) {
+        await new Promise((r) => setTimeout(r, this.quotaWaits[quotaRetries++]));
+        continue;
+      }
+      if (!(read && attempt < 2 && ms < 10_000 && [500, 502, 503, 504].includes(res.status))) break;
       await new Promise((r) => setTimeout(r, 300 * 3 ** attempt));
     }
     if (!res.ok) {
       if (scopeMissing(res.status, text)) throw new NotGrantedError("analytics", this.grantLink(), method !== "GET" && url.startsWith(ADMIN_API));  // a report is a POST too
       const msg = googleMessage(text);
-      throw new Error(`Google Analytics API ${res.status}: ${msg}`);
+      throw new Error(`Google Analytics API ${res.status}: ${msg}${res.status === 429 ? QUOTA_HINT : ""}`);
     }
     return text ? JSON.parse(text) : {};
   }

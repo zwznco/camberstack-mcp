@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.1", date: "2026-11-13",
+    summary: "Google Analytics reports hold up better when Google is slow.",
+    items: [
+      "**Many reports at once no longer trip Google's limit.** Camberstack runs a few Analytics reports at a time and queues the rest, waits and retries once if Google still says too many, and if it persists, tells your AI to wait a minute and run reports one at a time.",
+    ],
+  },
+  {
     version: "0.35.0", date: "2026-11-12",
     summary: "Your AI tells you when a change's results are in.",
     items: [
