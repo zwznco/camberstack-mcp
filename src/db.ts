@@ -222,6 +222,17 @@ CREATE TABLE IF NOT EXISTS error_alerts (
   last_id  INTEGER NOT NULL,      -- tool_calls.id
   at       INTEGER NOT NULL       -- when it was mailed (rows go after 30 days)
 );
+
+-- Applied changes whose before/after results were pointed out (result-notes.ts), so none is raised twice. via = the tool that
+-- raised it (list_accounts, account_overview), or change_results when the user got there without a note.
+CREATE TABLE IF NOT EXISTS result_notes (
+  proposal_id  TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  customer_id  TEXT NOT NULL,
+  via          TEXT NOT NULL,
+  noted_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS result_notes_at ON result_notes(noted_at);
 `;
 
 export function openDb(dataDir: string): DB {

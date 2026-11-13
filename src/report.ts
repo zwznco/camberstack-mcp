@@ -3,6 +3,7 @@
  * failures. Read-only. Shared by the CLI (funnel.ts) and the admin page (admin.ts) so the two can't
  * disagree about a number.
  */
+import { notesFunnel } from "./result-notes.js";
 import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
@@ -182,6 +183,8 @@ export function buildReport(db: DB, o: ReportOptions) {
       `SELECT cast(strftime('%H', created_at, 'unixepoch') AS int) hour, count(*) n FROM {U} u WHERE created_at >= ? GROUP BY 1 ORDER BY 1`, since) : [],
     retention: retention(q),
     paywall: paywall(q, o.changeCapFrom || changeCapFrom() || undefined),
+    /** Results-ready notes (result-notes.ts): raised, and followed by change_results within the hour. */
+    resultNotes: notesFunnel(q, since),
     emails: q<{ kind: string; sent: number; in_window: number }>(
       `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */

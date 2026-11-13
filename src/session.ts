@@ -21,7 +21,8 @@ import { SC_TARGET, ScChangeSchema, resolveScChange, scNoteAfterApply, writeSc, 
 import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
 import { writeFileSync } from "node:fs";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, queryShape } from "./gaql.js";
-import { reportBug } from "./sentry.js";
+import { reportBug, reportError } from "./sentry.js";
+import { markNoted, takeNote, type NoteVia } from "./result-notes.js";
 import { CAVEATS, MIN_DAYS, add, changeLogQuery, changeLogWindow, overlapNote, overlaps, addDays, between, blocks, localDay, measurable, minus, reading, shown, targets, windows, zero, type Metrics, type Target, type Windows } from "./results.js";
 import {
   ChangeSchema, MAX_CHANGES, inverseAfterApply, quotedKeywords, sameSummary, pendingOf, resolveChange, summarize,
@@ -754,7 +755,13 @@ export class UserSession {
       totals: { cost: round(cost), conversions: round(conv), cost_per_conversion: conv > 0 ? round(cost / conv) : null },
       campaigns,
       ...(isDemo(a.customerId) ? {} : await this.attention(a)),
+      ...(isDemo(a.customerId) ? {} : this.resultsNote([a.customerId], "account_overview")),
     };
+  }
+
+  /** Results ready on these accounts that nothing has pointed out yet (result-notes.ts), once. Never breaks the tool it rides on. */
+  resultsNote(customerIds: string[], via: NoteVia) {
+    try { return takeNote(this.deps.db, this.user.id, customerIds, via); } catch (e) { reportError(e, `${via} note`); return {}; }
   }
 
   /**
@@ -1822,6 +1829,9 @@ export class UserSession {
       ...(t.notMeasured.length ? { not_measured: t.notMeasured } : {}),
       ...(log.note ? { change_log_note: log.note } : {}),
     }; }, 3);
+    // Shown now, so no note raises them again (result-notes.ts); a note that came first keeps its record.
+    if (!demo) try { markNoted(this.deps.db, this.user.id, ready.map(({ p }) => ({ proposal_id: p.id, customer_id: p.customer_id })), "change_results"); }
+    catch (e) { reportError(e, "change_results note"); }
 
     return {
       account: { customer_id: a.customerId, name: a.name, currency: cur, time_zone: tz },

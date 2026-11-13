@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.0", date: "2026-11-12",
+    summary: "Your AI tells you when a change's results are in.",
+    items: [
+      "**Come back after a change and you'll hear about it.** Once a change's before/after results are ready, 7 days after it applied, your AI mentions it the next time you look at your accounts, once, and can show you the figures.",
+    ],
+  },
+  {
     version: "0.34.1", date: "2026-11-12",
     summary: "On Free, a heads-up before your 10 changes run out.",
     items: [

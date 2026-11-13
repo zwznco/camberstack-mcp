@@ -322,6 +322,7 @@ ${card("Use by service", table(["service", [`calls · ${w}`, "r"], [`users · ${
 ${card("Connects by app", table(["app", ["users", "r"], [`new · ${w}`, "r"], ["used real", "r"], ["applied", "r"]],
     r.sources.map((x) => [x.app ? esc(x.app) : `<span class="dim">unknown</span>`,
       num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>app of first call, else token</small>`)}
+${resultsCard(v)}
 <div class="grid2">
 ${card("Latest signups", table(["user", "plan", "permissions", ["signed up", "r"]], [...r.users].sort((a, b) => b.created_at - a.created_at).slice(0, 6)
     .map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }), `<span class="r">${when(u.created_at)}</span>`])),
@@ -329,6 +330,17 @@ ${card("Latest signups", table(["user", "plan", "permissions", ["signed up", "r"
 ${card("Top tools", table(["tool", ["calls", "r"], ["errors", "r"]], r.tools.slice(0, 6).map((t) => [`<code>${esc(t.tool)}</code>`, num(t.calls), bad(t.errors)]), "No calls in this window."),
     `<a class="muted" href="/activity${qs(v)}">activity →</a>`)}
 </div>`;
+}
+
+/** Results-ready notes (result-notes.ts): did a note lead to change_results? A "via change_results" row reached results unprompted. */
+function resultsCard(v: View): string {
+  const rows = v.report.resultNotes;
+  const w = lastW(v.days);
+  return card("Results notes", table(["raised by", ["notes", "r"], ["users", "r"], ["changes", "r"], ["followed", "r"]], rows.map((x) => {
+    const own = x.via === "change_results";
+    return [own ? `<span class="dim">change_results, no note</span>` : `<code>${esc(x.via)}</code>`, num(x.notes), num(x.users), num(x.changes),
+      own ? `<span class="dim">—</span>` : `${num(x.followed)} <span class="dim">${x.notes ? Math.round((100 * x.followed) / x.notes) : 0}%</span>`];
+  }), "No results raised in this window."), `<small>${w} · followed = change_results on that account within the hour</small>`);
 }
 
 /**

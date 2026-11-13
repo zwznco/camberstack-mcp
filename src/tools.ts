@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.34.1";
+export const SERVER_VERSION = "0.35.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -274,6 +274,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           + "calling any tool with a customer_id, and don't survey several. The demo account never counts.",
       } } : {}),
       ...(s.lastUnreadable.length ? { unreadable: s.lastUnreadable } : {}),
+      // Results waiting on accounts the plan covers (a locked account's change_results would be refused): result-notes.ts.
+      ...s.resultsNote(accounts.filter((a) => counted(a) && (!st.full || st.active.includes(a.customerId))).map((a) => a.customerId), "list_accounts"),
       // Google Ads wasn't granted (connected for Search Console only): one link adds it, nothing to reconnect.
       ...(grantUrl ? { grant_url: grantUrl, note: `The user IS connected, as ${s.user.email}, but without Google Ads access, so only the demo `
         + "account (sample data) is offered. Tell the user plainly, and give them grant_url: it adds Google Ads to this connection." }
