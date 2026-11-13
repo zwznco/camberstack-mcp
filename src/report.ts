@@ -185,8 +185,6 @@ export function buildReport(db: DB, o: ReportOptions) {
     paywall: paywall(q, o.changeCapFrom || changeCapFrom() || undefined),
     /** Results-ready notes (result-notes.ts): raised, and followed by change_results within the hour. */
     resultNotes: notesFunnel(q, since),
-    emails: q<{ kind: string; sent: number; in_window: number }>(
-      `SELECT e.kind, count(*) sent, sum(e.sent_at >= ?) in_window FROM email_log e JOIN {U} u ON u.id = e.user_id GROUP BY 1 ORDER BY 1`, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
     sources: byApp(q<{ app: string | null; connected: number; in_window: number; used_real: number; applied: number }>(
       `SELECT ${cameFrom} app, count(*) connected,
@@ -194,11 +192,6 @@ export function buildReport(db: DB, o: ReportOptions) {
          sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL AND c.customer_id != '${DEMO_CID}')) used_real,
          sum(EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied' AND p.customer_id != '${DEMO_CID}')) applied
        FROM {U} u GROUP BY 1 ORDER BY app IS NULL, connected DESC`, since)),
-    adConversions: q<{ recorded: number; uploaded: number; failing: number; last_error: string | null }>(
-      `SELECT count(*) recorded, count(a.uploaded_at) uploaded, sum(a.uploaded_at IS NULL AND a.error IS NOT NULL) failing,
-         (SELECT f.error FROM ad_conversions f JOIN {U} fu ON fu.id = f.user_id WHERE f.uploaded_at IS NULL AND f.error IS NOT NULL
-            ORDER BY f.at DESC LIMIT 1) last_error
-       FROM ad_conversions a JOIN {U} u ON u.id = a.user_id`)[0],
     /** Connected users holding each Google service (as last reported by Google; NULL scopes = not seen yet). */
     permissions: Object.fromEntries(Object.entries(SCOPE_LABELS).map(([scope, label]) => [label,
       n("SELECT count(*) n FROM {U} u WHERE enc_refresh IS NOT NULL AND (' ' || google_scopes || ' ') LIKE ?", `% ${scope} %`)])) as Record<string, number>,
