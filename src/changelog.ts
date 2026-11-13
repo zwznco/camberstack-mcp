@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.3", date: "2026-11-13",
+    summary: "A new Google Ads account isn't mistaken for a closed one.",
+    items: [
+      "**A brand-new account still being set up in Google Ads is no longer called closed.** Google answers the same way for both, so your AI now explains that a new account opens once its setup is finished, and asks you, instead of telling you to stop using it.",
+    ],
+  },
+  {
     version: "0.35.2", date: "2026-11-13",
     summary: "Fewer emails at once.",
     items: [

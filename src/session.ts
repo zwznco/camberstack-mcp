@@ -709,6 +709,13 @@ export class UserSession {
       const others = (await this.accounts()).filter((x) => !x.manager && !isDemo(x.customerId));
       const useInstead = others.length ? ` Use ${others.map((x) => `${x.name} (${x.customerId})`).join(", ")} instead, or ask the user which account they mean.` : "";
       const why = this.lastUnreadable.find((u) => bareCid(u.customerId) === cid);
+      // CUSTOMER_NOT_ENABLED is also what a brand-new account returns until its setup in Google Ads is finished. Calling
+      // that "closed, don't call again" would tell a user to give up on a working account (operator's own, 2026-11-13).
+      if (why && /CUSTOMER_NOT_ENABLED/.test(why.error)) throw new Error(`Account ${customerId} can't be read yet: Google says `
+        + `${why.error.slice(0, 300)} A new account stays like this until its setup in Google Ads is finished (Google's setup `
+        + "steps, such as billing, business details and the first campaign it asks for); after that it usually opens within "
+        + "minutes, sometimes a few hours. A closed or cancelled account gives the same answer. Ask the user whether it is new: "
+        + `if so, they finish setup in Google Ads and you try again after; if not, it is likely closed.${useInstead}`);
       if (why) throw new Error(`Account ${customerId} can't be read: Google says ${why.error.slice(0, 300)} `
         + `It is most likely closed or cancelled; don't call it again unless the user reopens it.${useInstead}`);
       const used = this.deps.db.prepare("SELECT max(at) last FROM tool_calls WHERE user_id = ? AND customer_id = ? AND ok = 1")

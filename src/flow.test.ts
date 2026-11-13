@@ -825,7 +825,11 @@ describe("OAuth + MCP end to end", () => {
       try {
         const closed = await call(token, "run_gaql", { customer_id: "5554443333", ...q });
         expect(closed.text).toContain("CUSTOMER_NOT_ENABLED");
-        expect(closed.text).toContain("most likely closed or cancelled");
+        // a brand-new account mid-setup gives the same error, so never "don't call it again"
+        expect(closed.text).toContain("until its setup in Google Ads is finished");
+        expect(closed.text).toContain("Ask the user whether it is new");
+        expect(closed.text).not.toContain("don't call it again");
+        expect(closed.text).toContain("Use Acme (1112223333) instead");
       } finally { ads.listAccessibleCustomers = realList; ads.search = realSearch; }
     } finally {
       db.prepare("DELETE FROM tool_calls WHERE customer_id IN ('9998887777', '5554443333')").run();
