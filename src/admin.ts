@@ -335,12 +335,12 @@ ${card("Top tools", table(["tool", ["calls", "r"], ["errors", "r"]], r.tools.sli
 /** Results-ready notes (result-notes.ts): did a note lead to change_results? A "via change_results" row reached results unprompted. */
 function resultsCard(v: View): string {
   const rows = v.report.resultNotes;
-  const w = lastW(v.days);
-  return card("Results notes", table(["raised by", ["notes", "r"], ["users", "r"], ["changes", "r"], ["followed", "r"]], rows.map((x) => {
+  return card("Results notes", table(["raised by", ["notes", "r"], ["users", "r"], ["followed", "r"]], rows.map((x) => {
     const own = x.via === "change_results";
-    return [own ? `<span class="dim">change_results, no note</span>` : `<code>${esc(x.via)}</code>`, num(x.notes), num(x.users), num(x.changes),
+    return [own ? `<span class="dim">change_results, no note</span>` : `<code>${esc(x.via)}</code>`, num(x.notes), num(x.users),
       own ? `<span class="dim">—</span>` : `${num(x.followed)} <span class="dim">${x.notes ? Math.round((100 * x.followed) / x.notes) : 0}%</span>`];
-  }), "No results raised in this window."), `<small>${w} · followed = change_results on that account within the hour</small>`);
+  }), "No results raised in this window."),
+    `<small title="followed = change_results on that account within an hour of the note">${lastW(v.days)} · followed ≤1h</small>`);
 }
 
 /**
