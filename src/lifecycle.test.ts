@@ -67,7 +67,9 @@ describe("lifecycle emails", () => {
     try {
     // At the cap: 10 approvals, the oldest 20 days ago, so the next opens in 10 days.
     const atCap = (userId: string) => { for (let i = 0; i < 10; i++) db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at)
-        VALUES (?, ?, '1112223333', '[]', 's', 'applied', ?, ?)`).run(`${userId}-${i}`, userId, now() - 20 * DAY, now() - (20 - i) * DAY); };
+        VALUES (?, ?, '1112223333', '[]', 's', 'applied', ?, ?)`).run(`${userId}-${i}`, userId, now() - 20 * DAY, now() - (20 - i) * DAY);
+      // Their check-in went long ago, so it isn't due here (its window reaches back 22 days).
+      db.prepare("INSERT OR IGNORE INTO email_log (user_id, kind, sent_at) VALUES (?, 'check_in', ?)").run(userId, now() - 17 * DAY); };
     const opens = new Date((now() + 10 * DAY) * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
     // Each has used Camberstack (so no first_steps), then been stopped.
     const stopped = (userId: string, daysAgo: number) => call(userId, "account_overview") &&
@@ -81,7 +83,7 @@ describe("lifecycle emails", () => {
     user("rolled", "rolled@example.com", 10); stopped("rolled", 0.3);
     // An earlier account-limit email doesn't hold this one back.
     user("had", "had@example.com", 10); stopped("had", 0.3); atCap("had");
-    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - DAY);
+    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('had', 'limit_reached', ?)").run(now() - 4 * DAY);
     // Stopped by both gates by the same morning: one upgrade email, change_limit, not limit_reached too.
     user("both", "both@example.com", 10); stopped("both", 0.3); atCap("both");
     db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'both', 'account_overview', 1, ?, 10, 10)")
@@ -89,7 +91,11 @@ describe("lifecycle emails", () => {
     expect(await lc.run()).toBe(3);
     expect(sent.map((m) => m.to[0]).sort()).toEqual(["both@example.com", "capped@example.com", "had@example.com"]);
     expect(sent.find((x) => x.to[0] === "both@example.com").subject).toBe("Your free Camberstack changes for this month");
+    // After the account-limit email, it says this is a different limit; without one, it doesn't.
+    expect(sent.find((x) => x.to[0] === "had@example.com").text).toContain("This is a different limit from the one-account one I wrote about before. Camberstack stopped");
     const m = sent.find((x) => x.to[0] === "capped@example.com");
+    expect(m.text).not.toContain("different limit");
+    expect(m.text).toContain("I won't email you about this limit again.");
     expect(m.subject).toBe("Your free Camberstack changes for this month");
     expect(m.text).toContain(`The next one opens on ${opens}. The proposal is still open`);
     expect(m.text).toContain("https://camberstack.io/upgrade?t=capped.sig");
@@ -222,7 +228,7 @@ describe("lifecycle emails", () => {
     user("today", "today@example.com", 5); used("today"); applied("today", 0.5);             // too soon
     user("demo", "demo@example.com", 5); used("demo"); applied("demo", 3, "0000000001");     // demo only
     user("undo", "undo@example.com", 5); used("undo"); applied("undo", 3, "1112223333", "p0"); // only an undo
-    user("old", "old@example.com", 30); used("old"); applied("old", 20);                    // before this email existed
+    user("old", "old@example.com", 30); used("old"); applied("old", 25);                    // before this email existed
     user("pro", "pro@example.com", 5, "pro"); used("pro"); applied("pro", 3);               // Pro gets it too
     user("me", "me@example.com", 5); used("me"); applied("me", 3);                          // internal
     expect(await lc.run()).toBe(2);
@@ -248,6 +254,40 @@ describe("lifecycle emails", () => {
     at = new Date("2026-10-13T14:00:00Z");                          // 10am New York, 9am Chicago (no zone, or a bad one)
     expect(await lc.run()).toBe(3);
     expect(sent.map((m) => m.to[0]).sort()).toEqual(["bogus@example.com", "none@example.com", "ny@example.com", "uk@example.com"]);
+  });
+
+  it("sends one email per user per run, never within 3 days of another, and check_in not within 7 days of an upgrade email (2026-11-13)", async () => {
+    const { db, lc, sent, user, call, applied } = setup();
+    setChangeCap(10);
+    try {
+    const log = (id: string, kind: string, daysAgo: number) => db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES (?, ?, ?)").run(id, kind, now() - daysAgo * DAY);
+    const capped = (id: string) => {
+      for (let i = 0; i < 10; i++) applied(id, 3 - i * 0.1);
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'apply_changes', 1, ?, 10, 10)")
+        .run(now() - 0.3 * DAY, id, "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days; the next opens on 2026-12-02.");
+    };
+    // The 2026-11-13 case: change_limit and check_in both due → change_limit only.
+    user("both", "both@example.com", 8); call("both", "account_overview"); capped("both");
+    // Any recent email holds a lifecycle one, an announcement included; the transactional welcome doesn't.
+    user("announced", "announced@example.com", 8); call("announced", "account_overview"); applied("announced", 3); log("announced", "announce:x", 2);
+    user("welcomed", "welcomed@example.com", 3); call("welcomed", "account_overview"); applied("welcomed", 2.5); log("welcomed", "welcome", 2.9);
+    // check_in waits a week after an upgrade email, but not after an older one.
+    user("pitched", "pitched@example.com", 8); call("pitched", "account_overview"); applied("pitched", 6); log("pitched", "limit_reached", 5);
+    user("pitchedLong", "long@example.com", 12); call("pitchedLong", "account_overview"); applied("pitchedLong", 10); log("pitchedLong", "limit_reached", 8);
+    expect(await lc.run()).toBe(3);
+    expect(sent.map((m) => `${m.to[0]} ${m.subject}`).sort()).toEqual([
+      "both@example.com Your free Camberstack changes for this month",
+      "long@example.com Camberstack: how did it go?",
+      "welcomed@example.com Camberstack: how did it go?",
+    ]);
+    // The held check_in still goes once the gap has passed (its window runs to 22 days).
+    db.prepare("UPDATE email_log SET sent_at = ? WHERE user_id = 'both'").run(now() - 4 * DAY);
+    expect(await lc.run()).toBe(0);  // past the 3-day gap, still within 7 days of that upgrade email
+    db.prepare("UPDATE email_log SET sent_at = ? WHERE user_id = 'both'").run(now() - 7.1 * DAY);
+    expect(await lc.run()).toBe(1);
+    expect(sent.at(-1).to).toEqual(["both@example.com"]);
+    expect(sent.at(-1).subject).toBe("Camberstack: how did it go?");
+    } finally { setChangeCap(null); }
   });
 
   it("still sends check_in to someone whose morning comes after the nominal 14 days", async () => {

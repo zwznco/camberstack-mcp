@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.2", date: "2026-11-13",
+    summary: "Fewer emails at once.",
+    items: [
+      "**Camberstack's emails are spaced out.** At most one at a time, a few days apart, so a note about a plan limit and a check-in never land together.",
+    ],
+  },
+  {
     version: "0.35.1", date: "2026-11-13",
     summary: "Google Analytics reports hold up better when Google is slow.",
     items: [

@@ -23,6 +23,11 @@
  * The first five go out in the user's morning (SEND_HOURS in the time zone of their Google Ads account, or FALLBACK_TZ),
  * so being due only holds it until the next hourly run inside that window.
  * Never sent to internal accounts (ADMIN_EMAILS, PRO_EMAILS) or anyone who unsubscribed.
+ * Spacing across kinds (2026-11-13: a Free user got limit_reached, then change_limit and check_in in the same minute, two
+ * days later): at most one of these five per user per run, none within GAP_DAYS of any other email but the two transactional
+ * ones (announcements, follow-ups and outreach count), and check_in not within CHECK_IN_AFTER_SALES_DAYS of an upgrade
+ * email, so the personal note never reads as part of a sales sequence. When several are due, the upgrade email goes first
+ * (the user is stuck now), then first_steps, then check_in; the windows run long enough that a held email still goes.
  * limit_reached also skips Pro users and the disconnected.
  *
  * Content stays generic on purpose: counts and links, never campaign names or other Google Ads data
@@ -79,6 +84,13 @@ export const lifecycleSigningKey = (encryptionKey: Buffer) => deriveKey(encrypti
 const DAY = 86400;
 /** Local hours an email may go out in: three hourly runs, so one always lands. */
 const SEND_HOURS = { from: 9, to: 12 };
+/** No lifecycle email within this many days of another email (transactional ones aside). */
+const GAP_DAYS = 3;
+/** check_in waits this long after an upgrade email. */
+const CHECK_IN_AFTER_SALES_DAYS = 7;
+/** Kinds that pitch a plan: the four upgrade emails, and the operator's personal notes about a limit (gaql-reliability outreach). */
+const SALES_SQL = "(kind IN ('limit_reached','switch_wanted','change_limit','paid_limit') OR kind LIKE 'outreach:%')";
+const PRIORITY: Record<string, number> = { limit_reached: 0, paid_limit: 0, change_limit: 0, first_steps: 1, check_in: 2 };
 /** For users whose Google Ads time zone we never saw: 9am Central is 10 Eastern, 7 Pacific. */
 const FALLBACK_TZ = "America/Chicago";
 
@@ -98,6 +110,20 @@ const USED_TOOLS = "('account_overview','run_gaql','keyword_ideas','keyword_metr
   + "'search_console_inspect_urls','search_console_sitemaps','analytics_report','analytics_landing_pages','propose_analytics_changes','propose_search_console_changes',"
   + "'merchant_product_issues','merchant_report','merchant_ad_spend','propose_merchant_changes')";
 
+type Due = { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string; plan?: string; afterAccountEmail?: boolean };
+
+/** At most one email per user, by PRIORITY, and none too soon after the user's last email (see the header). */
+export function spaced(due: Due[], lastEmail: Map<string, number>, lastSales: Map<string, number>, t: number): Due[] {
+  const out = new Map<string, Due>();
+  for (const u of [...due].sort((a, b) => PRIORITY[a.kind]! - PRIORITY[b.kind]!)) {
+    if (out.has(u.id)) continue;
+    if ((lastEmail.get(u.id) ?? 0) > t - GAP_DAYS * DAY) continue;
+    if (u.kind === "check_in" && (lastSales.get(u.id) ?? 0) > t - CHECK_IN_AFTER_SALES_DAYS * DAY) continue;
+    out.set(u.id, u);
+  }
+  return [...out.values()];
+}
+
 export class Lifecycle {
   constructor(private d: LifecycleDeps) {}
 
@@ -111,7 +137,7 @@ export class Lifecycle {
   }
 
   /** Who is due each email right now. */
-  private due(): { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string; plan?: string }[] {
+  private due(): Due[] {
     const t = now();
     const eligible = `u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan = 'free'`;
     const notSent = (k: string) => `NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = '${k}')`;
@@ -119,7 +145,7 @@ export class Lifecycle {
       AND u.created_at BETWEEN ? AND ? AND ${notSent("first_steps")}
       AND NOT EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.tool IN ${USED_TOOLS}
         AND NOT (c.tool = 'run_gaql' AND c.customer_id IS NULL))`)  // a run_gaql field lookup reads no account
-      .all(t - 15 * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; created_at: number }[];
+      .all(t - (15 + GAP_DAYS) * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; created_at: number }[];
     // Refused a second account by the plan gate (session.ts checkAccount), the last refusal 6 hours to 30 days ago. A refusal
     // logs as ok since it became a notice (it was ok = 0 before), so it's matched on the text; Merchant ones by their wording.
     // A refusal means they're working on more than one account now (there is no switch since 2026-11-06): the next
@@ -163,12 +189,18 @@ export class Lifecycle {
       JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.undo_of IS NULL AND p.customer_id <> ? AND p.customer_id <> 'mc:${DEMO_MERCHANT}'
       WHERE u.email_opt_out = 0 AND ${notSent("check_in")}
       GROUP BY u.id HAVING first BETWEEN ? AND ?`)
-      .all(DEMO_CID, t - 15 * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; first: number }[];
-    // Upper bounds carry a day past the nominal window: waiting for their morning can take up to ~21h.
+      .all(DEMO_CID, t - (15 + CHECK_IN_AFTER_SALES_DAYS) * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; first: number }[];
+    // Upper bounds carry a day past the nominal window (waiting for their morning can take up to ~21h), plus the longest
+    // spacing hold below, so a held email still goes.
     const at = this.d.clock?.() ?? new Date();
     const morning = (u: { time_zone: string | null }) => { const h = localHour(at, u.time_zone); return h >= SEND_HOURS.from && h < SEND_HOURS.to; };
     const ok = (u: { email: string; time_zone: string | null }) => !this.d.internalEmails.has(u.email.toLowerCase()) && morning(u);
-    return [
+    const latest = (where: string) => new Map((this.d.db.prepare(`SELECT user_id, max(sent_at) at FROM email_log WHERE ${where} GROUP BY user_id`)
+      .all() as { user_id: string; at: number }[]).map((r) => [r.user_id, r.at]));
+    const lastEmail = latest("kind NOT IN ('welcome','pro_welcome')");
+    const lastSales = latest(SALES_SQL);
+    const accountEmailed = new Set(latest("kind IN ('limit_reached','switch_wanted')").keys());
+    const due = [
       ...first.filter(ok).map((u) => ({ kind: "first_steps" as const, id: u.id, email: u.email, days: Math.floor((t - u.created_at) / DAY) })),
       // Every refusal's text names when another account opens (session.ts refuse: "opens on YYYY-MM-DD"; before 0.29.0 "the next opens YYYY-MM-DD").
       // Both stops by the same morning: change_limit only, so one upgrade email, not two.
@@ -176,9 +208,11 @@ export class Lifecycle {
         opens: /opens (?:again )?(?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
       ...paid.filter(ok).filter((u) => u.plan === "plus" || this.d.agencyLink?.(u.id)).map((u) => ({ kind: "paid_limit" as const, id: u.id, email: u.email, days: 0, plan: u.plan,
         opens: /opens (?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
-      ...atCap.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0, opens: u.opens })),
+      ...atCap.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0, opens: u.opens,
+        afterAccountEmail: accountEmailed.has(u.id) })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];
+    return spaced(due, lastEmail, lastSales, t);
   }
 
   /** Hourly. */
@@ -188,7 +222,7 @@ export class Lifecycle {
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
       : u.kind === "paid_limit" ? paidLimit(this.d.baseUrl, u.plan === "pro" ? "pro" : "plus",
         u.plan === "pro" ? this.d.agencyLink?.(u.id) ?? null : this.d.upgradeLink(u.id), u.opens)
-      : u.kind === "change_limit" ? changeLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.opens) : checkInEmail());
+      : u.kind === "change_limit" ? changeLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.opens, u.afterAccountEmail) : checkInEmail());
   }
 
   /**
@@ -323,14 +357,14 @@ ${pitch}${link ? `\n${link}\n(personal link, valid for 7 days)` : ` Upgrade from
 
 ${free} Your plan: ${base}/account
 
-This is the only email about it. Questions? Just reply.
+I won't email you about this limit again. Questions? Just reply.
 
 Adam
 Camberstack`,
     html: wrap(p("Hi,") + p(stopped) + p(pitch)
       + `<p style="margin:0 0 18px"><a href="${link ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">${o.cta}</a></p>`
       + p(`${free} Your plan is on <a href="${base}/account">your account page</a>.`)
-      + p("This is the only email about it. Questions? Just reply.") + p("Adam<br>Camberstack")),
+      + p("I won't email you about this limit again. Questions? Just reply.") + p("Adam<br>Camberstack")),
   };
 }
 
@@ -357,10 +391,11 @@ function paidLimit(base: string, plan: "plus" | "pro", link: string | null, open
   return upgradeEmail({ subject: "Using Camberstack on more Google Ads accounts", stopped, pitch: pitch, link, cta: `Switch to ${next}`, free: keep, base });
 }
 
-/** The change cap stopped an apply: when the next one opens (the date the stop named), and Plus's unlimited changes. */
-function changeLimit(base: string, plus: string | null, upgrade: string | null, opens?: string) {
+/** The change cap stopped an apply: when the next one opens (the date the stop named), and Plus's unlimited changes. `afterAccountEmail`: limit_reached (or switch_wanted) went earlier. */
+function changeLimit(base: string, plus: string | null, upgrade: string | null, opens?: string, afterAccountEmail = false) {
   const when = opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
-  const stopped = `Camberstack stopped a change you approved: the Free plan includes ${freeChanges()}, and you've used them`
+  // After the account-limit email, say this is a different limit: two upgrade emails otherwise read as the same one sent twice.
+  const stopped = `${afterAccountEmail ? "This is a different limit from the one-account one I wrote about before. " : ""}Camberstack stopped a change you approved: the Free plan includes ${freeChanges()}, and you've used them`
     + `${when ? `. The next one opens on ${when}` : ""}. The proposal is still open, so nothing is lost.`;
   const pitch = plus
     ? `Camberstack Plus has unlimited changes on one Google Ads account, for ${PLUS_PRICE_LABEL}; cancel any time. Pro (${PRO_PRICE_LABEL}) does the same on up to ${PRO_ACCOUNTS} accounts.`
