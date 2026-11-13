@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.4", date: "2026-11-13",
+    summary: "A Google Analytics report Google gives up on gets a lighter retry.",
+    items: [
+      "**When Google Analytics times out on a report, your AI tries a lighter one.** Google sometimes gives up on a report after about a minute. Your AI used to get only Google's error page and run the same report again; it now hears what happened and asks for a shorter date range or fewer details, which usually returns.",
+    ],
+  },
+  {
     version: "0.35.3", date: "2026-11-13",
     summary: "A new Google Ads account isn't mistaken for a closed one.",
     items: [

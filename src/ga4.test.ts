@@ -114,6 +114,20 @@ describe("AnalyticsClient", () => {
     expect(n).toBe(2);
   });
 
+  it("turns a slow Data API 502 (Google's HTML error page) into advice to narrow the report, without retrying it", async () => {
+    let n = 0, now = 0;
+    const realNow = Date.now;
+    Date.now = () => (now += 30_000);  // every request appears to take ~60s
+    try {
+      const q = { startDate: "2026-11-01", endDate: "2026-11-07", dimensions: ["landingPage"], metrics: ["sessions"], limit: 10 };
+      const ga = client(() => (n++, new Response("<!DOCTYPE html>\n<html lang=en><title>Error 502 (Server Error)!!1</title>", { status: 502 })));
+      const err = await ga.runReport("1", q).catch((e) => e as Error);
+      expect(err.message).toMatch(/^Google Analytics API 502: Google returned a server error page with no details\. → .*shorter date range/);
+      expect(err.message).not.toContain("<");
+      expect(n).toBe(1);
+    } finally { Date.now = realNow; }
+  });
+
   it("passes other API errors through readably (e.g. the API not enabled)", async () => {
     const ga = client(() => json({ error: { code: 403, message: "Google Analytics Data API has not been used in project 123 before or it is disabled." } }, 403));
     await expect(ga.summaries()).rejects.toThrow(/Google Analytics API 403: Google Analytics Data API has not been used/);

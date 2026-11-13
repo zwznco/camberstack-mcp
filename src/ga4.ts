@@ -69,6 +69,12 @@ const dataSlots = new PropertySlots(4);
 const QUOTA_HINT = " → Google Analytics is limiting reports on this property right now (too many at once, or its hourly quota)."
   + " Wait a minute, then run reports one at a time; if it persists, the hourly quota is used up and resets within the hour.";
 
+/** Appended to a Data API 5xx that took ~60s: Google's front end gave up waiting on the report (prod, 2026-11-13: 22 of 74
+ *  reports, 6 users, intermittent, the same users' other reports fast). Its body is an HTML error page, useless to the AI. */
+const SLOW_HINT = " → Google Analytics gave up on this report after about a minute. That is on Google's side and comes and goes."
+  + " Don't run the same report again unchanged: a lighter one usually returns. Use a shorter date range, fewer dimensions"
+  + " (detailed ones like pagePath, landingPage or date multiply the work) or a lower limit, and run reports one at a time.";
+
 /** One user's view of the GA4 Admin and Data APIs. */
 export class AnalyticsClient implements Analytics {
   /** `quotaWaits`: how long a read waits before each retry of a 429, while the in-flight requests holding the quota finish. */
@@ -102,8 +108,9 @@ export class AnalyticsClient implements Analytics {
     }
     if (!res.ok) {
       if (scopeMissing(res.status, text)) throw new NotGrantedError("analytics", this.grantLink(), method !== "GET" && url.startsWith(ADMIN_API));  // a report is a POST too
-      const msg = googleMessage(text);
-      throw new Error(`Google Analytics API ${res.status}: ${msg}${res.status === 429 ? QUOTA_HINT : ""}`);
+      const msg = /^\s*</.test(text) ? "Google returned a server error page with no details." : googleMessage(text);
+      const hint = res.status === 429 ? QUOTA_HINT : property && res.status >= 500 && ms >= 10_000 ? SLOW_HINT : "";
+      throw new Error(`Google Analytics API ${res.status}: ${msg}${hint}`);
     }
     return text ? JSON.parse(text) : {};
   }
