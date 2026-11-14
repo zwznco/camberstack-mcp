@@ -1364,7 +1364,8 @@ export class UserSession {
     }
     // Dry run against Google so problems surface now, not after the user approves.
     await mapLimited(live, (r) => this.write(a.customerId, a.loginCustomerId, r, true))
-      .catch((e) => this.explainEuBlock(e, a.customerId, a.loginCustomerId));
+      .catch((e) => this.explainEuBlock(e, a.customerId, a.loginCustomerId))
+      .catch((e) => this.explainContextRefusal(e, live, a.customerId, a.loginCustomerId));
     const id = `p_${randomUUID().slice(0, 8)}`;
     const summary = summarize(live);
     this.deps.db.prepare(`INSERT INTO proposals (id, user_id, customer_id, login_customer_id, changes, summary, status, undo_of, created_at)
@@ -1643,6 +1644,25 @@ export class UserSession {
    * look them up here and name them, or say plainly that none show through the API and the user must answer in Google
    * Ads, and report that case: the account state that triggers it isn't known yet.
    */
+  /**
+   * OPERATION_NOT_PERMITTED_FOR_CONTEXT means the campaign's type doesn't allow this change, but Google doesn't say which type.
+   * Name each targeted campaign's type, so the AI tells the user instead of retrying, and the next alert shows the cause
+   * (a user's add_negative_keywords got this twice, 2026-11-13/14, with no way to tell which campaign).
+   */
+  private async explainContextRefusal(e: unknown, live: AnyResolved[], customerId: string, login: string | null): Promise<never> {
+    if (!(e instanceof AdsApiError) || !e.message.includes("OPERATION_NOT_PERMITTED_FOR_CONTEXT")) throw e;
+    const ids = [...new Set(live.map((r) => (r.change as { campaign_id?: string }).campaign_id).filter((x): x is string => !!x && /^\d+$/.test(x)))];
+    if (!ids.length) throw e;
+    const rows = await this.ads.search(customerId, `SELECT campaign.id, campaign.name, campaign.advertising_channel_type, campaign.advertising_channel_sub_type `
+      + `FROM campaign WHERE campaign.id IN (${ids.join(", ")})`, login).catch(() => null);
+    if (!rows?.length) throw e;
+    e.message += ` → Google doesn't allow this change on that type of campaign. Targeted: `
+      + rows.map((r) => `"${r.campaign.name}" (id ${r.campaign.id}) is ${r.campaign.advertisingChannelType}`
+        + (r.campaign.advertisingChannelSubType && r.campaign.advertisingChannelSubType !== "UNSPECIFIED" ? `/${r.campaign.advertisingChannelSubType}` : "")).join("; ")
+      + `. Tell the user it can't be done there through the API; don't retry the same change on that campaign.`;
+    throw e;
+  }
+
   private async explainEuBlock(e: unknown, customerId: string, login: string | null): Promise<never> {
     const code = e instanceof AdsApiError ? /EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED|MISSING_EU_POLITICAL_ADVERTISING_SELF_DECLARATION/.exec(e.body)?.[0] : undefined;
     if (!(e instanceof AdsApiError) || !code) throw e;

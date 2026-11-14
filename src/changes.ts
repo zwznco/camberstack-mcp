@@ -172,6 +172,20 @@ const goalCategory = z.string().regex(/^[A-Z_]+$/, "a conversion category such a
  * id comes from or what unit an amount is in (ChatGPT took ~2 minutes to work out a budget change
  * before these existed).
  */
+/**
+ * Campaign types Google refuses keyword criteria on (ContextError OPERATION_NOT_PERMITTED_FOR_CONTEXT). A ChatGPT user hit
+ * that twice on add_negative_keywords (2026-11-13, -14) with nothing saying why; Search and Performance Max were checked to
+ * take negatives of every match type (386-283-8095, 2026-11-14), so the refusal was another type.
+ */
+const NO_KEYWORD_CHANNELS: Record<string, string> = {
+  SMART: "a Smart campaign is steered by keyword themes, which are edited in Google Ads (the campaign's Settings → Keyword themes).",
+  MULTI_CHANNEL: "an App campaign has no keywords; Google picks its searches from the app listing.",
+  LOCAL: "a Local campaign has no keywords.",
+  LOCAL_SERVICES: "Local Services ads have no keywords; their job types are set in the Local Services ads dashboard.",
+  HOTEL: "a Hotel campaign has no keywords.",
+  TRAVEL: "a Travel campaign has no keywords.",
+};
+
 export const PUBLIC_CHANGES = [
   z.object({
     type: z.literal("add_negative_keywords"),
@@ -529,6 +543,8 @@ export async function resolveChange(
     case "add_negative_keywords": {
       const c = await one(`SELECT campaign.id, campaign.name, campaign.advertising_channel_type, campaign.status
         FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found in account ${customerId}`);
+      const noKw = NO_KEYWORD_CHANNELS[c.campaign.advertisingChannelType as string];
+      if (noKw) throw new Error(`Campaign "${c.campaign.name}" is a ${c.campaign.advertisingChannelType} campaign, and Google doesn't take negative keywords there: ${noKw} Nothing was proposed.`);
       const existing = await q(`SELECT campaign_criterion.keyword.text, campaign_criterion.keyword.match_type
         FROM campaign_criterion WHERE campaign.id = ${change.campaign_id}
         AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = true`);

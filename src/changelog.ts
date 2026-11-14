@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.9", date: "2026-11-14",
+    summary: "Negative keywords on a campaign type that can't take them now say why.",
+    items: [
+      "**Clear answers on negative keywords.** Smart, App, Hotel and Local Services campaigns don't take negative keywords, and Google's refusal didn't say so. Your AI now hears the reason (and, for Smart campaigns, where to edit keyword themes instead), and if Google refuses on any other campaign type, it's told which type so it stops retrying.",
+    ],
+  },
+  {
     version: "0.35.8", date: "2026-11-14",
     summary: "Setting a campaign's conversion goal no longer fails on goals Google can't name.",
     items: [

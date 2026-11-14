@@ -65,6 +65,9 @@ class FakeAds {
   negatives: { text: string; matchType: string; rn: string }[] = [];
   kwStatus = "ENABLED";
   campaignStatus = "ENABLED";
+  channel = "SEARCH";
+  /** Google refuses the dry run as it does a campaign type that takes no keywords (ContextError). */
+  contextRefusal = false;
   campaignEnd: string | undefined;
   /** campaign.contains_eu_political_advertising; undefined reads as Google's "not declared". */
   euPolitical: string | undefined;
@@ -152,7 +155,7 @@ class FakeAds {
       return (this.strategyCampaigns ?? [{ id: "10", name: "Search" }, { id: "11", name: "Brand" }]).map((c) => ({ campaign: c }));
     }
     if (q.includes("FROM campaign")) {
-      return [{ campaign: { id: "10", name: "Search", status: this.campaignStatus, endDateTime: this.campaignEnd, advertisingChannelType: "SEARCH",
+      return [{ campaign: { id: "10", name: "Search", status: this.campaignStatus, endDateTime: this.campaignEnd, advertisingChannelType: this.channel,
           ...(this.bidding ?? (this.portfolio ? { biddingStrategyType: "TARGET_CPA", biddingStrategy: `customers/1112223333/biddingStrategies/${this.portfolio.id}` }
             : { biddingStrategyType: "MANUAL_CPC", manualCpc: { enhancedCpcEnabled: false } })), finalUrlSuffix: "",
           containsEuPoliticalAdvertising: this.euPolitical },
@@ -214,6 +217,10 @@ class FakeAds {
     if (this.euBlock) {
       throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { euPoliticalAdvertisingError: this.euCode },
         message: "Mutates are generally not allowed if the customer contains non-exempt campaigns without the EU political advertising declaration." }] }] } }));
+    }
+    if (this.contextRefusal) {
+      throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { contextError: "OPERATION_NOT_PERMITTED_FOR_CONTEXT" },
+        message: "The operation is not allowed for the given context.", location: { fieldPathElements: [{ fieldName: "operations" }, { fieldName: "create" }, { fieldName: "keyword" }] } }] }] } }));
     }
     if (this.failOn && JSON.stringify(operations).includes(this.failOn.text) && !(this.failOn.writesOnly && opts.validateOnly)) {
       throw new Error(`Google Ads API 400: refused ${this.failOn.text}`);
@@ -2867,6 +2874,21 @@ describe("OAuth + MCP end to end", () => {
     expect(none).not.toContain("propose set_eu_political_advertising");
     expect(reportBug).toHaveBeenCalledWith(expect.stringContaining("customer 1112223333, account DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING; "
       + "campaigns not declared: none"), "propose_changes");
+
+    // A campaign type with no keywords is refused up front, saying why (a user hit Google's bare refusal twice, 2026-11-13/14).
+    ads.channel = "SMART";
+    const smart = (await call(token, "propose_changes", neg)).text;
+    expect(smart).toContain('Campaign "Search" is a SMART campaign, and Google doesn\'t take negative keywords there');
+    expect(smart).toContain("Keyword themes");
+    // A type we don't know about yet: Google's refusal now names the campaign's type, so the AI stops retrying it.
+    ads.channel = "DEMAND_GEN";
+    ads.contextRefusal = true;
+    const ctx = (await call(token, "propose_changes", neg)).text;
+    ads.contextRefusal = false;
+    ads.channel = "SEARCH";
+    expect(ctx).toContain("OPERATION_NOT_PERMITTED_FOR_CONTEXT");
+    expect(ctx).toContain('"Search" (id 10) is DEMAND_GEN');
+    expect(ctx).toContain("don't retry the same change on that campaign");
 
     const ca = await propose([{ type: "create_conversion_action", name: "Provider signup", category: "SIGNUP" }]);
     expect(ca.summary).toContain('Create conversion action "Provider signup" (SIGNUP, uploaded click ids, one per click, primary) ⚠');
