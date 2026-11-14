@@ -1,6 +1,6 @@
 {
   "name": "camberstack-mcp",
-  "version": "0.35.7",
+  "version": "0.35.8",
   "description": "Google Ads, Search Console, Google Analytics 4, Merchant Center and Tag Manager in one MCP server: build Search, Performance Max, Display and YouTube (Demand Gen) campaigns, research keywords, fix Shopping products and conversion tracking, and make only the changes you approve.",
   "private": true,
   "type": "module",

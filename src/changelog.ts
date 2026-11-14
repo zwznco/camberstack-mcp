@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.8", date: "2026-11-14",
+    summary: "Setting a campaign's conversion goal no longer fails on goals Google can't name.",
+    items: [
+      "**Conversion goals with an unrecognized type.** Some campaigns carry a goal that Google's API reports only as UNKNOWN, and Google refuses any change to it, so asking your AI to scope the campaign to one goal used to fail outright. Camberstack now leaves that goal alone and makes the rest of the change. If it still counts toward bidding, the summary says so and tells you where to turn it off in Google Ads.",
+    ],
+  },
+  {
     version: "0.35.7", date: "2026-11-14",
     summary: "Your AI can now bid to show at the top of the page.",
     items: [

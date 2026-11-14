@@ -2609,6 +2609,16 @@ describe("OAuth + MCP end to end", () => {
     const gu = await call(token, "undo_changes", { proposal_id: g.proposal_id });
     await call(token, "apply_changes", { proposal_id: gu.json.proposal_id });
     expect(ads.goals).toEqual({ PURCHASE: true, SIGNUP: true });
+
+    // A goal newer than the API version reads as UNKNOWN, resource name included; Google won't update it, so it is left alone (2026-11-13).
+    ads.goals.UNKNOWN = true;
+    try {
+      const gx = await propose([{ type: "set_conversion_goal", campaign_id: "10", category: "SIGNUP" }]);
+      expect(gx.summary).toContain("was: PURCHASE, SIGNUP) ⚠ 1 more goal(s)");
+      await call(token, "apply_changes", { proposal_id: gx.proposal_id });
+      expect(ads.goals).toEqual({ PURCHASE: false, SIGNUP: true, UNKNOWN: true });
+      await expect(propose([{ type: "set_conversion_goal", campaign_id: "10", category: "UNKNOWN" }])).rejects.toThrow(/No UNKNOWN goal.*PURCHASE, SIGNUP\./);
+    } finally { ads.goals = { PURCHASE: true, SIGNUP: true }; }
   });
 
   it("builds paused Display, Demand Gen (YouTube) and Performance Max campaigns with uploaded images, and undoes them", async () => {

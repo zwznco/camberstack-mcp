@@ -836,22 +836,30 @@ export async function resolveChange(
           campaign_conversion_goal.origin, campaign_conversion_goal.biddable
         FROM campaign_conversion_goal WHERE campaign.id = ${change.campaign_id}`);
       if (!rows.length) throw new Error(`Campaign ${change.campaign_id} not found, or it has no conversion goals yet`);
-      const cats = [...new Set(rows.map((r) => r.campaignConversionGoal.category as string))];
-      if (!cats.includes(change.category)) {
+      const cats = [...new Set(rows.map((r) => r.campaignConversionGoal.category as string).filter((c) => c !== "UNKNOWN"))];
+      if (change.category === "UNKNOWN" || !cats.includes(change.category)) {
         throw new Error(`No ${change.category} goal on this campaign. The account's conversion actions give it: ${cats.join(", ")}. `
           + `A GA4 key event becomes a goal only once it is imported (the import_ga4_key_event change), and then under its category; `
           + `a HIDDEN action is one not imported yet. Check with SELECT conversion_action.name, conversion_action.category, conversion_action.status, `
           + `conversion_action.google_analytics_4_settings.event_name FROM conversion_action.`);
       }
-      const flips = rows.filter((r) => !!r.campaignConversionGoal.biddable !== (r.campaignConversionGoal.category === change.category));
-      const before = [...new Set(rows.filter((r) => r.campaignConversionGoal.biddable).map((r) => r.campaignConversionGoal.category as string))];
+      // A goal whose category or origin is newer than this API version comes back as UNKNOWN, and so does its resource name
+      // (…/10~UNKNOWN~WEBSITE): Google refuses to update it (BAD_RESOURCE_ID), failing the whole proposal (2026-11-13). Leave it be.
+      const unknown = (r: any) => r.campaignConversionGoal.category === "UNKNOWN" || r.campaignConversionGoal.origin === "UNKNOWN"
+        || /~UNKNOWN(~|$)/.test(r.campaignConversionGoal.resourceName);
+      const named = rows.filter((r) => !unknown(r));
+      const stuck = rows.filter((r) => unknown(r) && r.campaignConversionGoal.biddable).length;
+      const flips = named.filter((r) => !!r.campaignConversionGoal.biddable !== (r.campaignConversionGoal.category === change.category));
+      const before = [...new Set(named.filter((r) => r.campaignConversionGoal.biddable).map((r) => r.campaignConversionGoal.category as string))];
       return {
         change, service: "campaignConversionGoals",
         operations: flips.map((r) => ({
           update: { resourceName: r.campaignConversionGoal.resourceName, biddable: r.campaignConversionGoal.category === change.category },
           updateMask: "biddable",
         })),
-        describe: `Campaign "${rows[0].campaign.name}" counts and bids on ${change.category} conversions only (was: ${before.join(", ") || "none"})`,
+        describe: `Campaign "${rows[0].campaign.name}" counts and bids on ${change.category} conversions only (was: ${before.join(", ") || "none"})`
+          + (stuck ? ` ⚠ ${stuck} more goal(s) on this campaign are of a kind Google's API can't name or change (it reports them as UNKNOWN), `
+            + `so they keep counting; to stop them, turn them off in Google Ads under the campaign's Settings → Goals` : ""),
         inverse: flips.length ? {
           type: "restore_conversion_goals", campaign_id: change.campaign_id,
           goals: flips.map((r) => ({ resource_name: r.campaignConversionGoal.resourceName, biddable: !!r.campaignConversionGoal.biddable })),
