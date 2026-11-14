@@ -9,7 +9,7 @@
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
-import { NotGrantedError, googleMessage, scopeMissing } from "./google.js";
+import { NotGrantedError, fetchGoogle, googleMessage, scopeMissing } from "./google.js";
 
 const API = "https://tagmanager.googleapis.com/tagmanager/v2";
 export const DEMO_GTM_ACCOUNT = "accounts/000000001";
@@ -37,7 +37,7 @@ export class GtmClient implements TagManager {
   async call(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: object): Promise<any> {
     let res: Response, attempt = 0;
     for (;;) {
-      res = await this.f(`${API}/${path}`, {
+      res = await fetchGoogle(this.f, `${API}/${path}`, {
         method,
         headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,

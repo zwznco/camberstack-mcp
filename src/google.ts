@@ -135,8 +135,43 @@ interface GoogleTokenResponse {
 
 type FetchLike = typeof fetch;
 
+/** A total deadline on every call to Google. Before 2026-11-13 there was none (only PageSpeed had one): a hung upstream held the
+ *  request, its socket and the user's gate queue indefinitely. Abort also stops a body still being read. */
+export const GOOGLE_TIMEOUT_MS = 90_000;
+export async function fetchGoogle(f: FetchLike, url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await f(url, { ...init, signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS) });
+  } catch (e) {
+    if ((e as Error)?.name === "TimeoutError") {
+      throw new Error(`Google didn't answer within ${GOOGLE_TIMEOUT_MS / 1000} seconds, so Camberstack stopped waiting. Try again; if it repeats, narrow the request.`);
+    }
+    throw e;
+  }
+}
+
+/** The most of a Google Ads response Camberstack will hold in memory. run_gaql's LIMIT keeps real answers far below it; this
+ *  stops one wide query from exhausting the heap that every user on the color shares (security review, 2026-11-13). */
+export const MAX_ADS_BODY_BYTES = 64 * 1024 * 1024;
+async function readCapped(res: Response, max: number): Promise<string> {
+  if (!res.body) return res.text();
+  const reader = res.body.getReader(), chunks: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`Google's answer was over ${max / 1024 / 1024} MB, so Camberstack stopped reading it. `
+        + "Select fewer fields, add a WHERE, or lower the LIMIT.");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 const postForm = (f: FetchLike, url: string, form: Record<string, string>) =>
-  f(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(form) });
+  fetchGoogle(f, url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(form) });
 
 export async function exchangeGoogleCode(
   creds: GoogleCreds, code: string, redirectUri: string, f: FetchLike = fetch,
@@ -413,7 +448,7 @@ export class AdsClient {
 
   /** Response body as text; throws AdsApiError on a non-2xx. */
   private async body(res: Response): Promise<string> {
-    const body = await res.text();
+    const body = await readCapped(res, MAX_ADS_BODY_BYTES);
     if (scopeMissing(res.status, body)) throw new NotGrantedError("google-ads", this.grantLink());
     if (!res.ok) throw new AdsApiError(res.status, body);
     return body;
@@ -421,13 +456,13 @@ export class AdsClient {
 
   /** POST to the Ads API; the parsed body, {} when empty. */
   private async post(path: string, payload: object, loginCustomerId?: string | null): Promise<any> {
-    const res = await this.f(`${ADS_API}/${path}`, { method: "POST", headers: await this.headers(loginCustomerId), body: JSON.stringify(payload) });
+    const res = await fetchGoogle(this.f, `${ADS_API}/${path}`, { method: "POST", headers: await this.headers(loginCustomerId), body: JSON.stringify(payload) });
     const body = await this.body(res);
     return body ? JSON.parse(body) : {};
   }
 
   async listAccessibleCustomers(): Promise<string[]> {
-    const res = await this.f(`${ADS_API}/customers:listAccessibleCustomers`, { headers: await this.headers() });
+    const res = await fetchGoogle(this.f, `${ADS_API}/customers:listAccessibleCustomers`, { headers: await this.headers() });
     return ((JSON.parse(await this.body(res)).resourceNames ?? []) as string[]).map((r) => r.split("/")[1]!);
   }
 
@@ -536,7 +571,7 @@ export class SearchConsoleClient {
   constructor(private accessToken: () => Promise<string>, private grantLink: () => string | null = () => null, private f: FetchLike = fetch) {}
 
   private async get(path: string, init: RequestInit = {}): Promise<any> {
-    const res = await this.f(path.startsWith("https://") ? path : `${SEARCH_CONSOLE_API}${path}`, {
+    const res = await fetchGoogle(this.f, path.startsWith("https://") ? path : `${SEARCH_CONSOLE_API}${path}`, {
       ...init,
       headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
     });

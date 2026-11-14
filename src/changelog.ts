@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.6", date: "2026-11-13",
+    summary: "Change-history queries no longer need a LIMIT, and very large queries are capped.",
+    items: [
+      "**Change-history queries just work.** Google requires a LIMIT on `change_event` queries, so ones without it used to fail. Camberstack now adds one when your AI leaves it out.",
+      "**Very large queries are capped at 10,000 rows.** Your AI still sees the first 500, as before. When a query matches more than 10,000 rows, it now says the count is a floor and to aggregate or filter instead.",
+      "**A Google service that doesn't answer is cut off after 90 seconds** with a plain message, instead of leaving the request hanging.",
+    ],
+  },
+  {
     version: "0.35.5", date: "2026-11-13",
     summary: "A Google service you haven't added yet no longer shows as an error.",
     items: [

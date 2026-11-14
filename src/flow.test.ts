@@ -3578,6 +3578,34 @@ describe("Merchant Center plan allowance", () => {
       db.prepare("UPDATE users SET plan = ?, stripe_customer = ?, stripe_sub = ? WHERE email = 'owner@example.com'").run(was.plan, was.stripe_customer, was.stripe_sub);
     }
   });
+
+  it("refuses a Merchant Center proposal on an account this login can't reach, before reading any product", async () => {
+    // Security review 2026-11-13: Camberstack's own products are read from its database, so an update_product proposal on
+    // another merchant's id printed that product's old title and price. The gate runs before anything resolves.
+    const owner = await merchantOwner();
+    const factory = deps.merchantFactory!;
+    let ownReads = 0;
+    deps.merchantFactory = (u) => {
+      const m = factory(u);
+      return { ...m, accounts: async () => [{ account_id: "111", name: "One" }],
+        ownProducts: async (id: string) => { ownReads++; return (await (m as Partial<typeof m>).ownProducts?.(id)) ?? []; } };
+    };
+    try {
+      const before = (db.prepare("SELECT count(*) n FROM proposals").get() as { n: number }).n;
+      const r = await call(owner, "propose_merchant_changes", { account_id: "999", changes: [
+        { type: "update_product", offer_id: "SKU-1", attributes: { price: 0.01 } }] });
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain("999 isn't a Merchant Center account this login can reach");
+      expect(ownReads).toBe(0);
+      expect((db.prepare("SELECT count(*) n FROM proposals").get() as { n: number }).n).toBe(before);
+      // A reachable account gets past the gate to the product check itself: SKU-1 isn't a Camberstack product there.
+      const ok = await call(owner, "propose_merchant_changes", { account_id: "111", changes: [
+        { type: "update_product", offer_id: "SKU-1", attributes: { price: 1 } }] });
+      expect(ok.text).not.toContain("this login can reach");
+      expect(ok.text).toContain("isn't a product Camberstack created");
+      expect(ownReads).toBe(1);
+    } finally { deps.merchantFactory = factory; }
+  });
 });
 
 describe("Merchant Center issues by ad spend (demo)", () => {

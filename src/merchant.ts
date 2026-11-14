@@ -13,7 +13,7 @@
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
-import { MerchantApiError, NotGrantedError, googleMessage, scopeMissing } from "./google.js";
+import { MerchantApiError, NotGrantedError, fetchGoogle, googleMessage, scopeMissing } from "./google.js";
 
 const API = "https://merchantapi.googleapis.com";
 export const DEMO_MERCHANT = "000000001";
@@ -128,7 +128,7 @@ export class MerchantClient implements Merchant {
     private store = new OverrideStore()) {}
 
   private async call(path: string, body?: object, method = body ? "POST" : "GET"): Promise<any> {
-    const res = await this.f(`${API}/${path}`, {
+    const res = await fetchGoogle(this.f, `${API}/${path}`, {
       method,
       headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,

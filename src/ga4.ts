@@ -7,7 +7,7 @@
  */
 import type { DB } from "./db.js";
 import { now } from "./db.js";
-import { NotGrantedError, googleMessage, scopeMissing } from "./google.js";
+import { NotGrantedError, fetchGoogle, googleMessage, scopeMissing } from "./google.js";
 
 const ADMIN_API = "https://analyticsadmin.googleapis.com/v1beta";
 const DATA_API = "https://analyticsdata.googleapis.com/v1beta";
@@ -89,7 +89,7 @@ export class AnalyticsClient implements Analytics {
     const property = url.startsWith(DATA_API) ? /properties\/(\d+)/.exec(url)?.[1] : undefined;
     const once = async () => {
       const started = Date.now();
-      const res = await this.f(url, {
+      const res = await fetchGoogle(this.f, url, {
         method,
         headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,

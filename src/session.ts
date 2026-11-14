@@ -240,6 +240,18 @@ type AlreadyInPlace = { status: "already in place"; changes: 0; skipped: string[
 const publicResults = (outcomes: Outcome[]) => outcomes.map(({ describe, ok, error, note }) =>
   ({ change: describe, ok, ...(error ? { error } : {}), ...(note ? { note } : {}) }));
 
+/** The most rows run_gaql reads from Google for one query: also Google's own ceiling for change_event, which requires a LIMIT. */
+export const MAX_QUERY_ROWS = 10_000;
+/** The query with a LIMIT of at most MAX_QUERY_ROWS. GAQL puts LIMIT last, before an optional PARAMETERS clause, so only a
+ *  trailing one counts: "limit" inside a WHERE string literal must not read as the query's own. */
+export function capLimit(query: string): string {
+  const q = query.replace(/[\s;]+$/, "");
+  const tail = /\blimit\s+(\d+)(\s+parameters\b[\s\S]*)?$/i.exec(q);
+  if (tail) return Number(tail[1]) <= MAX_QUERY_ROWS ? q : `${q.slice(0, tail.index)}LIMIT ${MAX_QUERY_ROWS}${tail[2] ?? ""}`;
+  const params = /\s+parameters\b[\s\S]*$/i.exec(q);
+  return params ? `${q.slice(0, params.index)} LIMIT ${MAX_QUERY_ROWS}${params[0]}` : `${q} LIMIT ${MAX_QUERY_ROWS}`;
+}
+
 export class UserSession {
   readonly ads: Ads;
   readonly sc: SearchConsole;
@@ -815,7 +827,9 @@ export class UserSession {
     const a = await this.account(customerId);
     const { query: current, renamed } = renameFields(query);
     const { query: expanded, rewrote } = expandDuring(current);
-    let q = expanded;
+    // Every query gets a LIMIT (security review, 2026-11-13): without one a wide read (geo_target_constant is ~200k rows) was
+    // buffered whole before the 500-row cap below, and a few in parallel could exhaust the memory every user on the color shares.
+    let q = capLimit(expanded);
     // Models filter or sort on a field they didn't select despite the rule in run_gaql's description. Google names the
     // field, so select it and rerun rather than spend the model's turn on the retry.
     const added: string[] = [];
@@ -848,7 +862,9 @@ export class UserSession {
     return { ...demoNote(a.customerId), ...(rewrote.length ? { rewritten: `Google only accepts LAST_7/14/30_DAYS, so ran ${rewrote.join(", ")} (dates in UTC)` } : {}),
       ...(renamed.length ? { renamed: `These fields were renamed in the API, so ran ${renamed.join(", ")} (a date and time, e.g. 2026-01-31 23:59:59)` } : {}),
       ...(added.length ? { added_to_select: `Google requires fields used in WHERE or ORDER BY to be selected too, so added ${added.join(", ")} to SELECT` } : {}),
-      rows: rows.slice(0, 500), truncated: rows.length > 500, total_rows: rows.length };
+      rows: rows.slice(0, 500), truncated: rows.length > 500, total_rows: rows.length,
+      ...(rows.length >= MAX_QUERY_ROWS ? { total_rows_note: `at least ${MAX_QUERY_ROWS}: Camberstack reads at most ${MAX_QUERY_ROWS} rows of one query, `
+        + "so there may be more. Aggregate or filter to count them." } : {}) };
   }
 
   /**
@@ -1291,6 +1307,14 @@ export class UserSession {
   async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<Proposed | AlreadyInPlace> {
     const ga = customerId === GA_TARGET, mc = isMcTarget(customerId), sc = customerId === SC_TARGET, gtm = customerId === GTM_TARGET;
     const a = ga || mc || sc || gtm ? { customerId, loginCustomerId: null } : await this.account(customerId);
+    // A Merchant Center id must be one this login reaches before anything resolves. Camberstack's own products are read
+    // from its database, not from Google, so without this check an update_product proposal on someone else's Merchant
+    // Center id printed that product's old title and values (security review, 2026-11-13). switch_account checks the same way.
+    // An undo replays the user's own applied proposal, which passed this check when it was made.
+    if (mc && !undoOf && customerId !== `mc:${DEMO_MERCHANT}`
+      && !(await this.merchant.accounts()).some((m) => m.account_id === customerId.slice(3))) {
+      throw new Error(`${customerId.slice(3)} isn't a Merchant Center account this login can reach (merchant_accounts shows the ones it can). Nothing was proposed.`);
+    }
     // A new request only (undo and the drift re-proposal replay text already in the account): see quotedKeywords.
     const quoted = undoOf === undefined ? quotedKeywords(rawChanges) : [];
     if (quoted.length) {
