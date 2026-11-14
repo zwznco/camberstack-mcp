@@ -277,9 +277,11 @@ export const PUBLIC_CHANGES = [
     presence_only: z.boolean().describe("true: only people IN the locations; false: also people interested in them") })
     .describe("Choose whether a campaign shows to people in its locations only, or also to people interested in them"),
   z.object({ type: z.literal("set_bidding_strategy"), campaign_id: campaignId,
-    strategy: z.enum(["MANUAL_CPC", "MAXIMIZE_CLICKS", "MAXIMIZE_CONVERSIONS"]),
-    max_cpc_ceiling: bid.optional().describe("MAXIMIZE_CLICKS only: the most Google may bid per click"),
-    target_cpa: bid.optional().describe("MAXIMIZE_CONVERSIONS only: target cost per conversion") })
+    strategy: z.enum(["MANUAL_CPC", "MAXIMIZE_CLICKS", "MAXIMIZE_CONVERSIONS", "TARGET_IMPRESSION_SHARE"]),
+    max_cpc_ceiling: bid.optional().describe("The most Google may bid per click (not manual CPC or conversions)"),
+    target_cpa: bid.optional().describe("MAXIMIZE_CONVERSIONS only: target cost per conversion"),
+    impression_share_location: z.enum(["ANYWHERE_ON_PAGE", "TOP_OF_PAGE", "ABSOLUTE_TOP_OF_PAGE"]).optional().describe("Default TOP_OF_PAGE"),
+    target_impression_share: z.number().min(1).max(100).optional().describe("TARGET_IMPRESSION_SHARE (Search): % of searches, e.g. 70") })
     .describe("Switch ONE campaign's bid strategy. A campaign on a shared (portfolio) strategy moves off it onto its own; the other campaigns "
       + "on the shared strategy keep it. To change the shared strategy for every campaign on it, use set_shared_bid_strategy. If the user "
       + "didn't say which they mean, ask. Google re-learns after a switch, so performance can wobble for a week or two"),
@@ -960,16 +962,26 @@ export async function resolveChange(
       };
     }
     case "set_bidding_strategy": {
-      const c = await one(`SELECT campaign.name, campaign.bidding_strategy_type, campaign.bidding_strategy, campaign.target_spend.cpc_bid_ceiling_micros,
-          campaign.maximize_conversions.target_cpa_micros, campaign.maximize_conversion_value.target_roas
+      const c = await one(`SELECT campaign.name, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.bidding_strategy,
+          campaign.target_spend.cpc_bid_ceiling_micros, campaign.maximize_conversions.target_cpa_micros, campaign.maximize_conversion_value.target_roas,
+          ${TIS_FIELDS}
         FROM campaign WHERE campaign.id = ${change.campaign_id}`, `Campaign ${change.campaign_id} not found`);
       // On a shared (portfolio) strategy: this campaign moves onto its own strategy; undo puts it back on the shared one.
       const { shared, prev } = await currentBidding(q, c);
-      if (change.max_cpc_ceiling && change.strategy !== "MAXIMIZE_CLICKS") throw new Error("max_cpc_ceiling only applies to MAXIMIZE_CLICKS.");
+      const tis = change.strategy === "TARGET_IMPRESSION_SHARE";
+      if (change.max_cpc_ceiling && change.strategy !== "MAXIMIZE_CLICKS" && !tis) throw new Error("max_cpc_ceiling only applies to MAXIMIZE_CLICKS and TARGET_IMPRESSION_SHARE.");
       if (change.target_cpa && change.strategy !== "MAXIMIZE_CONVERSIONS") throw new Error("target_cpa only applies to MAXIMIZE_CONVERSIONS.");
+      if (!tis && (change.impression_share_location || change.target_impression_share !== undefined)) {
+        throw new Error("impression_share_location and target_impression_share only apply to TARGET_IMPRESSION_SHARE.");
+      }
+      if (tis && change.target_impression_share === undefined) throw new Error("TARGET_IMPRESSION_SHARE needs target_impression_share, e.g. 70 for 70% of searches.");
+      if (tis && c.campaign.advertisingChannelType !== "SEARCH") {
+        throw new Error(`Target impression share is for Search campaigns only; "${c.campaign.name}" is ${c.campaign.advertisingChannelType}.`);
+      }
       const t = c.campaign.biddingStrategyType as string;
       if (!prev) throw unsupported(`Campaign "${c.campaign.name}" uses ${t}, which Camberstack can't restore on undo; change it in Google Ads.`);
-      const next = chosenBidding(change.strategy, { ceiling: change.max_cpc_ceiling, targetCpa: change.target_cpa });
+      const next = chosenBidding(change.strategy, { ceiling: change.max_cpc_ceiling, targetCpa: change.target_cpa,
+        location: change.impression_share_location ?? "TOP_OF_PAGE", share: change.target_impression_share });
       const others = shared ? shared.campaigns.filter((n) => n !== c.campaign.name) : [];
       return {
         change, service: "campaigns",
@@ -1047,7 +1059,7 @@ export async function resolveChange(
       for (const cid of [...new Set(change.campaign_ids)]) {
         const c = await one(`SELECT campaign.name, campaign.status, campaign.bidding_strategy_type, campaign.bidding_strategy,
             campaign.target_spend.cpc_bid_ceiling_micros, campaign.maximize_conversions.target_cpa_micros,
-            campaign.maximize_conversion_value.target_roas FROM campaign WHERE campaign.id = ${cid}`, `Campaign ${cid} not found`);
+            campaign.maximize_conversion_value.target_roas, ${TIS_FIELDS} FROM campaign WHERE campaign.id = ${cid}`, `Campaign ${cid} not found`);
         if (c.campaign.status === "REMOVED") throw new Error(`Campaign "${c.campaign.name}" was removed in Google Ads and can't be changed.`);
         const { prev } = await currentBidding(q, c);
         if (!prev) throw unsupported(`Campaign "${c.campaign.name}" uses ${c.campaign.biddingStrategyType}, which Camberstack can't restore on undo; move it in Google Ads.`);
@@ -1716,6 +1728,19 @@ function biddingOf(type: string, c: any): { bidding: Record<string, unknown>; ma
       return { bidding: { maximizeConversions: cpa && Number(cpa) ? { targetCpaMicros: String(cpa) } : {} }, mask: "maximize_conversions.target_cpa_micros",
         label: `maximize conversions${cpa && Number(cpa) ? ` (target ${money(cpa)}/conversion)` : ""}` };
     }
+    case "TARGET_IMPRESSION_SHARE": {
+      const t = c.targetImpressionShare ?? {};
+      // Restorable only when we know where and how much; Google always sets both on this strategy.
+      if (!t.location || !t.locationFractionMicros) return null;
+      const ceil = t.cpcBidCeilingMicros && Number(t.cpcBidCeilingMicros) ? String(t.cpcBidCeilingMicros) : undefined;
+      const where = TIS_LOCATION_LABEL[t.location as string] ?? String(t.location).toLowerCase().replace(/_/g, " ");
+      return {
+        bidding: { targetImpressionShare: { location: t.location, locationFractionMicros: String(t.locationFractionMicros), ...(ceil ? { cpcBidCeilingMicros: ceil } : {}) } },
+        // The ceiling is in the mask even when unset, so moving to this strategy (or back to it) clears a stale one.
+        mask: "target_impression_share.location,target_impression_share.location_fraction_micros,target_impression_share.cpc_bid_ceiling_micros",
+        label: `target impression share (${+(Number(t.locationFractionMicros) / 10_000).toFixed(2)}% ${where}${ceil ? `, max ${money(ceil)}/click` : ""})`,
+      };
+    }
     case "MAXIMIZE_CONVERSION_VALUE": {
       const roas = c.maximizeConversionValue?.targetRoas;
       return { bidding: { maximizeConversionValue: roas ? { targetRoas: roas } : {} }, mask: "maximize_conversion_value.target_roas",
@@ -1750,6 +1775,11 @@ async function currentBidding(q: (query: string) => Promise<any[]>, c: any) {
     : biddingOf(c.campaign.biddingStrategyType as string, c.campaign);
   return { shared, prev };
 }
+
+const TIS_FIELDS = "campaign.target_impression_share.location, campaign.target_impression_share.location_fraction_micros, "
+  + "campaign.target_impression_share.cpc_bid_ceiling_micros";
+const TIS_LOCATION_LABEL: Record<string, string> = { ANYWHERE_ON_PAGE: "anywhere on the page", TOP_OF_PAGE: "top of page",
+  ABSOLUTE_TOP_OF_PAGE: "absolute top of page" };
 
 type SharedField = { camel: string; snake: string };
 const STRATEGY_LABEL: Record<string, string> = { TARGET_SPEND: "maximize clicks", MAXIMIZE_CONVERSIONS: "maximize conversions",
@@ -1828,12 +1858,14 @@ async function targetingLabel(q: (query: string) => Promise<any[]>, locationIds:
   return `${places.join(", ")}${presenceOnly ? " (people in the location)" : ""}, ${langs.join(", ")}`;
 }
 
-type Bidding = "MANUAL_CPC" | "MAXIMIZE_CLICKS" | "MAXIMIZE_CONVERSIONS" | "MAXIMIZE_CONVERSION_VALUE";
+type Bidding = "MANUAL_CPC" | "MAXIMIZE_CLICKS" | "MAXIMIZE_CONVERSIONS" | "MAXIMIZE_CONVERSION_VALUE" | "TARGET_IMPRESSION_SHARE";
 /** The strategy a change asks for, in biddingOf's shape. */
-const chosenBidding = (bidding: Bidding, o: { ceiling?: number; targetCpa?: number } = {}) =>
+const chosenBidding = (bidding: Bidding, o: { ceiling?: number; targetCpa?: number; location?: string; share?: number } = {}) =>
   biddingOf(bidding === "MAXIMIZE_CLICKS" ? "TARGET_SPEND" : bidding, {
     targetSpend: { cpcBidCeilingMicros: o.ceiling ? toMicros(o.ceiling) : undefined },
     maximizeConversions: { targetCpaMicros: o.targetCpa ? toMicros(o.targetCpa) : undefined },
+    targetImpressionShare: { location: o.location, locationFractionMicros: o.share !== undefined ? Math.round(o.share * 10_000) : undefined,
+      cpcBidCeilingMicros: o.ceiling ? toMicros(o.ceiling) : undefined },
   })!;
 
 /** Swappable so tests don't download anything. */

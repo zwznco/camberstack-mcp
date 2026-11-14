@@ -257,7 +257,7 @@ const CHANGES: [string, string][] = [
   ["Change a keyword's or ad group's max CPC", "Restores the previous bid"],
   ["Pause or re-enable an ad (add the new ad and pause the old one to replace it)", "Restores the previous status"],
   ["Add or remove a campaign's locations and languages; in-location-only or also interested", "Restores the previous targeting"],
-  ["Switch bid strategy: manual CPC, maximize clicks, maximize conversions", "Restores the previous strategy"],
+  ["Switch bid strategy: manual CPC, maximize clicks, maximize conversions, target impression share (e.g. top of page)", "Restores the previous strategy"],
   ["Set a campaign's tracking URL suffix", "Restores the previous suffix"],
   ["Create a conversion action, or set how many conversions a click can count, or its value, window and attribution", "Removes it / restores the previous setting"],
   ["Remove a conversion action", "None: Google can't restore it, so it warns you first (a GA4 import can be imported again)"],

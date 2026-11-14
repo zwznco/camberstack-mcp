@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.7", date: "2026-11-14",
+    summary: "Your AI can now bid to show at the top of the page.",
+    items: [
+      "**Target impression share bidding.** Ask your AI to put a Search campaign at the top of the page (or the very first ad, or anywhere on the page) for a share of searches, like 70%, with an optional most-per-click. Like every bid strategy change, it's a proposal you approve, and undo restores the strategy you had.",
+    ],
+  },
+  {
     version: "0.35.6", date: "2026-11-13",
     summary: "Change-history queries no longer need a LIMIT, and very large queries are capped.",
     items: [

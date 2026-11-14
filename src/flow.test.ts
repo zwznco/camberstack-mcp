@@ -667,7 +667,7 @@ describe("OAuth + MCP end to end", () => {
     // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +7.2K for its three tools;
     // +0.2K for create_container and delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
     // change_results (2026-11-12): +1.2K.
-    expectToolBudget(tools, { total: 119_200, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800 } });
+    expectToolBudget(tools, { total: 119_500, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1269,7 +1269,7 @@ describe("OAuth + MCP end to end", () => {
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
       // change_results (2026-11-12): +1.2K.
-      expectToolBudget(tools, { total: 158_300, perTool: 6_000 });
+      expectToolBudget(tools, { total: 158_600, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -2743,6 +2743,28 @@ describe("OAuth + MCP end to end", () => {
     expect(mcvUndo.summary).toContain("back to maximize conversion value (target ROAS 400%)");
     await call(token, "apply_changes", { proposal_id: mcvUndo.proposal_id });
     expect(last().operations[0]).toMatchObject({ update: { maximizeConversionValue: { targetRoas: 4 } }, updateMask: "maximize_conversion_value.target_roas" });
+    ads.bidding = undefined;
+
+    // Target impression share (top of page): Search only, needs a share, and undo restores the old ceiling.
+    ads.bidding = { biddingStrategyType: "TARGET_SPEND", targetSpend: { cpcBidCeilingMicros: "6000000" } };
+    const tis = await propose([{ type: "set_bidding_strategy", campaign_id: "10", strategy: "TARGET_IMPRESSION_SHARE", target_impression_share: 70, max_cpc_ceiling: 15 }]);
+    expect(tis.summary).toContain("from maximize clicks (max 6.00/click) to target impression share (70% top of page, max 15.00/click)");
+    await call(token, "apply_changes", { proposal_id: tis.proposal_id });
+    expect(last().operations[0]).toEqual({ update: { resourceName: "customers/1112223333/campaigns/10",
+      targetImpressionShare: { location: "TOP_OF_PAGE", locationFractionMicros: "700000", cpcBidCeilingMicros: "15000000" } },
+      updateMask: "target_impression_share.location,target_impression_share.location_fraction_micros,target_impression_share.cpc_bid_ceiling_micros" });
+    const tisUndo = (await call(token, "undo_changes", { proposal_id: tis.proposal_id })).json;
+    expect(tisUndo.summary).toContain("back to maximize clicks (max 6.00/click)");
+    await expect(propose([{ type: "set_bidding_strategy", campaign_id: "10", strategy: "TARGET_IMPRESSION_SHARE" }])).rejects.toThrow("needs target_impression_share");
+    await expect(propose([{ type: "set_bidding_strategy", campaign_id: "10", strategy: "MAXIMIZE_CLICKS", target_impression_share: 50 }])).rejects.toThrow("only apply to TARGET_IMPRESSION_SHARE");
+    // Off target impression share: undo puts back where, how much and the ceiling.
+    ads.bidding = { biddingStrategyType: "TARGET_IMPRESSION_SHARE",
+      targetImpressionShare: { location: "ABSOLUTE_TOP_OF_PAGE", locationFractionMicros: "955000", cpcBidCeilingMicros: "2000000" } };
+    const offTis = await propose([{ type: "set_bidding_strategy", campaign_id: "10", strategy: "MANUAL_CPC" }]);
+    expect(offTis.summary).toContain("from target impression share (95.5% absolute top of page, max 2.00/click) to manual CPC");
+    const offTisUndo = await applyUndo(offTis.proposal_id);
+    await call(token, "apply_changes", { proposal_id: offTisUndo.proposal_id });
+    expect(last().operations[0]).toMatchObject({ update: { targetImpressionShare: { location: "ABSOLUTE_TOP_OF_PAGE", locationFractionMicros: "955000", cpcBidCeilingMicros: "2000000" } } });
     ads.bidding = undefined;
 
     // On a shared (portfolio) strategy: one campaign moves off it, and undo puts it back on.
