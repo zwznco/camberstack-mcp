@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.10", date: "2026-11-14",
+    summary: "Merchant Center account problems now include what Merchant Center's own diagnostics show.",
+    items: [
+      "**Fuller account issues.** When you ask why products aren't showing, account-level problems now also come from Merchant Center's own diagnostics list, and a missing business address in Business info is flagged, so your AI sees what the Merchant Center \"Needs attention\" page sees.",
+    ],
+  },
+  {
     version: "0.35.9", date: "2026-11-14",
     summary: "Negative keywords on a campaign type that can't take them now say why.",
     items: [

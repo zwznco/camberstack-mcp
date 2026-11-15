@@ -14,6 +14,7 @@
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { MerchantApiError, NotGrantedError, fetchGoogle, googleMessage, scopeMissing } from "./google.js";
+import { reportError } from "./sentry.js";
 
 const API = "https://merchantapi.googleapis.com";
 export const DEMO_MERCHANT = "000000001";
@@ -158,7 +159,35 @@ export class MerchantClient implements Merchant {
     return out;
   }
 
+  /**
+   * Account-level issues from three places, since none covers what Merchant Center's "Needs attention" shows on its own:
+   * accounts.issues, the issue-resolution render (Merchant Center's own diagnostics), and Business info (a missing
+   * business address appeared in the UI while accounts.issues returned nothing, 2026-11-14). Only the first is required:
+   * if the other two fail they're reported, and the issues list still answers.
+   */
   async accountIssues(accountId: string): Promise<any[]> {
+    const extra = <T>(what: string, p: Promise<T>) => p.catch((e) => { console.warn(`merchant ${what}: ${(e as Error).message}`); reportError(e, `merchant:${what}`); return null; });
+    const [listed, rendered, info] = await Promise.all([
+      this.listedIssues(accountId),
+      extra("renderaccountissues", this.call(`issueresolution/v1/accounts/${accountId}:renderaccountissues?languageCode=en-US`, {})),
+      extra("businessInfo", this.call(`accounts/v1/accounts/${accountId}/businessInfo`)),
+    ]);
+    const out = [...listed];
+    const seen = new Set(out.map((i) => String(i.title ?? "").toLowerCase()));
+    for (const r of (rendered?.renderedIssues ?? []) as any[]) {
+      const title = String(r.title ?? "");
+      if (!title || seen.has(title.toLowerCase())) continue;
+      seen.add(title.toLowerCase());
+      out.push({ title, severity: r.impact?.severity ?? "UNKNOWN", ...(r.impact?.message ? { detail: r.impact.message } : {}) });
+    }
+    if (info && !info.address && ![...seen].some((t) => t.includes("address"))) {
+      out.push({ title: "Missing business address", severity: "WARNING",
+        detail: "Business info has no business address. Add it in Merchant Center (Settings, then Business info)." });
+    }
+    return out;
+  }
+
+  private async listedIssues(accountId: string): Promise<any[]> {
     const out: any[] = [];
     let page = "";
     do {

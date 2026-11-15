@@ -71,6 +71,28 @@ describe("MerchantClient", () => {
     await expect(m.accountIssues("5")).rejects.toThrow(/accepts them\. Camberstack doesn't accept terms/);
   });
 
+  it("adds Merchant Center's rendered issues and a missing business address to the listed account issues", async () => {
+    const m = client((u) => {
+      if (u.includes(":renderaccountissues")) return json({ renderedIssues: [
+        { title: "Missing return policy", impact: { severity: "ERROR" } },
+        { title: "Misrepresentation", impact: { severity: "ERROR", message: "Your account is suspended" } }] });
+      if (u.endsWith("/businessInfo")) return json({ phone: { number: "+1" } });
+      return json({ accountIssues: [{ title: "Missing return policy", severity: "ERROR" }] });
+    });
+    expect((await m.accountIssues("5")).map((i) => [i.title, i.severity])).toEqual([
+      ["Missing return policy", "ERROR"], ["Misrepresentation", "ERROR"], ["Missing business address", "WARNING"]]);
+  });
+
+  it("still answers with the listed issues when the render and Business info calls fail", async () => {
+    const m = client((u) => (u.includes("/issues?") ? json({ accountIssues: [{ title: "A", severity: "ERROR" }] }) : json({ error: { code: 500, message: "x" } }, 500)));
+    expect(await m.accountIssues("5")).toEqual([{ title: "A", severity: "ERROR" }]);
+  });
+
+  it("doesn't flag the address when Business info has one", async () => {
+    const m = client((u) => (u.endsWith("/businessInfo") ? json({ address: { regionCode: "US" } }) : json({})));
+    expect(await m.accountIssues("5")).toEqual([]);
+  });
+
   it("points a report on an advanced account at its sub-accounts", async () => {
     const m = client(() => json({ error: { code: 400, message: "Reports are not available for advanced accounts." } }, 400));
     await expect(m.search("7", "SELECT id FROM product_view", 5)).rejects.toThrow(/sub-account's account_id from merchant_accounts/);
