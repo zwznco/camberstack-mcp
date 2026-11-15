@@ -1430,10 +1430,13 @@ Google services than the Free plan covers, and a confirmation if you upgrade. Ea
 about changes to your account or to Camberstack's features. All of them come from adam@camberstack.io, to the email address of the Google account
 you connected, and never contain your Google Ads data. Every email has an unsubscribe link, and replies reach a person.</p>
 
-<h2>Our own Google ads</h2>
+<h2>Our own ads</h2>
 <p>If you reach this site by clicking one of our Google ads, we keep the ad click identifier Google adds to the link in a cookie on
 this site for up to 90 days. If you then connect Camberstack for the first time, we report that click to our own Google Ads account
 as a conversion, so we can tell which ads work. We send only the click identifier and the time: no email, account ID or Google Ads data of yours.</p>
+<p>The same goes for our ads in ChatGPT: we keep the click reference OpenAI adds to the link in that cookie, and report it to our own
+OpenAI advertising account if you then connect Camberstack for the first time, and again if you start a paid plan within 30 days. We send
+only the click reference, which of those two things happened, the plan's name and price, and the time: no email, account ID or Google data of yours.</p>
 
 <h2>Website analytics</h2>
 <p>We count visits to this website's pages with Matomo, which we host ourselves on the same infrastructure. A small script served from this site sends the page you opened, the site that linked you here, and the name of the ad or campaign that brought you, if any (never the ad's click identifier); we also record that a Google Ads account was connected, with no account, email or ID attached. Matomo sets no cookie and stores nothing in your browser. Matomo uses your IP address to estimate roughly where a visit came from and removes the last part of it before saving. Visits are grouped by a salted hash of your IP address and browser, with the salt changed daily and kept only in memory, so it cannot identify you or link visits across days.</p>

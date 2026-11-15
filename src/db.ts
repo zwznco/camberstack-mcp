@@ -112,8 +112,18 @@ DROP TABLE IF EXISTS admin_sessions;  -- replaced by web_sessions 2026-10-01
 -- Our own ad campaign's conversions (adconversions.ts): one per user, on their first connection.
 CREATE TABLE IF NOT EXISTS ad_conversions (
   user_id      TEXT PRIMARY KEY,
-  kind         TEXT NOT NULL CHECK (kind IN ('gclid','gbraid','wbraid')),
+  kind         TEXT NOT NULL CHECK (kind IN ('gclid','gbraid','wbraid','oppref')),  -- oppref: a ChatGPT Ads click (2026-11-15)
   click_id     TEXT NOT NULL,
+  at           INTEGER NOT NULL,
+  uploaded_at  INTEGER,
+  error        TEXT,
+  attempts     INTEGER NOT NULL DEFAULT 0
+);
+
+-- A ChatGPT-ad user's first paid plan (adconversions.ts paid()): that click's second conversion, sent once.
+CREATE TABLE IF NOT EXISTS ad_paid (
+  user_id      TEXT PRIMARY KEY,
+  plan         TEXT NOT NULL,
   at           INTEGER NOT NULL,
   uploaded_at  INTEGER,
   error        TEXT,
@@ -269,6 +279,25 @@ export function openDb(dataDir: string): DB {
   // The registered MCP client the account was created through (provider.ts, 2026-10-23): names the app for a connect the
   // app never finished (a Codex sign-in that never swapped its code for a token left no call or token to name it).
   if (!cols.has("signup_client_id")) db.exec("ALTER TABLE users ADD COLUMN signup_client_id TEXT");
+  // ad_conversions.kind gained 'oppref' (2026-11-15). SQLite can't alter a CHECK, so a table made before then is rebuilt.
+  const adc = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ad_conversions'").get() as { sql: string } | undefined)?.sql ?? "";
+  if (adc && !adc.includes("'oppref'")) {
+    db.exec(`BEGIN;
+      CREATE TABLE ad_conversions_new (
+        user_id      TEXT PRIMARY KEY,
+        kind         TEXT NOT NULL CHECK (kind IN ('gclid','gbraid','wbraid','oppref')),
+        click_id     TEXT NOT NULL,
+        at           INTEGER NOT NULL,
+        uploaded_at  INTEGER,
+        error        TEXT,
+        attempts     INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO ad_conversions_new (user_id, kind, click_id, at, uploaded_at, error, attempts)
+        SELECT user_id, kind, click_id, at, uploaded_at, error, attempts FROM ad_conversions;
+      DROP TABLE ad_conversions;
+      ALTER TABLE ad_conversions_new RENAME TO ad_conversions;
+      COMMIT;`);
+  }
   // First-touch utm source (2026-10-16 → 10-22) tagged 2 of 34 users; the AI app a user connected from (report.ts) replaced it.
   for (const c of ["src_source", "src_campaign", "src_content", "src_click"]) if (cols.has(c)) db.exec(`ALTER TABLE users DROP COLUMN ${c}`);
   // run_gaql's query shape (2026-10-15): which fields custom queries ask for, never the values in them.

@@ -31,6 +31,8 @@ export interface BillingDeps {
   signingKey: Buffer;
   stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string; plusPriceId?: string };
   fetch?: typeof fetch;
+  /** Told once per new subscription (adconversions.ts reports it for a user who came from a ChatGPT ad). */
+  onPaid?: (userId: string, plan: Plan) => void;
 }
 
 export class Billing {
@@ -109,7 +111,10 @@ export class Billing {
       .run(this.planOf(sub), String(session.customer ?? ""), String(session.subscription ?? ""), session.client_reference_id);
     // Settling repeats (the sweep, a reload of /upgraded): one paid event per subscription, its id in src.
     if (r.changes && session.subscription && !this.d.db.prepare("SELECT 1 FROM plan_events WHERE user_id = ? AND kind = 'paid' AND src = ?")
-      .get(session.client_reference_id, String(session.subscription))) this.track(session.client_reference_id, "paid", String(session.subscription));
+      .get(session.client_reference_id, String(session.subscription))) {
+      this.track(session.client_reference_id, "paid", String(session.subscription));
+      try { this.d.onPaid?.(session.client_reference_id, this.planOf(sub)); } catch { /* reporting must not break a payment */ }
+    }
     return r.changes ? session.client_reference_id : null;
   }
 

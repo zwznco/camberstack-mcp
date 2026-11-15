@@ -109,7 +109,8 @@ export function loadConfig(): Config {
         postalAddress: process.env.MAIL_POSTAL_ADDRESS || undefined }
       : undefined,
     conversions: ["OPS_CONVERSIONS_URL", "OPS_KEY", "CONV_ADS_ACTION_ID"].every((k) => process.env[k])
-      ? { opsUrl: process.env.OPS_CONVERSIONS_URL!, opsKey: process.env.OPS_KEY!, actionId: process.env.CONV_ADS_ACTION_ID! }
+      ? { opsUrl: process.env.OPS_CONVERSIONS_URL!, opsKey: process.env.OPS_KEY!, actionId: process.env.CONV_ADS_ACTION_ID!,
+        openaiUrl: process.env.OPS_OPENAI_CONVERSIONS_URL || undefined, siteUrl: process.env.BASE_URL || undefined }
       : undefined,
     matomo: process.env.MATOMO_URL && process.env.MATOMO_SITE_ID
       ? { url: process.env.MATOMO_URL, siteId: process.env.MATOMO_SITE_ID, token: process.env.MATOMO_AUTH_TOKEN ?? "" }

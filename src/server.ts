@@ -70,7 +70,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.set("trust proxy", 1); // behind Traefik: one hop
   app.disable("x-powered-by");
   const adConversions = new AdConversions(db, cfg.conversions, cfg.baseUrl.startsWith("https://"), overrides.adsConversionFetch);
-  const billing = new Billing({ db, baseUrl: cfg.baseUrl, stripe: cfg.stripe, fetch: overrides.stripeFetch,
+  const billing = new Billing({ db, baseUrl: cfg.baseUrl, stripe: cfg.stripe, fetch: overrides.stripeFetch, onPaid: (id, plan) => adConversions.paid(id, plan),
     signingKey: deriveKey(cfg.encryptionKey, "billing-links") });
   const internalEmails = new Set([...cfg.adminEmails, ...cfg.proEmails]);
   const lifecycle = new Lifecycle({

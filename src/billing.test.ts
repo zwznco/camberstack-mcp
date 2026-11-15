@@ -35,7 +35,8 @@ function fakeStripe() {
 describe("Agency plan billing", () => {
   const db = openDb(":memory:");
   const stripe = fakeStripe();
-  const billing = new Billing({ db, baseUrl: "http://x", signingKey: Buffer.alloc(32, 1), fetch: stripe.f,
+  const paidCalls: [string, string][] = [];
+  const billing = new Billing({ db, baseUrl: "http://x", signingKey: Buffer.alloc(32, 1), fetch: stripe.f, onPaid: (id, p) => { paidCalls.push([id, p]); },
     stripe: { secretKey: "sk", proPriceId: PRO, agencyPriceId: AGENCY, plusPriceId: "price_plus" } });
   let base = "";
   let server: ReturnType<ReturnType<typeof express>["listen"]>;
@@ -72,6 +73,9 @@ describe("Agency plan billing", () => {
     const page = await visit(`${base}/upgraded?session_id=cs_b`);
     expect(await page.text()).toContain("you're on Camberstack Agency");
     expect(plan("b")).toBe("agency");
+    // onPaid is told once per subscription, with the plan, however often the page is reloaded.
+    await visit(`${base}/upgraded?session_id=cs_b`);
+    expect(paidCalls.filter(([id]) => id === "b")).toEqual([["b", "agency"]]);
   });
 
   it("checks out Plus on its own price and settles a Plus subscription as plus; a paying Plus user moves to Pro in the portal", async () => {
