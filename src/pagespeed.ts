@@ -163,7 +163,13 @@ export class PageSpeedClient {
     const q = new URLSearchParams({ url, strategy: o.strategy, category: "performance", ...(this.apiKey ? { key: this.apiKey } : {}) });
     const headers: Record<string, string> = this.apiKey ? {} : { Authorization: `Bearer ${await o.token!()}` };
     const res = await this.f(`${PSI}?${q}`, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) }).catch((e: Error) => {
-      throw new Error(e.name === "TimeoutError" ? `Google took over ${TIMEOUT_MS / 1000}s to test ${url}; try it again on its own.` : `PageSpeed Insights unreachable: ${e.message}`);
+      // "Try it again" sent one model back three times on the same page, each run hitting the cap (prod, 2026-11-15): a page
+      // whose test runs this long usually does every time, so point the user at the web tool, which has no deadline.
+      throw new Error(e.name === "TimeoutError"
+        ? `Google's ${o.strategy} test of ${url} didn't finish within ${TIMEOUT_MS / 1000}s, about as long as an AI app waits for a tool. A page that `
+          + `tests this slowly usually does so every time, so don't retry it now. Tell the user to run it at `
+          + `https://pagespeed.web.dev/report?url=${encodeURIComponent(url)}, which waits for the test to finish.`
+        : `PageSpeed Insights unreachable: ${e.message}`);
     });
     const text = await res.text();
     if (!res.ok) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { inverseAfterApply, resolveChange } from "./changes.js";
+import { AdsApiError } from "./google.js";
 
 /** A campaign that targets the United States and English only. */
 const ads = {
@@ -284,5 +285,28 @@ describe("remarketing, recommendations, review requests", () => {
       ad: { headlines: ["A", "B", "C"], descriptions: ["D", "E"], final_url: "https://a.example" } });
     expect(r.operations[0]).toMatchObject({ policyValidationParameter: { ignorablePolicyTopics: ["HEALTH_IN_PERSONALIZED_ADS"] } });
     expect(r.describe).toContain("can't run until Google approves");
+  });
+});
+
+describe("set_conversion_goal", () => {
+  // Prod 2026-11-15: Google refused turning on CONTACT from GOOGLE_HOSTED with an error v23 can't name; CONTACT from WEBSITE was fine.
+  const goal = (cat: string, origin: string, biddable: boolean) => ({ campaign: { name: "Search" },
+    campaignConversionGoal: { resourceName: `customers/1/campaignConversionGoals/10~${cat}~${origin}`, category: cat, origin, biddable } });
+  const account = (validated: string[]) => ({
+    async search() { return [goal("PURCHASE", "WEBSITE", true), goal("CONTACT", "WEBSITE", false), goal("CONTACT", "GOOGLE_HOSTED", false)]; },
+    async mutate(_c: string, _s: string, ops: any[]) {
+      validated.push(ops[0].update.resourceName);
+      if (ops[0].update.resourceName.includes("GOOGLE_HOSTED")) {
+        throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { requestError: "UNKNOWN" }, message: "The error code is not in this version." }] }] } }));
+      }
+      return { results: [] };
+    },
+  });
+  it("leaves a goal Google won't turn on as it is, and says so", async () => {
+    const validated: string[] = [];
+    const r = await resolveChange(account(validated), "1", null, { type: "set_conversion_goal", campaign_id: "10", category: "CONTACT" });
+    expect(validated).toHaveLength(2);
+    expect(r.operations.map((o: any) => [o.update.resourceName.split("/").pop(), o.update.biddable])).toEqual([["10~PURCHASE~WEBSITE", false], ["10~CONTACT~WEBSITE", true]]);
+    expect(r.describe).toContain("⚠ Google won't let the API turn on the CONTACT goal from GOOGLE_HOSTED, so it stays off");
   });
 });

@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.12", date: "2026-11-15",
+    summary: "Switching a campaign's conversion goal works when Google won't turn one of its goals on.",
+    items: [
+      "Google refuses to turn on some conversion goals through the API, and one refusal failed the whole change. Camberstack now checks each goal first, leaves a refused one as it is and says so in the summary.",
+      "A page speed test that runs too long now links the test on pagespeed.web.dev instead of suggesting a retry that would time out again.",
+    ],
+  },
+  {
     version: "0.35.11", date: "2026-11-15",
     summary: "Search category reports by subcategory or search term run again.",
     items: [

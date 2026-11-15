@@ -75,6 +75,8 @@ class FakeAds {
   euBlock: { id: string; name: string }[] | undefined;
   async listAccessibleCustomers() { return ["1112223333"]; }
   fieldQueries: string[] = [];
+  /** Goal categories Google won't turn on (set_conversion_goal). */
+  goalsRefused: string[] = [];
   /** Google's field catalog: a trimmed real v23 snapshot. Any other query is a run_gaql field lookup, answered as Google shapes it. */
   async searchFields(q: string) {
     if (q === CATALOG_QUERY) return JSON.parse(readFileSync(new URL("./fixtures/gaql-catalog.json", import.meta.url), "utf8"));
@@ -227,6 +229,11 @@ class FakeAds {
     if (this.contextRefusal) {
       throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { contextError: "OPERATION_NOT_PERMITTED_FOR_CONTEXT" },
         message: "The operation is not allowed for the given context.", location: { fieldPathElements: [{ fieldName: "operations" }, { fieldName: "create" }, { fieldName: "keyword" }] } }] }] } }));
+    }
+    // Google refuses to turn some goals on and v23 can't name the error (prod, 2026-11-15).
+    if (service === "campaignConversionGoals" && operations.some((o) => o.update?.biddable && this.goalsRefused.some((c) => o.update.resourceName.includes(`~${c}~`)))) {
+      throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { requestError: "UNKNOWN" },
+        message: "The error code is not in this version.", location: { fieldPathElements: [{ fieldName: "operations" }] } }] }] } }));
     }
     if (this.failOn && JSON.stringify(operations).includes(this.failOn.text) && !(this.failOn.writesOnly && opts.validateOnly)) {
       throw new Error(`Google Ads API 400: refused ${this.failOn.text}`);
@@ -2632,6 +2639,15 @@ describe("OAuth + MCP end to end", () => {
       expect(ads.goals).toEqual({ PURCHASE: false, SIGNUP: true, UNKNOWN: true });
       await expect(propose([{ type: "set_conversion_goal", campaign_id: "10", category: "UNKNOWN" }])).rejects.toThrow(/No UNKNOWN goal.*PURCHASE, SIGNUP\./);
     } finally { ads.goals = { PURCHASE: true, SIGNUP: true }; }
+
+    // A goal Google won't turn on stays off with a ⚠; if it is the only target goal, nothing is proposed (2026-11-15).
+    ads.goals = { PURCHASE: true, SIGNUP: false, CONTACT: false };
+    ads.goalsRefused = ["SIGNUP"];
+    try {
+      await expect(propose([{ type: "set_conversion_goal", campaign_id: "10", category: "SIGNUP" }])).rejects.toThrow(/doesn't let the API turn on this campaign's SIGNUP goal.*Nothing was proposed/);
+      const gc = await propose([{ type: "set_conversion_goal", campaign_id: "10", category: "CONTACT" }]);
+      expect(gc.summary).toContain("counts and bids on CONTACT conversions only (was: PURCHASE)");
+    } finally { ads.goals = { PURCHASE: true, SIGNUP: true }; ads.goalsRefused = []; }
   });
 
   it("builds paused Display, Demand Gen (YouTube) and Performance Max campaigns with uploaded images, and undoes them", async () => {

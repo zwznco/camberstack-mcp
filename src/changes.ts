@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { unsupported } from "./alerts.js";
 import { fetchImage } from "./fetch-safe.js";
-import { micros, toMicros, type AdsClient } from "./google.js";
+import { AdsApiError, micros, toMicros, type AdsClient } from "./google.js";
 
 export const MAX_CHANGES = 50;
 const SOURCE_LABEL = { UPLOAD_CLICKS: "uploaded click ids", WEBPAGE: "website tag", AD_CALL: "calls from ads", WEBSITE_CALL: "calls from the website" } as const;
@@ -514,7 +514,7 @@ export function pendingOf(changes: Change[]): Pending {
 }
 
 export async function resolveChange(
-  ads: Pick<AdsClient, "search">, customerId: string, login: string | null, change: Change,
+  ads: Pick<AdsClient, "search"> & Partial<Pick<AdsClient, "mutate">>, customerId: string, login: string | null, change: Change,
   pending: Pending = pendingOf([]),
 ): Promise<ResolvedChange> {
   const q = (query: string) => ads.search(customerId, query, login);
@@ -865,8 +865,33 @@ export async function resolveChange(
         || /~UNKNOWN(~|$)/.test(r.campaignConversionGoal.resourceName);
       const named = rows.filter((r) => !unknown(r));
       const stuck = rows.filter((r) => unknown(r) && r.campaignConversionGoal.biddable).length;
-      const flips = named.filter((r) => !!r.campaignConversionGoal.biddable !== (r.campaignConversionGoal.category === change.category));
+      // Google refuses to turn some goals on through the API and v23 can't name why ("UNKNOWN The error code is not in this
+      // version"): on one Search campaign PAGE_VIEW, CONTACT and ENGAGEMENT from GOOGLE_HOSTED, while turning any goal off,
+      // and SUBMIT_LEAD_FORM/GOOGLE_HOSTED on, passed (validate-only, 2026-11-15). One refusal failed the whole proposal,
+      // five times for a paying user. No goal or action field predicts it, so each goal this would turn on is dry-run alone
+      // and a refused one is left as it is.
+      const refused = new Set<string>();
+      if (ads.mutate) {
+        for (const r of named.filter((r) => !r.campaignConversionGoal.biddable && r.campaignConversionGoal.category === change.category)) {
+          const g = r.campaignConversionGoal;
+          await ads.mutate(customerId, "campaignConversionGoals", [{ update: { resourceName: g.resourceName, biddable: true }, updateMask: "biddable" }],
+            { validateOnly: true, loginCustomerId: login }).catch((e) => {
+            if (!(e instanceof AdsApiError) || !e.message.includes("UNKNOWN")) throw e;
+            refused.add(g.resourceName);
+          });
+        }
+      }
+      const target = named.filter((r) => r.campaignConversionGoal.category === change.category);
+      const origins = (rs: any[]) => rs.map((r) => r.campaignConversionGoal.origin as string).join(", ");
+      if (refused.size && target.every((r) => refused.has(r.campaignConversionGoal.resourceName))) {
+        throw new Error(`Google doesn't let the API turn on this campaign's ${change.category} goal (from ${origins(target)}); it answers with an error `
+          + `code this API version can't name. Nothing was proposed. The user can turn it on in Google Ads under the campaign's Settings → Goals, `
+          + `or pick a category whose goal this campaign can bid on. Don't retry the same change.`);
+      }
+      const flips = named.filter((r) => !refused.has(r.campaignConversionGoal.resourceName)
+        && !!r.campaignConversionGoal.biddable !== (r.campaignConversionGoal.category === change.category));
       const before = [...new Set(named.filter((r) => r.campaignConversionGoal.biddable).map((r) => r.campaignConversionGoal.category as string))];
+      const left = target.filter((r) => refused.has(r.campaignConversionGoal.resourceName));
       return {
         change, service: "campaignConversionGoals",
         operations: flips.map((r) => ({
@@ -875,7 +900,9 @@ export async function resolveChange(
         })),
         describe: `Campaign "${rows[0].campaign.name}" counts and bids on ${change.category} conversions only (was: ${before.join(", ") || "none"})`
           + (stuck ? ` ⚠ ${stuck} more goal(s) on this campaign are of a kind Google's API can't name or change (it reports them as UNKNOWN), `
-            + `so they keep counting; to stop them, turn them off in Google Ads under the campaign's Settings → Goals` : ""),
+            + `so they keep counting; to stop them, turn them off in Google Ads under the campaign's Settings → Goals` : "")
+          + (left.length ? ` ⚠ Google won't let the API turn on the ${change.category} goal from ${origins(left)}, so it stays off; `
+            + `it can be turned on in Google Ads under the campaign's Settings → Goals` : ""),
         inverse: flips.length ? {
           type: "restore_conversion_goals", campaign_id: change.campaign_id,
           goals: flips.map((r) => ({ resource_name: r.campaignConversionGoal.resourceName, biddable: !!r.campaignConversionGoal.biddable })),

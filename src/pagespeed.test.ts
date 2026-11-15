@@ -134,3 +134,13 @@ describe("landing page speed", () => {
     expect(out.pages[1]!.lab!.performance_score).toBeLessThan(out.pages[0]!.lab!.performance_score!);
   });
 });
+
+describe("a test that runs past the deadline", () => {
+  it("says not to retry and links the web tool, which has no deadline", async () => {
+    const hung = (async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); }) as typeof fetch;
+    const err = await new PageSpeedClient("k", hung).check(["https://slow.test/a b"], { strategy: "mobile", fixes: 5 }).catch((e: Error) => e.message);
+    expect(err).toContain("Google's mobile test of https://slow.test/a b didn't finish within 45s");
+    expect(err).toContain("don't retry it now");
+    expect(err).toContain("https://pagespeed.web.dev/report?url=https%3A%2F%2Fslow.test%2Fa%20b");
+  });
+});
