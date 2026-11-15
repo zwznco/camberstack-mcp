@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/node";
-import { AdsApiError, MerchantApiError, NotGrantedError } from "./google.js";
+import { AdsApiError, MerchantApiError, NotConnectedError, NotGrantedError } from "./google.js";
 import { PlanLimitError } from "./plans.js";
-import { NotConnectedError } from "./session.js";
 
 /**
  * Error reporting over the Sentry protocol. Production points it at a self-hosted Bugsink; nothing goes to

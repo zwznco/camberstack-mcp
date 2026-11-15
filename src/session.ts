@@ -7,7 +7,7 @@ import type { DB, ProposalRow, UserRow } from "./db.js";
 import { now } from "./db.js";
 import { decrypt } from "./crypto.js";
 import {
-  AdsApiError, AdsClient, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
+  AdsApiError, AdsClient, NotConnectedError, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
 import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, changeCapFrom, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SwitchNotice, accountsLabel, allServices, isPaid, poolOf, planLabel, type Plan, type Pool } from "./plans.js";
@@ -180,7 +180,8 @@ export interface SessionDeps {
   grantLink?: (kind: GrantKind, userId: string) => string | null;
 }
 
-export class NotConnectedError extends Error {}
+/** Defined in google.ts with the other error classes, so sentry.ts needn't import session.ts: that made merchant.ts → sentry → session → merchant-changes → merchant a cycle, and `npm start` (stdio, Glama's build) crashed on PRODUCTS_SOURCE_NAME before initialization (0.35.10). */
+export { NotConnectedError } from "./google.js";
 
 /** The Google Ads calls the tools make; the demo account answers the same ones. */
 type Ads = Pick<AdsClient, "listAccessibleCustomers" | "search" | "mutate" | "keywordPlan" | "searchFields">;
@@ -251,6 +252,10 @@ export function capLimit(query: string): string {
   const params = /\s+parameters\b[\s\S]*$/i.exec(q);
   return params ? `${q.slice(0, params.index)} LIMIT ${MAX_QUERY_ROWS}${params[0]}` : `${q} LIMIT ${MAX_QUERY_ROWS}`;
 }
+/** Whether the query ends in its own LIMIT (before an optional PARAMETERS clause), as capLimit reads it. */
+export const hasLimit = (query: string) => /\blimit\s+\d+(\s+parameters\b[\s\S]*)?$/i.test(query.replace(/[\s;]+$/, ""));
+/** The query without its trailing LIMIT, PARAMETERS kept: undoes capLimit's addition. */
+export const dropLimit = (query: string) => query.replace(/\s*\blimit\s+\d+(?=(\s+parameters\b[\s\S]*)?$)/i, "");
 
 export class UserSession {
   readonly ads: Ads;
@@ -830,6 +835,10 @@ export class UserSession {
     // Every query gets a LIMIT (security review, 2026-11-13): without one a wide read (geo_target_constant is ~200k rows) was
     // buffered whole before the 500-row cap below, and a few in parallel could exhaust the memory every user on the color shares.
     let q = capLimit(expanded);
+    // Google refuses any LIMIT with some segments (segments.search_term / search_subcategory FROM campaign_search_term_insight),
+    // so a LIMIT we added, not the model, is dropped once and the query rerun; MAX_ADS_BODY_BYTES still bounds the read.
+    // Since 0.35.6 these failed on a LIMIT the query never had, and the model looped on them (prod #24885–96, 2026-11-15).
+    let ourLimit = !hasLimit(expanded);
     // Models filter or sort on a field they didn't select despite the rule in run_gaql's description. Google names the
     // field, so select it and rerun rather than spend the model's turn on the retry.
     const added: string[] = [];
@@ -839,6 +848,11 @@ export class UserSession {
         rows = await this.ads.search(a.customerId, q, a.loginCustomerId);
         break;
       } catch (e) {
+        if (ourLimit && e instanceof AdsApiError && e.body.includes("LIMIT_NOT_ALLOWED_WITH_SEGMENTS")) {
+          ourLimit = false;
+          q = dropLimit(q);
+          continue;
+        }
         const missing = e instanceof AdsApiError ? missingSelectFields(e.body).filter((f) => !added.includes(f)) : [];
         if (!missing.length || added.length >= 5) {
           // Google's own message is often vague ("Unrecognized field"); add what its field catalog says, by name.

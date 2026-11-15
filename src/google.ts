@@ -106,6 +106,9 @@ export function googleMessage(body: string): string {
 export const scopeMissing = (status: number, body: string) =>
   status === 403 && /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficient authentication scopes/i.test(body);
 
+/** The user's Google connection is gone or unknown: they connect Camberstack again. Not a bug, so never reported (sentry.ts). */
+export class NotConnectedError extends Error {}
+
 /** A tool needs a Google service this connection doesn't have yet; `link` adds it (personal, 7 days). */
 export class NotGrantedError extends Error {
   constructor(readonly kind: GrantKind, readonly link: string | null, readonly edit = false) {

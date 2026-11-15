@@ -1,7 +1,7 @@
 // Resource limits from the 2026-11-13 security review: run_gaql's LIMIT, the Ads response size cap, the Google fetch deadline.
 import { describe, expect, it } from "vitest";
 import { AdsClient, MAX_ADS_BODY_BYTES, fetchGoogle, GOOGLE_TIMEOUT_MS } from "./google.js";
-import { capLimit, MAX_QUERY_ROWS } from "./session.js";
+import { capLimit, dropLimit, hasLimit, MAX_QUERY_ROWS } from "./session.js";
 
 describe("capLimit", () => {
   const L = `LIMIT ${MAX_QUERY_ROWS}`;
@@ -17,6 +17,15 @@ describe("capLimit", () => {
     expect(capLimit("SELECT campaign.id FROM campaign PARAMETERS include_drafts=true")).toBe(`SELECT campaign.id FROM campaign ${L} PARAMETERS include_drafts=true`);
     expect(capLimit("SELECT campaign.id FROM campaign LIMIT 20000 PARAMETERS include_drafts=true")).toBe(`SELECT campaign.id FROM campaign ${L} PARAMETERS include_drafts=true`);
     expect(capLimit("SELECT campaign.id FROM campaign WHERE campaign.name = 'no limit 5'")).toBe(`SELECT campaign.id FROM campaign WHERE campaign.name = 'no limit 5' ${L}`);
+  });
+});
+
+describe("hasLimit / dropLimit", () => {
+  it("reads and removes only a trailing LIMIT, keeping PARAMETERS", () => {
+    expect(hasLimit("SELECT campaign.id FROM campaign WHERE campaign.name = 'limit 5'")).toBe(false);
+    expect(hasLimit("SELECT campaign.id FROM campaign LIMIT 5 PARAMETERS include_drafts=true")).toBe(true);
+    expect(dropLimit(capLimit("SELECT campaign.id FROM campaign"))).toBe("SELECT campaign.id FROM campaign");
+    expect(dropLimit(capLimit("SELECT campaign.id FROM campaign PARAMETERS include_drafts=true"))).toBe("SELECT campaign.id FROM campaign PARAMETERS include_drafts=true");
   });
 });
 

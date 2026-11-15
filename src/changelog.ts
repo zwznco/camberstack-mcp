@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.35.11", date: "2026-11-15",
+    summary: "Search category reports by subcategory or search term run again.",
+    items: [
+      "Google refuses a LIMIT on search category insights split by subcategory or search term. Camberstack's own row cap added one, so those queries failed since 0.35.6 although the query had none. It now drops the LIMIT it added and runs the query.",
+    ],
+  },
+  {
     version: "0.35.10", date: "2026-11-14",
     summary: "Merchant Center account problems now include what Merchant Center's own diagnostics show.",
     items: [

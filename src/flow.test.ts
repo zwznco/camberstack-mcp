@@ -97,6 +97,12 @@ class FakeAds {
     if (q.includes("metrics.cost_micros FROM customer WHERE segments.date")) return [{ metrics: { costMicros: _cid === "2223334444" ? "0" : "5000000" } }];
     if (q.includes("missing_eu_political_advertising_declaration = TRUE")) return (this.euBlock ?? []).map((c) => ({ campaign: c }));
     if (q.endsWith("FROM customer")) return [{ customer: { containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING" } }];
+    // Google's rule: no LIMIT at all with segments.search_term / search_subcategory on campaign_search_term_insight.
+    if (q.includes("FROM campaign_search_term_insight") && /\bLIMIT\b/.test(q)) {
+      throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { queryError: "LIMIT_NOT_ALLOWED_WITH_SEGMENTS" },
+        message: "Cannot have a LIMIT clause when segmenting by \"segments.search_subcategory\"" }] }] } }));
+    }
+    if (q.includes("FROM campaign_search_term_insight")) return [{ campaignSearchTermInsight: { categoryLabel: "shoes" }, segments: { searchSubcategory: "running" } }];
     // Google's rule: a field in WHERE or ORDER BY must be in SELECT too.
     if (q.includes("ORDER BY campaign.status") && !/^SELECT[^]*campaign\.status[^]*FROM/.test(q)) {
       throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { queryError: "EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE" },
@@ -2994,6 +3000,17 @@ describe("OAuth + MCP end to end", () => {
     const r = await call(token, "run_gaql", { customer_id: "1112223333", query: "SELECT campaign.name FROM campaign ORDER BY campaign.status" });
     expect(r.isError).toBeFalsy();
     expect(r.json.added_to_select).toContain("campaign.status");
+  });
+
+  it("drops the LIMIT it added when Google refuses one for the query's segments, but not the model's own", async () => {
+    const q = "SELECT campaign_search_term_insight.category_label, segments.search_subcategory, metrics.clicks FROM campaign_search_term_insight "
+      + "WHERE campaign_search_term_insight.campaign_id = 10 AND segments.date DURING LAST_30_DAYS";
+    const r = await call(token, "run_gaql", { customer_id: "1112223333", query: q });
+    expect(r.isError).toBeFalsy();
+    expect(r.json.total_rows).toBe(1);
+    const own = await call(token, "run_gaql", { customer_id: "1112223333", query: `${q} LIMIT 50` });
+    expect(own.isError).toBe(true);
+    expect(own.text).toContain("LIMIT_NOT_ALLOWED_WITH_SEGMENTS");
   });
 
   it("refuses write GAQL", async () => {
