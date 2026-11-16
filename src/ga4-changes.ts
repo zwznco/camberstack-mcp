@@ -64,7 +64,13 @@ export const PUBLIC_GA_CHANGES = [
     .describe("Register a numeric event parameter as a GA4 custom metric so reports can use it (customEvent:<parameter_name>). Counted from registration on, in reports after 24-48 hours"),
   z.object({ type: z.literal("set_custom_metric_unit"), property_id: propertyId, parameter_name: parameterName.describe("A registered custom metric's parameter"),
     unit: metricUnit, currency_data: restricted.optional().describe("CURRENCY only: REVENUE_DATA (default) or COST_DATA") })
-    .describe("Change a registered custom metric's unit (and for money, revenue or cost data)"),
+    .describe("Change a registered custom metric's unit, or a money metric between revenue and cost data. Google fixes money at registration: to or from CURRENCY, archive and register again"),
+  z.object({ type: z.literal("archive_custom_dimension"), property_id: propertyId, parameter_name: parameterName, scope: dimensionScope.default("EVENT"),
+    resource_name: z.string().optional().describe("Leave out") })
+    .describe("Archive a custom dimension (GA4 has no delete and can't restore it); the parameter can be registered again as a new one"),
+  z.object({ type: z.literal("archive_custom_metric"), property_id: propertyId, parameter_name: parameterName,
+    resource_name: z.string().optional().describe("Leave out") })
+    .describe("Archive a custom metric (GA4 has no delete and can't restore it); the parameter can be registered again as a new one, e.g. to change it to or from money"),
 ] as const;
 
 export const PublicGaChangeSchema = z.discriminatedUnion("type", [...PUBLIC_GA_CHANGES]);
@@ -72,9 +78,6 @@ export const GaChangeSchema = z.discriminatedUnion("type", [
   ...PUBLIC_GA_CHANGES,
   // Only undo creates it: a property Camberstack created goes to Google Analytics' trash (restorable there for 35 days).
   z.object({ type: z.literal("delete_ga4_property"), property_id: propertyId, name: z.string() }),
-  // Only undo creates it: the Admin API can't delete a custom dimension, only archive it, and an archive can't be undone.
-  z.object({ type: z.literal("archive_custom_dimension"), property_id: propertyId, resource_name: z.string(), parameter_name: z.string(), scope: dimensionScope }),
-  z.object({ type: z.literal("archive_custom_metric"), property_id: propertyId, resource_name: z.string(), parameter_name: z.string() }),
 ]);
 export type GaChange = z.infer<typeof GaChangeSchema>;
 
@@ -202,11 +205,14 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
           + "GA4 counts it from registration on, not for earlier visits, and it reaches reports after 24-48 hours. Undoing it archives it, which GA4 can't reverse" };
     }
     case "archive_custom_dimension": {
+      // Undo names the registration it made (resource_name), so it never archives a later one of the same parameter.
       const name = await propertyName(change.property_id);
-      const live = (await customDimensions(ga, change.property_id)).find((d) => d.name === change.resource_name);
+      const live = (await customDimensions(ga, change.property_id)).find((d) => change.resource_name
+        ? d.name === change.resource_name : d.parameterName === change.parameter_name && d.scope === change.scope);
       const reportAs = `${REPORT_PREFIX[change.scope]}:${change.parameter_name}`;
+      if (!live && !change.resource_name) throw new Error(`GA4 property "${name}" has no custom dimension ${reportAs}; analytics_setup lists the ones it has.`);
       return { ...base,
-        operations: live ? [{ method: "POST", path: `${change.resource_name}:archive`, body: {} }] : [],
+        operations: live ? [{ method: "POST", path: `${live.name}:archive`, body: {} }] : [],
         describe: `Archive custom dimension ${reportAs} in GA4 property "${name}"` + (live
           ? " ⚠ GA4 can't restore an archived custom dimension: reports, explorations and audiences using it stop getting it (it can be registered again, as a new one)"
           : " (already archived)") };
@@ -239,8 +245,10 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
           + "Undoing it archives it, which GA4 can't reverse" };
     }
     case "set_custom_metric_unit": {
-      // measurementUnit isn't immutable in Admin API v1beta (parameterName and scope are), so a wrong unit is fixed in place,
-      // not by archiving and registering again. restrictedMetricType must be set for CURRENCY and empty otherwise: both go together.
+      // measurementUnit isn't marked immutable in Admin API v1beta, and a PATCH does change it between non-money units. Google
+      // refuses money either way (live, 2026-11-16): "measurement_unit may only be set to CURRENCY when the CustomMetric is
+      // created" and "Custom metrics with measurement unit type CURRENCY may not have their measurement unit type changed".
+      // The mask names only what changes: re-sending CURRENCY on a money metric is refused as "set to CURRENCY".
       const name = await propertyName(change.property_id);
       const m = (await customMetrics(ga, change.property_id)).find((x) => x.parameterName === change.parameter_name);
       if (!m) throw new Error(`"${change.parameter_name}" isn't a registered custom metric in GA4 property "${name}". Register it with register_custom_metric, which sets its unit.`);
@@ -251,8 +259,14 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
       const before = { unit: m.measurementUnit, money: m.restrictedMetricType?.find((t) => t === "REVENUE_DATA" || t === "COST_DATA") as "REVENUE_DATA" | "COST_DATA" | undefined };
       const label = (unit: string, data?: "REVENUE_DATA" | "COST_DATA") => (unit === "STANDARD" ? "a plain number" : unit === "CURRENCY" ? `money (${RESTRICTED_LABEL[data ?? "REVENUE_DATA"]} data)` : unit);
       const same = before.unit === change.unit && before.money === money;
+      if (before.unit !== change.unit && (before.unit === "CURRENCY" || change.unit === "CURRENCY")) {
+        throw new Error(`Google sets a money unit only when a custom metric is registered and never changes it after (customEvent:${change.parameter_name} is ${label(before.unit, before.money)}). `
+          + `To make it ${label(change.unit, money)}: propose archive_custom_metric, and once that's applied, register_custom_metric with unit ${change.unit} `
+          + "(two proposals: a proposal is checked against the property as it is, where the metric still exists). What GA4 counted so far stays with the archived metric.");
+      }
+      const mask = [...(before.unit !== change.unit ? ["measurement_unit"] : []), ...(before.money !== money ? ["restricted_metric_type"] : [])];
       return { ...base,
-        operations: same ? [] : [{ method: "PATCH", path: `${m.name}?updateMask=measurement_unit,restricted_metric_type`,
+        operations: same ? [] : [{ method: "PATCH", path: `${m.name}?updateMask=${mask.join(",")}`,
           body: { measurementUnit: change.unit, restrictedMetricType: money ? [money] : [] } }],
         describe: `Change custom metric customEvent:${change.parameter_name} in GA4 property "${name}" to ${label(change.unit, money)} (was ${label(before.unit, before.money)})`
           + (same ? " (already)" : money && before.money !== money ? `. GA4 users without access to ${RESTRICTED_LABEL[money]} data won't see it` : ""),
@@ -261,9 +275,10 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
     }
     case "archive_custom_metric": {
       const name = await propertyName(change.property_id);
-      const live = (await customMetrics(ga, change.property_id)).find((m) => m.name === change.resource_name);
+      const live = (await customMetrics(ga, change.property_id)).find((m) => change.resource_name ? m.name === change.resource_name : m.parameterName === change.parameter_name);
+      if (!live && !change.resource_name) throw new Error(`GA4 property "${name}" has no custom metric customEvent:${change.parameter_name}; analytics_setup lists the ones it has.`);
       return { ...base,
-        operations: live ? [{ method: "POST", path: `${change.resource_name}:archive`, body: {} }] : [],
+        operations: live ? [{ method: "POST", path: `${live.name}:archive`, body: {} }] : [],
         describe: `Archive custom metric customEvent:${change.parameter_name} in GA4 property "${name}"` + (live
           ? " ⚠ GA4 can't restore an archived custom metric: reports, explorations and audiences using it stop getting it (it can be registered again, as a new one)"
           : " (already archived)") };

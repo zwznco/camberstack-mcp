@@ -700,8 +700,8 @@ describe("OAuth + MCP end to end", () => {
     // Search Console changes (2026-10-31): +1K for propose_search_console_changes; +1K for send_feedback.
     // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +7.2K for its three tools;
     // +0.2K for create_container and delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
-    // change_results (2026-11-12): +1.2K. register_custom_dimension + analytics_setup's custom definitions (2026-11-16): +0.9K; register_custom_metric: +1.1K, taking propose_analytics_changes past 6K; set_custom_metric_unit: +0.65K (propose_analytics_changes 7.8K, cap 8K).
-    expectToolBudget(tools, { total: 122_400, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 8_000 } });
+    // change_results (2026-11-12): +1.2K. register_custom_dimension + analytics_setup's custom definitions (2026-11-16): +0.9K; register_custom_metric: +1.1K, taking propose_analytics_changes past 6K; set_custom_metric_unit: +0.65K; archive_custom_dimension / _metric public: +1.25K (propose_analytics_changes 9K).
+    expectToolBudget(tools, { total: 123_700, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1302,8 +1302,8 @@ describe("OAuth + MCP end to end", () => {
       // Search Console changes (2026-10-31): +3K for its four propose tools; +1K for send_feedback.
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
-      // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K.
-      expectToolBudget(tools, { total: 162_700, perTool: 6_000 });
+      // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K; propose_archive_custom_dimension / _metric: +2.2K.
+      expectToolBudget(tools, { total: 164_900, perTool: 6_000 });
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");

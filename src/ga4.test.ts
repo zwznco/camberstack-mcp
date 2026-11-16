@@ -357,28 +357,70 @@ describe("register_custom_metric", () => {
 
 describe("set_custom_metric_unit", () => {
   const P = DEMO_PROPERTY;
-  it("changes a registered metric's unit in place, and undo puts the old one back", async () => {
+  const reg = (parameter_name: string, unit: "STANDARD" | "CURRENCY") => ({ type: "register_custom_metric" as const, property_id: P, parameter_name, unit });
+
+  it("changes a non-money unit in place, sending only that field, and undo puts the old one back", async () => {
+    const ga = new DemoAnalytics();
+    await writeGa(ga, (await resolveGaChange(ga, reg("watch_time", "STANDARD"))).operations);
+    const set = { type: "set_custom_metric_unit" as const, property_id: P, parameter_name: "watch_time", unit: "SECONDS" as const };
+    const r = await resolveGaChange(ga, set);
+    expect(r.operations).toEqual([{ method: "PATCH", path: expect.stringMatching(/customMetrics\/\d+\?updateMask=measurement_unit$/),
+      body: { measurementUnit: "SECONDS", restrictedMetricType: [] } }]);
+    expect(r.describe).toBe('Change custom metric customEvent:watch_time in GA4 property "DEMO: Northwind Plumbing (sample data)" to SECONDS (was a plain number)');
+    expect(r.inverse).toEqual({ type: "set_custom_metric_unit", property_id: P, parameter_name: "watch_time", unit: "STANDARD" });
+    await writeGa(ga, r.operations);
+    expect((await gaSetup(ga, P)).custom_metrics[0]!.unit).toBe("SECONDS");
+    expect((await resolveGaChange(ga, set)).operations).toEqual([]);
+    await writeGa(ga, (await resolveGaChange(ga, gaInverseAfterApply(r, [])!)).operations);
+    expect((await gaSetup(ga, P)).custom_metrics[0]!.unit).toBe("STANDARD");
+  });
+
+  it("refuses money either way, as Google does (live 2026-11-16), and says how: archive, then register again", async () => {
+    const ga = new DemoAnalytics();
+    await writeGa(ga, (await resolveGaChange(ga, reg("tip_amount", "STANDARD"))).operations);
+    await writeGa(ga, (await resolveGaChange(ga, reg("order_value", "CURRENCY"))).operations);
+    const to = await resolveGaChange(ga, { type: "set_custom_metric_unit", property_id: P, parameter_name: "tip_amount", unit: "CURRENCY" }).catch((e: Error) => e.message);
+    expect(to).toContain("Google sets a money unit only when a custom metric is registered and never changes it after (customEvent:tip_amount is a plain number).");
+    expect(to).toContain("propose archive_custom_metric, and once that's applied, register_custom_metric with unit CURRENCY");
+    await expect(resolveGaChange(ga, { type: "set_custom_metric_unit", property_id: P, parameter_name: "order_value", unit: "STANDARD" }))
+      .rejects.toThrow("(customEvent:order_value is money (revenue data))");
+  });
+
+  it("switches a money metric between revenue and cost data with only that field in the mask", async () => {
+    const ga = new DemoAnalytics();
+    await writeGa(ga, (await resolveGaChange(ga, reg("order_value", "CURRENCY"))).operations);
+    const r = await resolveGaChange(ga, { type: "set_custom_metric_unit", property_id: P, parameter_name: "order_value", unit: "CURRENCY", currency_data: "COST_DATA" });
+    expect(r.operations).toEqual([{ method: "PATCH", path: expect.stringMatching(/\?updateMask=restricted_metric_type$/),
+      body: { measurementUnit: "CURRENCY", restrictedMetricType: ["COST_DATA"] } }]);
+    expect(r.describe).toContain("to money (cost data) (was money (revenue data)). GA4 users without access to cost data won't see it");
+    expect(r.inverse).toMatchObject({ unit: "CURRENCY", currency_data: "REVENUE_DATA" });
+  });
+
+  it("refuses an unregistered metric, and currency_data on another unit", async () => {
+    const ga = new DemoAnalytics();
+    await expect(resolveGaChange(ga, { type: "set_custom_metric_unit", property_id: P, parameter_name: "nope", unit: "SECONDS" })).rejects.toThrow(/isn't a registered custom metric.*register_custom_metric/);
+    await writeGa(ga, (await resolveGaChange(ga, reg("watch_time", "STANDARD"))).operations);
+    await expect(resolveGaChange(ga, { type: "set_custom_metric_unit", property_id: P, parameter_name: "watch_time", unit: "SECONDS", currency_data: "COST_DATA" }))
+      .rejects.toThrow(/applies only to unit CURRENCY/);
+  });
+});
+
+describe("archive by parameter name", () => {
+  const P = DEMO_PROPERTY;
+  it("archives a metric or dimension registered anywhere, named by its parameter", async () => {
     const ga = new DemoAnalytics();
     await writeGa(ga, (await resolveGaChange(ga, { type: "register_custom_metric", property_id: P, parameter_name: "tip_amount", unit: "STANDARD" })).operations);
-    const set = { type: "set_custom_metric_unit" as const, property_id: P, parameter_name: "tip_amount", unit: "CURRENCY" as const };
-    const r = await resolveGaChange(ga, set);
-    expect(r.operations).toEqual([{ method: "PATCH", path: expect.stringMatching(/customMetrics\/\d+\?updateMask=measurement_unit,restricted_metric_type$/),
-      body: { measurementUnit: "CURRENCY", restrictedMetricType: ["REVENUE_DATA"] } }]);
-    expect(r.describe).toBe('Change custom metric customEvent:tip_amount in GA4 property "DEMO: Northwind Plumbing (sample data)" to money (revenue data) (was a plain number). '
-      + "GA4 users without access to revenue data won't see it");
-    expect(r.inverse).toEqual({ type: "set_custom_metric_unit", property_id: P, parameter_name: "tip_amount", unit: "STANDARD" });
-    await writeGa(ga, r.operations);
-    expect((await gaSetup(ga, P)).custom_metrics[0]!.unit).toBe("CURRENCY");
-    expect((await resolveGaChange(ga, set)).operations).toEqual([]);  // already money, revenue data
-
-    // Undo: back to a plain number, which must clear the revenue restriction.
-    const u = await resolveGaChange(ga, gaInverseAfterApply(r, [])!);
-    expect(u.operations[0]!.body).toEqual({ measurementUnit: "STANDARD", restrictedMetricType: [] });
-    expect(u.inverse).toEqual({ type: "set_custom_metric_unit", property_id: P, parameter_name: "tip_amount", unit: "CURRENCY", currency_data: "REVENUE_DATA" });
-    await writeGa(ga, u.operations);
-    expect((await gaSetup(ga, P)).custom_metrics[0]!.unit).toBe("STANDARD");
-
-    await expect(resolveGaChange(ga, { ...set, parameter_name: "nope" })).rejects.toThrow(/isn't a registered custom metric.*register_custom_metric/);
-    await expect(resolveGaChange(ga, { ...set, unit: "SECONDS", currency_data: "COST_DATA" })).rejects.toThrow(/applies only to unit CURRENCY/);
+    await writeGa(ga, (await resolveGaChange(ga, { type: "register_custom_dimension", property_id: P, parameter_name: "form_id", scope: "EVENT" })).operations);
+    const am = await resolveGaChange(ga, { type: "archive_custom_metric", property_id: P, parameter_name: "tip_amount" });
+    expect(am.operations).toEqual([{ method: "POST", path: expect.stringMatching(/customMetrics\/\d+:archive$/), body: {} }]);
+    expect(am.describe).toContain("⚠ GA4 can't restore an archived custom metric");
+    const ad = await resolveGaChange(ga, { type: "archive_custom_dimension", property_id: P, parameter_name: "form_id", scope: "EVENT" });
+    expect(ad.operations).toHaveLength(1);
+    await writeGa(ga, [...am.operations, ...ad.operations]);
+    expect(await gaSetup(ga, P)).toMatchObject({ custom_metrics: [], custom_dimensions: [] });
+    // Then registering money works: the metric is gone.
+    expect((await resolveGaChange(ga, { type: "register_custom_metric", property_id: P, parameter_name: "tip_amount", unit: "CURRENCY" })).operations).toHaveLength(1);
+    await expect(resolveGaChange(ga, { type: "archive_custom_metric", property_id: P, parameter_name: "nope" })).rejects.toThrow(/has no custom metric customEvent:nope/);
+    await expect(resolveGaChange(ga, { type: "archive_custom_dimension", property_id: P, parameter_name: "form_id", scope: "USER" })).rejects.toThrow(/has no custom dimension customUser:form_id/);
   });
 });

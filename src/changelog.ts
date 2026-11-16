@@ -8,9 +8,11 @@ export interface Release { version: string; date: string; summary: string; items
 export const CHANGELOG: Release[] = [
   {
     version: "0.39.0", date: "2026-11-16",
-    summary: "Change a Google Analytics custom metric's unit in place.",
+    summary: "Fix or retire Google Analytics custom definitions without leaving the chat.",
     items: [
-      "**Fix a metric's unit** (`set_custom_metric_unit`): a custom metric registered as a plain number that is really money, or time, is changed where it is, keeping the metric, instead of archived and registered again. Undo puts the old unit back.",
+      "**Change a metric's unit** (`set_custom_metric_unit`): a plain number that's really seconds or miles is changed in place, keeping the metric; a money metric can switch between revenue and cost data. Undo puts it back.",
+      "**Archive a custom dimension or metric** (`archive_custom_dimension`, `archive_custom_metric`), including ones registered in Google Analytics itself. Google Analytics can't restore an archived one, and the proposal says so.",
+      "Google Analytics sets a money unit only when a metric is registered and never changes it after. When that's what you ask for, your AI is told the way through: archive the metric, then register it again as money.",
     ],
   },
   {
