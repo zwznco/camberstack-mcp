@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.40.0", date: "2026-11-16",
+    summary: "Keyword research shows the trend and up to four years of history.",
+    items: [
+      "**Keyword ideas show their trend.** Each idea now comes with its searches month by month, so your AI no longer looks the same ideas up a second time to see whether they're growing.",
+      "**Up to four years of history** (`months`, on keyword ideas and keyword volume): compare this year with last, or see a keyword's season, instead of only the last 12 months.",
+      "**Competition as a number from 0 to 100**, next to Google's low/medium/high, so keywords at the same level can be told apart.",
+    ],
+  },
+  {
     version: "0.39.0", date: "2026-11-16",
     summary: "Fix or retire Google Analytics custom definitions without leaving the chat.",
     items: [

@@ -24,6 +24,7 @@ import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage,
 import { allServices, parseCapFrom, parseChangeCap, servicesOr, setChangeCap } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
+const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
 import { UserSession, clearGoogleCache } from "./session.js";
 
 vi.mock("./sentry.js", async (orig) => ({ ...(await orig<typeof import("./sentry.js")>()), reportBug: vi.fn() }));
@@ -205,7 +206,8 @@ class FakeAds {
     if (method === "generateKeywordIdeas") {
       return { results: [
         { text: "invoice", keywordIdeaMetrics: { avgMonthlySearches: "90500", competition: "HIGH", lowTopOfPageBidMicros: "2100000", highTopOfPageBidMicros: "9800000" } },
-        { text: "invoice software", keywordIdeaMetrics: { avgMonthlySearches: "12100", competition: "HIGH", lowTopOfPageBidMicros: "8000000", highTopOfPageBidMicros: "31000000" } },
+        { text: "invoice software", keywordIdeaMetrics: { avgMonthlySearches: "12100", competition: "HIGH", competitionIndex: "87", lowTopOfPageBidMicros: "8000000", highTopOfPageBidMicros: "31000000",
+          monthlySearchVolumes: [{ year: "2026", month: "AUGUST", monthlySearches: "11000" }, { year: "2026", month: "SEPTEMBER", monthlySearches: "13000" }] } },
         { text: "free invoice maker", keywordIdeaMetrics: { avgMonthlySearches: "40", competition: "LOW" } },
         { text: "invoice template docx" },
       ] };
@@ -701,7 +703,8 @@ describe("OAuth + MCP end to end", () => {
     // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +7.2K for its three tools;
     // +0.2K for create_container and delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
     // change_results (2026-11-12): +1.2K. register_custom_dimension + analytics_setup's custom definitions (2026-11-16): +0.9K; register_custom_metric: +1.1K, taking propose_analytics_changes past 6K; set_custom_metric_unit: +0.65K; archive_custom_dimension / _metric public: +1.25K (propose_analytics_changes 9K).
-    expectToolBudget(tools, { total: 123_700, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
+    // +200 (0.40.0): the keyword tools' `months` parameter.
+    expectToolBudget(tools, { total: 123_900, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1303,7 +1306,7 @@ describe("OAuth + MCP end to end", () => {
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
       // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K; propose_archive_custom_dimension / _metric: +2.2K.
-      expectToolBudget(tools, { total: 164_900, perTool: 6_000 });
+      expectToolBudget(tools, { total: 165_100, perTool: 6_000 });  // +200 (0.40.0): keyword `months`
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -1620,6 +1623,11 @@ describe("OAuth + MCP end to end", () => {
     // Biggest first; below min_searches and no-data ideas dropped; bids in currency units, not micros.
     expect(i.json.ideas.map((x: any) => x.keyword)).toEqual(["invoice", "invoice software"]);
     expect(i.json.ideas[1].top_of_page_bid).toEqual({ low: 8, high: 31 });
+    // Each idea keeps Google's trend and 0-100 competition index, so the AI needn't re-ask keyword_metrics for them.
+    expect(i.json.ideas[1]).toMatchObject({ competition_index: 87, monthly: { "2026-08": 11000, "2026-09": 13000 } });
+    expect(i.json.ideas[0].competition_index).toBeNull();
+    // No months asked: Google's default 12, no range sent.
+    expect(sent.req.historicalMetricsOptions).toBeUndefined();
     expect(i.json.ideas[0].in_account).toBe("keyword");
     expect(i.json.ideas[1].in_account).toBeUndefined();
     // No campaign targets a location: the old default, said so, with names.
@@ -1635,14 +1643,22 @@ describe("OAuth + MCP end to end", () => {
     expect(m.json.keywords[0]).toMatchObject({ keyword: "invoice software", avg_monthly_searches: 12100, monthly: { "2026-08": 11000, "2026-09": 13000 } });
     expect(m.json.no_data).toEqual(["zzz"]);
 
+    // months: a range ending last month, for year-over-year.
+    await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoice software"], months: 24 });
+    const range = ads.plannerCalls.at(-1)!.req.historicalMetricsOptions.yearMonthRange;
+    const last = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1));
+    expect(range.end).toEqual({ year: last.getUTCFullYear(), month: MONTHS[last.getUTCMonth()] });
+    expect((range.end.year - range.start.year) * 12 + MONTHS.indexOf(range.end.month) - MONTHS.indexOf(range.start.month) + 1).toBe(24);
+    expect((await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["x"], months: 49 })).isError).toBe(true);
+
     // Over 100 keywords: a compact table, one header and arrays, instead of an object per keyword. Up to 500.
     const many = Array.from({ length: 150 }, (_, i) => `kw ${i}`);
     const big = await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: many });
     expect(big.json.keywords).toBeUndefined();
-    expect(big.json.columns).toEqual(["keyword", "avg_monthly_searches", "competition", "bid_low", "bid_high", "in_account", "monthly"]);
+    expect(big.json.columns).toEqual(["keyword", "avg_monthly_searches", "competition", "competition_index", "bid_low", "bid_high", "in_account", "monthly"]);
     expect(big.json.months).toEqual(["2026-09"]);
     expect(big.json.rows).toHaveLength(150);
-    expect(big.json.rows[5]).toEqual(["kw 5", 5, "LOW", null, null, null, [5]]);
+    expect(big.json.rows[5]).toEqual(["kw 5", 5, "LOW", null, null, null, null, [5]]);
     expect(big.json.no_data).toEqual([]);
     expect((await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: [...many, ...Array.from({ length: 900 }, (_, i) => `x ${i}`)] })).isError).toBe(true);
 
@@ -2158,6 +2174,10 @@ describe("OAuth + MCP end to end", () => {
       locations_from: "campaigns", language_from: "campaigns" });
     const kws = (await call(token, "keyword_metrics", { customer_id: "0000000001", keywords: ["sewer line repair"] })).json;
     expect(Object.keys(kws.keywords[0].monthly)).toHaveLength(12);
+    const yoy = (await call(token, "keyword_metrics", { customer_id: "0000000001", keywords: ["sewer line repair"], months: 24 })).json;
+    expect(Object.keys(yoy.keywords[0].monthly)).toHaveLength(24);
+    expect(ideas.ideas[0].competition_index).toEqual(expect.any(Number));
+    expect(Object.keys(ideas.ideas[0].monthly)).toHaveLength(12);
 
     expect(ads.mutations.length).toBe(before);  // Google was never called
     const now = (await call(token, "billing", {})).json;  // allowance untouched (the signed link's expiry may tick)

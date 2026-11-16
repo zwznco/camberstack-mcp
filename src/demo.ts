@@ -284,11 +284,15 @@ export class DemoAds {
 
   /** Keyword Planner over PLANNER: ideas share a word with a seed (or everything, for a URL seed); metrics are exact matches. */
   async keywordPlan(_cid: string, method: "generateKeywordIdeas" | "generateKeywordHistoricalMetrics", req: any): Promise<{ results?: any[] }> {
+    // Sample history ends September 2026 whatever was asked; a range only sets how many months come back.
+    const r = req.historicalMetricsOptions?.yearMonthRange;
+    const span = r ? Math.min(48, (r.end.year - r.start.year) * 12 + MONTH_NAMES.indexOf(r.end.month) - MONTH_NAMES.indexOf(r.start.month) + 1) : 12;
     const metrics = ([, vol, comp, low, high]: typeof PLANNER[number]) => ({
       avgMonthlySearches: String(vol), competition: comp,
       lowTopOfPageBidMicros: String(Math.round(low * 1e6)), highTopOfPageBidMicros: String(Math.round(high * 1e6)),
-      monthlySearchVolumes: Array.from({ length: 12 }, (_, i) => {
-        const d = new Date(Date.UTC(2025, 9 + i, 1));  // the 12 months to September 2026
+      competitionIndex: String({ LOW: 22, MEDIUM: 51, HIGH: 84 }[comp as string] ?? 50),
+      monthlySearchVolumes: Array.from({ length: span }, (_, i) => {
+        const d = new Date(Date.UTC(2026, 9 - span + i, 1));  // the 12 months to September 2026, or the range asked for
         return { year: String(d.getUTCFullYear()), month: MONTH_NAMES[d.getUTCMonth()], monthlySearches: String(Math.round(vol * SEASON[d.getUTCMonth()]!)) };
       }),
     });

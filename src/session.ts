@@ -933,20 +933,23 @@ export class UserSession {
       : keywords.length ? { keywordSeed: { keywords } } : { urlSeed: { url: o.url } };
     const t = await this.planTarget(a, o);
     const [res, have, target] = await Promise.all([
-      this.keywordPlan(a, "generateKeywordIdeas", t, { includeAdultKeywords: false, ...seed }),
+      this.keywordPlan(a, "generateKeywordIdeas", t, { includeAdultKeywords: false, ...seed, ...historyRange(o.months) }),
       this.keywordsInAccount(a),
       this.describePlanTarget(a, t),
     ]);
+    // Google sends each idea's monthly searches too; the trend used to be dropped, so AIs re-asked keyword_metrics for it.
     const ideas = (res.results ?? [])
-      .map((r) => keywordRow(r.text, r.keywordIdeaMetrics, have))
+      .map((r) => ({ ...keywordRow(r.text, r.keywordIdeaMetrics, have), monthly: monthly(r.keywordIdeaMetrics?.monthlySearchVolumes) }))
       .filter((k) => k.avg_monthly_searches !== null && k.avg_monthly_searches >= o.min_searches)
       .sort((x, y) => y.avg_monthly_searches! - x.avg_monthly_searches!);
-    return {
+    const head = {
       account: { customer_id: a.customerId, name: a.name, currency: a.currency },
       ...demoNote(a.customerId),
       target,
-      ideas: ideas.slice(0, o.limit), total_ideas: ideas.length,
     };
+    const shown = ideas.slice(0, o.limit);
+    if (shown.length > COMPACT_OVER) return { ...head, ...compactRows(shown), total_ideas: ideas.length };
+    return { ...head, ideas: shown, total_ideas: ideas.length };
   }
 
   /** Keyword Planner volume, competition and bids for an exact list, with the last 12 months of searches. */
@@ -955,7 +958,7 @@ export class UserSession {
     const keywords = [...new Set(o.keywords.map((k) => k.trim()).filter(Boolean))];
     const t = await this.planTarget(a, o);
     const [res, have, target] = await Promise.all([
-      this.keywordPlan(a, "generateKeywordHistoricalMetrics", t, { includeAdultKeywords: false, keywords }),
+      this.keywordPlan(a, "generateKeywordHistoricalMetrics", t, { includeAdultKeywords: false, keywords, ...historyRange(o.months) }),
       this.keywordsInAccount(a),
       this.describePlanTarget(a, t),
     ]);
@@ -973,16 +976,7 @@ export class UserSession {
     };
     const noData = keywords.filter((k) => !covered.has(k.toLowerCase()));
     if (rows.length <= COMPACT_OVER) return { ...head, keywords: rows, no_data: noData };
-    // A big list as objects repeats every field name per row and floods the AI's context: one header, then arrays.
-    const months = [...new Set(rows.flatMap((r) => Object.keys(r.monthly)))].sort();
-    return {
-      ...head,
-      columns: ["keyword", "avg_monthly_searches", "competition", "bid_low", "bid_high", "in_account", "monthly"],
-      months,
-      rows: rows.map((r) => [r.keyword, r.avg_monthly_searches, r.competition, r.top_of_page_bid.low, r.top_of_page_bid.high,
-        (r as { in_account?: string }).in_account ?? null, months.map((m) => (r.monthly as Record<string, number>)[m] ?? null)]),
-      no_data: noData,
-    };
+    return { ...head, ...compactRows(rows), no_data: noData };
   }
 
   /**
@@ -1966,10 +1960,35 @@ export class UserSession {
 }
 
 /** What the caller named; either left out means "work it out" (keyword-target.ts). */
-interface KeywordPlanOpts { location_ids?: string[]; language_id?: string }
+interface KeywordPlanOpts { location_ids?: string[]; language_id?: string; months?: number }
 
-/** keyword_metrics answers with one object per keyword up to this many, a compact table above it. */
+/** The keyword tools answer with one object per keyword up to this many, a compact table above it. */
 const COMPACT_OVER = 100;
+
+/**
+ * Keyword Planner returns the last 12 months unless asked for a range; it keeps 4 years. `months` ends at last month
+ * (Google returns only the months it has, so a month it hasn't finished counting is just left out).
+ */
+function historyRange(months?: number, now = new Date()) {
+  if (!months) return {};
+  const ym = (back: number) => {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1));
+    return { year: d.getUTCFullYear(), month: MONTHS[d.getUTCMonth()] };
+  };
+  return { historicalMetricsOptions: { yearMonthRange: { start: ym(months), end: ym(1) } } };
+}
+
+type KeywordRow = ReturnType<typeof keywordRow> & { monthly: Record<string, number> };
+/** A big list as objects repeats every field name per row and floods the AI's context: one header, then arrays. */
+function compactRows(rows: KeywordRow[]) {
+  const months = [...new Set(rows.flatMap((r) => Object.keys(r.monthly)))].sort();
+  return {
+    columns: ["keyword", "avg_monthly_searches", "competition", "competition_index", "bid_low", "bid_high", "in_account", "monthly"],
+    months,
+    rows: rows.map((r) => [r.keyword, r.avg_monthly_searches, r.competition, r.competition_index, r.top_of_page_bid.low, r.top_of_page_bid.high,
+      (r as { in_account?: string }).in_account ?? null, months.map((m) => r.monthly[m] ?? null)]),
+  };
+}
 
 /** Keyword Planner's targeting fields; no language means every language. */
 const plannerTarget = (t: PlanTarget) => ({
@@ -1986,15 +2005,17 @@ function keywordRow(text: string, metrics: any, have: Map<string, "keyword" | "n
     keyword: String(text),
     avg_monthly_searches: metrics?.avgMonthlySearches == null ? null : Number(metrics.avgMonthlySearches),
     competition: metrics?.competition ?? null,
+    /** 0-100: the share of ad slots filled for this keyword, finer than LOW/MEDIUM/HIGH. */
+    competition_index: metrics?.competitionIndex == null ? null : Number(metrics.competitionIndex),
     top_of_page_bid: { low: bid(metrics?.lowTopOfPageBidMicros), high: bid(metrics?.highTopOfPageBidMicros) },
     ...(inAccount ? { in_account: inAccount } : {}),
   };
 }
 
 const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
-/** Last 12 months of searches as { "2026-08": 1900, ... }, oldest first. */
+/** Monthly searches as { "2026-08": 1900, ... }, oldest first: the last 12 months, or the range asked for. */
 function monthly(volumes: { year?: number | string; month?: string; monthlySearches?: number | string }[] | undefined) {
-  return Object.fromEntries((volumes ?? []).slice(-12).map((v) =>
+  return Object.fromEntries((volumes ?? []).map((v) =>
     [`${v.year}-${String(MONTHS.indexOf(v.month ?? "") + 1).padStart(2, "0")}`, Number(v.monthlySearches ?? 0)]));
 }
 

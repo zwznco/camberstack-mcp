@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.39.0";
+export const SERVER_VERSION = "0.40.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -109,6 +109,8 @@ const locationIds = z.array(z.string().trim().min(1).max(80)).min(1).max(10).opt
     + "2040 Austria), a country or its code (\"Austria\", \"AT\"), or a place (\"Springfield, Illinois\")");
 const languageId = z.string().trim().min(1).max(40).optional()
   .describe("Language id (1000 English, 1001 German), name or code (\"de\"). Leave out for the campaigns' language, or every language when you name locations");
+const months = z.number().int().min(1).max(48).optional()
+  .describe("Months of history to last month: 12 if left out, 48 most");
 const siteUrl = z.string().min(1).describe("Search Console property exactly as search_console_sites lists it, e.g. sc-domain:example.com or https://www.example.com/");
 const days = z.number().int().min(1).max(365).default(30).describe("Look-back window in days, ending yesterday");
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -317,31 +319,31 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("keyword_ideas", {
     title: "Keyword ideas (Keyword Planner)",
-    description: "Google Keyword Planner ideas from seed keywords and/or a landing-page URL: average monthly searches, competition and the top-of-page bid range in the account's currency, biggest first. Ideas the account already targets, or already blocks as negatives, are marked in_account. Changes nothing.",
+    description: "Google Keyword Planner ideas from seed keywords and/or a landing-page URL: average and monthly searches, competition and the top-of-page bid range in the account's currency, biggest first. Ideas the account already targets, or already blocks as negatives, are marked in_account. Changes nothing.",
     inputSchema: {
       customer_id: customerId,
       keywords: z.array(z.string().min(1).max(80)).max(20).optional().describe("Up to 20 seed keywords"),
       url: z.string().url().optional().describe("A page to pull ideas from, such as the ad's landing page"),
-      location_ids: locationIds, language_id: languageId,
+      location_ids: locationIds, language_id: languageId, months,
       min_searches: z.number().int().min(0).default(0).describe("Drop ideas below this many average monthly searches"),
       limit: z.number().int().min(1).max(200).default(50).describe("Most ideas to return"),
     },
     annotations: read,
-  }, ({ customer_id, ...o }: { customer_id: string; keywords?: string[]; url?: string; location_ids?: string[]; language_id?: string; min_searches: number; limit: number }) =>
+  }, ({ customer_id, ...o }: { customer_id: string; keywords?: string[]; url?: string; location_ids?: string[]; language_id?: string; months?: number; min_searches: number; limit: number }) =>
     session().keywordIdeas(customer_id, o));
 
   tool("keyword_metrics", {
     title: "Keyword volume and bids (Keyword Planner)",
-    description: "Google Keyword Planner numbers for an exact list of keywords: average monthly searches, the last 12 months, competition and the top-of-page bid range in the account's currency. Use it to size keywords before adding them or to check a trend. "
+    description: "Google Keyword Planner numbers for an exact list of keywords: average and monthly searches, competition and the top-of-page bid range in the account's currency. Use it to size keywords before adding them or to check a trend. "
       + "Send the whole list in one call, not one per keyword: Keyword Planner rate-limits bursts. "
-      + "Up to 100 come back as objects; over 100, as a compact table (columns, months, rows). Changes nothing.",
+      + "Over 100 come back as a compact table (columns, months, rows). Changes nothing.",
     inputSchema: {
       customer_id: customerId,
       keywords: z.array(z.string().min(1).max(80)).min(1).max(500).describe("Keywords to look up, up to 500"),
-      location_ids: locationIds, language_id: languageId,
+      location_ids: locationIds, language_id: languageId, months,
     },
     annotations: read,
-  }, ({ customer_id, ...o }: { customer_id: string; keywords: string[]; location_ids?: string[]; language_id?: string }) =>
+  }, ({ customer_id, ...o }: { customer_id: string; keywords: string[]; location_ids?: string[]; language_id?: string; months?: number }) =>
     session().keywordMetrics(customer_id, o));
 
   tool("search_console_sites", {
