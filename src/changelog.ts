@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.42.0", date: "2026-11-16",
+    summary: "Camberstack now uses Google Ads API v26, ahead of v23's retirement in February 2027.",
+    items: [
+      "Your questions and changes work as before. A few old field names Google retired are now pointed to their replacements when your AI asks for them.",
+      "**Demand Gen video campaigns:** Google now lays text from the ad over the videos by default for new video ads, and the proposal says so before you approve.",
+    ],
+  },
+  {
     version: "0.41.0", date: "2026-11-16",
     summary: "Keyword research across markets, and from a whole website.",
     items: [
