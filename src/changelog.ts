@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.39.0", date: "2026-11-16",
+    summary: "Change a Google Analytics custom metric's unit in place.",
+    items: [
+      "**Fix a metric's unit** (`set_custom_metric_unit`): a custom metric registered as a plain number that is really money, or time, is changed where it is, keeping the metric, instead of archived and registered again. Undo puts the old unit back.",
+    ],
+  },
+  {
     version: "0.38.0", date: "2026-11-16",
     summary: "Custom metrics too: Camberstack can register a number your site sends as a Google Analytics custom metric.",
     items: [

@@ -316,7 +316,7 @@ interface DemoGaState {
   adsLinks: { id: number; customerId: string }[];
   /** Added 0.37.0: a state saved before then has none. */
   customDimensions?: { id: number; parameterName: string; displayName: string; scope: string }[];
-  customMetrics?: { id: number; parameterName: string; displayName: string; measurementUnit: string }[];
+  customMetrics?: { id: number; parameterName: string; displayName: string; measurementUnit: string; restrictedMetricType?: string[] }[];
   nextId: number;
 }
 const freshGa = (): DemoGaState => ({ keyEvents: [{ id: 1, eventName: "generate_lead", countingMethod: "ONCE_PER_EVENT" }], adsLinks: [], nextId: 2 });
@@ -348,9 +348,17 @@ export class DemoAnalytics implements Analytics {
     const mets = (s.customMetrics ??= []);
     if (method === "POST" && path === `${p}/customMetrics`) {
       const id = s.nextId++;
-      mets.push({ id, parameterName: body.parameterName, displayName: body.displayName, measurementUnit: body.measurementUnit });
+      mets.push({ id, parameterName: body.parameterName, displayName: body.displayName, measurementUnit: body.measurementUnit, restrictedMetricType: body.restrictedMetricType });
       this.save(s);
       return { name: `${p}/customMetrics/${id}`, ...body };
+    }
+    if (method === "PATCH" && path.startsWith(`${p}/customMetrics/`)) {
+      const m = mets.find((x) => `${p}/customMetrics/${x.id}` === path.split("?")[0]);
+      if (!m) throw new Error(`Google Analytics API 404: ${path.split("?")[0]} not found.`);
+      m.measurementUnit = body.measurementUnit;
+      m.restrictedMetricType = body.restrictedMetricType;
+      this.save(s);
+      return { name: path.split("?")[0], parameterName: m.parameterName, displayName: m.displayName, measurementUnit: m.measurementUnit };
     }
     if (method === "POST" && path.startsWith(`${p}/customMetrics/`) && path.endsWith(":archive")) {
       s.customMetrics = mets.filter((m) => `${p}/customMetrics/${m.id}:archive` !== path);
@@ -405,7 +413,7 @@ export class DemoAnalytics implements Analytics {
     if (path.startsWith(`${p}/googleAdsLinks`)) return { googleAdsLinks: s.adsLinks.map((l) => ({ name: linkName(l.id), customerId: l.customerId })) };
     if (path.startsWith(`${p}/customDimensions`)) return { customDimensions: dims.map((d) => ({ name: dimName(d.id), parameterName: d.parameterName, displayName: d.displayName, scope: d.scope })) };
     if (path.startsWith(`${p}/customMetrics`)) return { customMetrics: mets.map((m) => ({ name: `${p}/customMetrics/${m.id}`, parameterName: m.parameterName,
-      displayName: m.displayName, measurementUnit: m.measurementUnit })) };
+      displayName: m.displayName, measurementUnit: m.measurementUnit, ...(m.restrictedMetricType?.length ? { restrictedMetricType: m.restrictedMetricType } : {}) })) };
     throw new Error(`The demo property doesn't support ${method} ${path}.`);
   }
 

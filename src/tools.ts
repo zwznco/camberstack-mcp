@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.38.0";
+export const SERVER_VERSION = "0.39.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -471,7 +471,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     description: "Checks Google Analytics setup changes against the live property and stores them as a proposal with a plain-English summary; "
       + "nothing is changed. Show the summary to the user and apply only after they approve, with apply_changes (undo_changes reverses it). "
       + "Supported: create_ga4_property (a property plus a web stream; the applied result gives the measurement ID and the tag the site needs), "
-      + "mark_key_event / unmark_key_event (GA4's conversions), set_key_event_counting (also recounts a Google Ads import of it), link_google_ads / unlink_google_ads, register_custom_dimension / register_custom_metric (make a parameter reportable). Point out any ⚠ line before they approve.",
+      + "mark_key_event / unmark_key_event (GA4's conversions), set_key_event_counting (also recounts a Google Ads import of it), link_google_ads / unlink_google_ads, register_custom_dimension / register_custom_metric (make a parameter reportable), set_custom_metric_unit. Point out any ⚠ line before they approve.",
     inputSchema: { changes: z.array(PublicGaChangeSchema).min(1).max(20).describe("Changes to propose; several can go in one proposal") },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, ({ changes }: { changes: unknown[] }) => session().propose(GA_TARGET, changes));

@@ -62,6 +62,9 @@ export const PUBLIC_GA_CHANGES = [
     display_name: z.string().regex(/^[A-Za-z][A-Za-z0-9_ ]{0,81}$/, "letters, digits, spaces and underscores, starting with a letter, 82 at most").optional()
       .describe("Name shown in GA4; defaults to parameter_name") })
     .describe("Register a numeric event parameter as a GA4 custom metric so reports can use it (customEvent:<parameter_name>). Counted from registration on, in reports after 24-48 hours"),
+  z.object({ type: z.literal("set_custom_metric_unit"), property_id: propertyId, parameter_name: parameterName.describe("A registered custom metric's parameter"),
+    unit: metricUnit, currency_data: restricted.optional().describe("CURRENCY only: REVENUE_DATA (default) or COST_DATA") })
+    .describe("Change a registered custom metric's unit (and for money, revenue or cost data)"),
 ] as const;
 
 export const PublicGaChangeSchema = z.discriminatedUnion("type", [...PUBLIC_GA_CHANGES]);
@@ -235,6 +238,27 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
           + "GA4 counts it from registration on, not for earlier visits, and it reaches reports after 24-48 hours. "
           + "Undoing it archives it, which GA4 can't reverse" };
     }
+    case "set_custom_metric_unit": {
+      // measurementUnit isn't immutable in Admin API v1beta (parameterName and scope are), so a wrong unit is fixed in place,
+      // not by archiving and registering again. restrictedMetricType must be set for CURRENCY and empty otherwise: both go together.
+      const name = await propertyName(change.property_id);
+      const m = (await customMetrics(ga, change.property_id)).find((x) => x.parameterName === change.parameter_name);
+      if (!m) throw new Error(`"${change.parameter_name}" isn't a registered custom metric in GA4 property "${name}". Register it with register_custom_metric, which sets its unit.`);
+      if (change.currency_data && change.unit !== "CURRENCY") {
+        throw new Error("currency_data applies only to unit CURRENCY: Google refuses it on any other unit. Leave it out.");
+      }
+      const money = change.unit === "CURRENCY" ? change.currency_data ?? "REVENUE_DATA" : undefined;
+      const before = { unit: m.measurementUnit, money: m.restrictedMetricType?.find((t) => t === "REVENUE_DATA" || t === "COST_DATA") as "REVENUE_DATA" | "COST_DATA" | undefined };
+      const label = (unit: string, data?: "REVENUE_DATA" | "COST_DATA") => (unit === "STANDARD" ? "a plain number" : unit === "CURRENCY" ? `money (${RESTRICTED_LABEL[data ?? "REVENUE_DATA"]} data)` : unit);
+      const same = before.unit === change.unit && before.money === money;
+      return { ...base,
+        operations: same ? [] : [{ method: "PATCH", path: `${m.name}?updateMask=measurement_unit,restricted_metric_type`,
+          body: { measurementUnit: change.unit, restrictedMetricType: money ? [money] : [] } }],
+        describe: `Change custom metric customEvent:${change.parameter_name} in GA4 property "${name}" to ${label(change.unit, money)} (was ${label(before.unit, before.money)})`
+          + (same ? " (already)" : money && before.money !== money ? `. GA4 users without access to ${RESTRICTED_LABEL[money]} data won't see it` : ""),
+        inverse: same ? undefined : { type: "set_custom_metric_unit", property_id: change.property_id, parameter_name: change.parameter_name,
+          unit: metricUnit.parse(before.unit), ...(before.money ? { currency_data: before.money } : {}) } };
+    }
     case "archive_custom_metric": {
       const name = await propertyName(change.property_id);
       const live = (await customMetrics(ga, change.property_id)).find((m) => m.name === change.resource_name);
@@ -293,7 +317,7 @@ export function gaNoteAfterApply(results: GaWriteResult[]): string | undefined {
 }
 
 interface CustomDimension { name: string; parameterName: string; displayName: string; scope: DimensionScope }
-interface CustomMetric { name: string; parameterName: string; displayName: string; measurementUnit: string }
+interface CustomMetric { name: string; parameterName: string; displayName: string; measurementUnit: string; restrictedMetricType?: string[] }
 /** A property's active custom definitions of one kind (archived ones aren't listed), every page. */
 async function definitions<T>(ga: Analytics, propertyId: string, kind: "customDimensions" | "customMetrics"): Promise<T[]> {
   const out: T[] = [];

@@ -354,3 +354,31 @@ describe("register_custom_metric", () => {
     await expect(resolveGaChange(ga, { ...reg, parameter_name: "tip2", display_name: "tip_amount" })).rejects.toThrow('already has a custom metric named "tip_amount"');
   });
 });
+
+describe("set_custom_metric_unit", () => {
+  const P = DEMO_PROPERTY;
+  it("changes a registered metric's unit in place, and undo puts the old one back", async () => {
+    const ga = new DemoAnalytics();
+    await writeGa(ga, (await resolveGaChange(ga, { type: "register_custom_metric", property_id: P, parameter_name: "tip_amount", unit: "STANDARD" })).operations);
+    const set = { type: "set_custom_metric_unit" as const, property_id: P, parameter_name: "tip_amount", unit: "CURRENCY" as const };
+    const r = await resolveGaChange(ga, set);
+    expect(r.operations).toEqual([{ method: "PATCH", path: expect.stringMatching(/customMetrics\/\d+\?updateMask=measurement_unit,restricted_metric_type$/),
+      body: { measurementUnit: "CURRENCY", restrictedMetricType: ["REVENUE_DATA"] } }]);
+    expect(r.describe).toBe('Change custom metric customEvent:tip_amount in GA4 property "DEMO: Northwind Plumbing (sample data)" to money (revenue data) (was a plain number). '
+      + "GA4 users without access to revenue data won't see it");
+    expect(r.inverse).toEqual({ type: "set_custom_metric_unit", property_id: P, parameter_name: "tip_amount", unit: "STANDARD" });
+    await writeGa(ga, r.operations);
+    expect((await gaSetup(ga, P)).custom_metrics[0]!.unit).toBe("CURRENCY");
+    expect((await resolveGaChange(ga, set)).operations).toEqual([]);  // already money, revenue data
+
+    // Undo: back to a plain number, which must clear the revenue restriction.
+    const u = await resolveGaChange(ga, gaInverseAfterApply(r, [])!);
+    expect(u.operations[0]!.body).toEqual({ measurementUnit: "STANDARD", restrictedMetricType: [] });
+    expect(u.inverse).toEqual({ type: "set_custom_metric_unit", property_id: P, parameter_name: "tip_amount", unit: "CURRENCY", currency_data: "REVENUE_DATA" });
+    await writeGa(ga, u.operations);
+    expect((await gaSetup(ga, P)).custom_metrics[0]!.unit).toBe("STANDARD");
+
+    await expect(resolveGaChange(ga, { ...set, parameter_name: "nope" })).rejects.toThrow(/isn't a registered custom metric.*register_custom_metric/);
+    await expect(resolveGaChange(ga, { ...set, unit: "SECONDS", currency_data: "COST_DATA" })).rejects.toThrow(/applies only to unit CURRENCY/);
+  });
+});
