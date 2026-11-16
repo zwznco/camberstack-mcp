@@ -198,8 +198,12 @@ class FakeAds {
     return [];
   }
   plannerCalls: { method: string; req: any }[] = [];
+  /** A geo target whose single-location call answers 429, as Keyword Planner does to bursts. */
+  planner429For: string | null = null;
   async keywordPlan(_cid: string, method: string, req: any) {
     this.plannerCalls.push({ method, req });
+    if (this.planner429For && req.geoTargetConstants.length === 1 && req.geoTargetConstants[0] === `geoTargetConstants/${this.planner429For}`)
+      throw new AdsApiError(429, JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Too many requests. Retry in 41 seconds." } }));
     if (req.geoTargetConstants.some((g: string) => !/\/(2840|2826|2040)$/.test(g)))
       throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { fieldError: "INVALID_VALUE" },
         message: "The input has an invalid value.", location: { fieldPathElements: [{ fieldName: "geo_target_constants" }] } }] }] } }));
@@ -703,8 +707,8 @@ describe("OAuth + MCP end to end", () => {
     // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +7.2K for its three tools;
     // +0.2K for create_container and delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
     // change_results (2026-11-12): +1.2K. register_custom_dimension + analytics_setup's custom definitions (2026-11-16): +0.9K; register_custom_metric: +1.1K, taking propose_analytics_changes past 6K; set_custom_metric_unit: +0.65K; archive_custom_dimension / _metric public: +1.25K (propose_analytics_changes 9K).
-    // +200 (0.40.0): the keyword tools' `months` parameter.
-    expectToolBudget(tools, { total: 123_900, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
+    // +200 (0.40.0): the keyword tools' `months`; +300 (0.41.0): keyword_ideas `site`, keyword_metrics `by_location`.
+    expectToolBudget(tools, { total: 124_200, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1306,7 +1310,7 @@ describe("OAuth + MCP end to end", () => {
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
       // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K; propose_archive_custom_dimension / _metric: +2.2K.
-      expectToolBudget(tools, { total: 165_100, perTool: 6_000 });  // +200 (0.40.0): keyword `months`
+      expectToolBudget(tools, { total: 165_400, perTool: 6_000 });  // +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -1650,6 +1654,33 @@ describe("OAuth + MCP end to end", () => {
     expect(range.end).toEqual({ year: last.getUTCFullYear(), month: MONTHS[last.getUTCMonth()] });
     expect((range.end.year - range.start.year) * 12 + MONTHS.indexOf(range.end.month) - MONTHS.indexOf(range.start.month) + 1).toBe(24);
     expect((await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["x"], months: 49 })).isError).toBe(true);
+
+    // by_location: the total, then each location alone, one call at a time, filed by name (close variants included).
+    let n = ads.plannerCalls.length;
+    const split = await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoicing software"], location_ids: ["2840", "2826"], by_location: true });
+    expect(ads.plannerCalls.slice(n).map((c) => c.req.geoTargetConstants)).toEqual([
+      ["geoTargetConstants/2840", "geoTargetConstants/2826"], ["geoTargetConstants/2840"], ["geoTargetConstants/2826"]]);
+    expect(split.json.keywords[0].by_location).toEqual({
+      "United States": { searches: 12100, competition_index: null, bid_low: null, bid_high: null },
+      "United Kingdom": { searches: 12100, competition_index: null, bid_low: null, bid_high: null } });
+    expect(split.json.by_location_note).toBeUndefined();
+    // A 429 partway keeps what was counted and names the rest, instead of failing the whole answer.
+    ads.planner429For = "2826";
+    const half = await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoice software"], location_ids: ["2840", "2826"], by_location: true });
+    ads.planner429For = null;
+    expect(Object.keys(half.json.keywords[0].by_location)).toEqual(["United States"]);
+    expect(half.json.by_location_note).toContain("not counted on their own: United Kingdom");
+    // One location: nothing to split, no extra call.
+    n = ads.plannerCalls.length;
+    await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoice software"], location_ids: ["2840"], by_location: true });
+    expect(ads.plannerCalls.length - n).toBe(1);
+    expect((await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: Array.from({ length: 101 }, (_, i) => `k ${i}`), by_location: true })).text)
+      .toContain("by_location takes up to 100 keywords");
+
+    // site: a whole domain as Google's site_seed, scheme and path stripped; it can't be mixed with the other seeds.
+    await call(token, "keyword_ideas", { customer_id: "1112223333", site: "https://competitor.test/pricing" });
+    expect(ads.plannerCalls.at(-1)!.req.siteSeed).toEqual({ site: "competitor.test" });
+    expect((await call(token, "keyword_ideas", { customer_id: "1112223333", site: "competitor.test", keywords: ["invoice"] })).text).toContain("site can't be combined");
 
     // Over 100 keywords: a compact table, one header and arrays, instead of an object per keyword. Up to 500.
     const many = Array.from({ length: 150 }, (_, i) => `kw ${i}`);

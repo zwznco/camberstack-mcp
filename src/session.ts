@@ -925,11 +925,14 @@ export class UserSession {
 
 
   /** Keyword Planner ideas from seed keywords and/or a URL, biggest first, flagged where the account already has them. */
-  async keywordIdeas(customerId: string, o: KeywordPlanOpts & { keywords?: string[]; url?: string; min_searches: number; limit: number }) {
+  async keywordIdeas(customerId: string, o: KeywordPlanOpts & { keywords?: string[]; url?: string; site?: string; min_searches: number; limit: number }) {
     const a = await this.account(customerId);
     const keywords = [...new Set((o.keywords ?? []).map((k) => k.trim()).filter(Boolean))];
-    if (!keywords.length && !o.url) throw new Error("Give at least one seed keyword or a URL.");
-    const seed = keywords.length && o.url ? { keywordAndUrlSeed: { keywords, url: o.url } }
+    // Google's seed is one of: keywords, a page, both, or a whole site (site_seed: every page Google knows on the domain).
+    const site = o.site?.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+    if (site && (keywords.length || o.url)) throw new Error("site can't be combined with keywords or url: Keyword Planner takes a whole site on its own. Use url for one page with keywords.");
+    if (!keywords.length && !o.url && !site) throw new Error("Give at least one seed keyword, a URL or a site.");
+    const seed = site ? { siteSeed: { site } } : keywords.length && o.url ? { keywordAndUrlSeed: { keywords, url: o.url } }
       : keywords.length ? { keywordSeed: { keywords } } : { urlSeed: { url: o.url } };
     const t = await this.planTarget(a, o);
     const [res, have, target] = await Promise.all([
@@ -953,19 +956,25 @@ export class UserSession {
   }
 
   /** Keyword Planner volume, competition and bids for an exact list, with the last 12 months of searches. */
-  async keywordMetrics(customerId: string, o: KeywordPlanOpts & { keywords: string[] }) {
+  async keywordMetrics(customerId: string, o: KeywordPlanOpts & { keywords: string[]; by_location?: boolean }) {
     const a = await this.account(customerId);
     const keywords = [...new Set(o.keywords.map((k) => k.trim()).filter(Boolean))];
+    if (o.by_location && keywords.length > COMPACT_OVER) throw new Error(`by_location takes up to ${COMPACT_OVER} keywords; split the list, or leave by_location out.`);
     const t = await this.planTarget(a, o);
     const [res, have, target] = await Promise.all([
       this.keywordPlan(a, "generateKeywordHistoricalMetrics", t, { includeAdultKeywords: false, keywords, ...historyRange(o.months) }),
       this.keywordsInAccount(a),
       this.describePlanTarget(a, t),
     ]);
+    // Several locations count as one market; by_location also asks each one alone, after the total, one at a time.
+    const split = o.by_location && t.location_ids.length > 1
+      ? await this.splitByLocation(a, t, keywords, new Map(target.locations.map((l: { id: string; name?: string }) => [l.id, l.name ?? l.id])))
+      : null;
     const rows = (res.results ?? []).map((r) => ({
       ...keywordRow(r.text, r.keywordMetrics, have),
       ...(r.closeVariants?.length ? { close_variants: r.closeVariants } : {}),
       monthly: monthly(r.keywordMetrics?.monthlySearchVolumes),
+      ...(split ? { by_location: split.per.get(String(r.text).toLowerCase()) ?? {} } : {}),
     }));
     // Google omits keywords it has no data for; say so rather than dropping them silently.
     const covered = new Set(rows.flatMap((r) => [r.keyword, ...(r.close_variants ?? [])].map((k: string) => k.toLowerCase())));
@@ -973,6 +982,7 @@ export class UserSession {
       account: { customer_id: a.customerId, name: a.name, currency: a.currency },
       ...demoNote(a.customerId),
       target,
+      ...(split?.note ? { by_location_note: split.note } : {}),
     };
     const noData = keywords.filter((k) => !covered.has(k.toLowerCase()));
     if (rows.length <= COMPACT_OVER) return { ...head, keywords: rows, no_data: noData };
@@ -994,6 +1004,37 @@ export class UserSession {
       }
       throw e;
     }
+  }
+
+  /**
+   * Each location of the target on its own: one historical-metrics call per location, in turn, since Keyword Planner
+   * rate-limits bursts (prod 429s). A 429 midway keeps the locations already counted and names the rest.
+   */
+  private async splitByLocation(a: Account, t: PlanTarget, keywords: string[], names: Map<string, string>) {
+    type Cell = { searches: number | null; competition_index: number | null; bid_low: number | null; bid_high: number | null };
+    const per = new Map<string, Record<string, Cell>>();
+    for (const [i, id] of t.location_ids.entries()) {
+      const name = names.get(id) ?? id;
+      let res: { results?: any[] };
+      try {
+        res = await this.keywordPlan(a, "generateKeywordHistoricalMetrics", { ...t, location_ids: [id] }, { includeAdultKeywords: false, keywords });
+      } catch (e) {
+        if (!(e instanceof AdsApiError && e.status === 429)) throw e;
+        const left = t.location_ids.slice(i).map((x) => names.get(x) ?? x);
+        return { per, note: `Google's Keyword Planner rate limit stopped the split; not counted on their own: ${left.join("; ")}. Ask again in a minute with just those locations.` };
+      }
+      for (const r of res.results ?? []) {
+        const row = keywordRow(r.text, r.keywordMetrics, new Map());
+        const cell = { searches: row.avg_monthly_searches, competition_index: row.competition_index, bid_low: row.top_of_page_bid.low, bid_high: row.top_of_page_bid.high };
+        // Google may name a keyword by a different close variant in each market: file it under all of them.
+        for (const k of [r.text, ...(r.closeVariants ?? [])]) {
+          const key = String(k).toLowerCase();
+          if (!per.has(key)) per.set(key, {});
+          per.get(key)![name] = cell;
+        }
+      }
+    }
+    return { per, note: null };
   }
 
   /**

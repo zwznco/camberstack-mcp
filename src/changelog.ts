@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.41.0", date: "2026-11-16",
+    summary: "Keyword research across markets, and from a whole website.",
+    items: [
+      "**Compare markets in one ask** (`by_location` on keyword volume): each country or place is counted on its own as well as together, with its searches, competition and bids, instead of one question per market.",
+      "**Ideas from a whole site** (`site` on keyword ideas): give a domain, yours or a competitor's, and Keyword Planner draws ideas from every page it knows there, not just one.",
+    ],
+  },
+  {
     version: "0.40.0", date: "2026-11-16",
     summary: "Keyword research shows the trend and up to four years of history.",
     items: [

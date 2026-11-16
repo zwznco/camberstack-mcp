@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.40.0";
+export const SERVER_VERSION = "0.41.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -319,17 +319,18 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("keyword_ideas", {
     title: "Keyword ideas (Keyword Planner)",
-    description: "Google Keyword Planner ideas from seed keywords and/or a landing-page URL: average and monthly searches, competition and the top-of-page bid range in the account's currency, biggest first. Ideas the account already targets, or already blocks as negatives, are marked in_account. Changes nothing.",
+    description: "Google Keyword Planner ideas from seed keywords, a landing-page URL or a whole site: average and monthly searches, competition and the top-of-page bid range in the account's currency, biggest first. Ideas the account already targets, or already blocks as negatives, are marked in_account. Changes nothing.",
     inputSchema: {
       customer_id: customerId,
       keywords: z.array(z.string().min(1).max(80)).max(20).optional().describe("Up to 20 seed keywords"),
       url: z.string().url().optional().describe("A page to pull ideas from, such as the ad's landing page"),
+      site: z.string().min(3).max(253).optional().describe("A whole site's domain, yours or a competitor's (example.com), on its own"),
       location_ids: locationIds, language_id: languageId, months,
       min_searches: z.number().int().min(0).default(0).describe("Drop ideas below this many average monthly searches"),
       limit: z.number().int().min(1).max(200).default(50).describe("Most ideas to return"),
     },
     annotations: read,
-  }, ({ customer_id, ...o }: { customer_id: string; keywords?: string[]; url?: string; location_ids?: string[]; language_id?: string; months?: number; min_searches: number; limit: number }) =>
+  }, ({ customer_id, ...o }: { customer_id: string; keywords?: string[]; url?: string; site?: string; location_ids?: string[]; language_id?: string; months?: number; min_searches: number; limit: number }) =>
     session().keywordIdeas(customer_id, o));
 
   tool("keyword_metrics", {
@@ -341,9 +342,10 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       customer_id: customerId,
       keywords: z.array(z.string().min(1).max(80)).min(1).max(500).describe("Keywords to look up, up to 500"),
       location_ids: locationIds, language_id: languageId, months,
+      by_location: z.boolean().optional().describe("Also count each location alone, to compare markets (up to 100 keywords)"),
     },
     annotations: read,
-  }, ({ customer_id, ...o }: { customer_id: string; keywords: string[]; location_ids?: string[]; language_id?: string; months?: number }) =>
+  }, ({ customer_id, ...o }: { customer_id: string; keywords: string[]; location_ids?: string[]; language_id?: string; months?: number; by_location?: boolean }) =>
     session().keywordMetrics(customer_id, o));
 
   tool("search_console_sites", {
