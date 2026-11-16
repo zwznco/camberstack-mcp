@@ -225,7 +225,13 @@ export class DemoAds {
         })),
         // Every campaign has these three, as on a real account.
         ...CAMPAIGNS.flatMap((c) => (["DESKTOP", "MOBILE", "TABLET"] as const).map((type, i) => ({ campaign: camp(c.id),
-          campaignCriterion: { resourceName: `customers/${DEMO_CID}/campaignCriteria/${c.id}~${30000 + i}`, criterionId: String(30000 + i), type: "DEVICE", negative: false, device: { type } } })))];
+          campaignCriterion: { resourceName: `customers/${DEMO_CID}/campaignCriteria/${c.id}~${30000 + i}`, criterionId: String(30000 + i), type: "DEVICE", negative: false, device: { type } } }))),
+        // A local business: every campaign targets its city, in English (Keyword Planner's market when none is named).
+        ...CAMPAIGNS.flatMap((c) => [
+          { type: "LOCATION", id: DEMO_CITY, location: { geoTargetConstant: `geoTargetConstants/${DEMO_CITY}` } },
+          { type: "LANGUAGE", id: "1000", language: { languageConstant: "languageConstants/1000" } },
+        ].map(({ id: cid, ...k }) => ({ campaign: camp(c.id), campaignCriterion: { resourceName: `customers/${DEMO_CID}/campaignCriteria/${c.id}~${cid}`,
+          criterionId: cid, status: "ENABLED", negative: false, ...k } })))];
       // One sample responsive search ad per ad group, so ad changes can be tried; the sample reports don't change.
       case "ad_group_ad":
         return AD_GROUPS.map((g, i) => ({ campaign: camp(g.campaign), adGroup: group(g.id), adGroupAd: {
@@ -251,10 +257,11 @@ export class DemoAds {
         return [];
       // So a build's summary names its targeting ("United States, English") as it does on a real account.
       case "geo_target_constant":
-        return Object.entries(GEOS).map(([id, canonicalName]) =>
-          ({ geoTargetConstant: { resourceName: `geoTargetConstants/${id}`, id, name: canonicalName.split(",")[0], canonicalName } }));
+        return Object.entries(GEOS).map(([id, [canonicalName, countryCode]]) =>
+          ({ geoTargetConstant: { resourceName: `geoTargetConstants/${id}`, id, name: canonicalName.split(",")[0], canonicalName, countryCode,
+            targetType: canonicalName.includes(",") ? "City" : "Country", status: "ENABLED" } }));
       case "language_constant":
-        return Object.entries(LANGUAGES).map(([id, name]) => ({ languageConstant: { resourceName: `languageConstants/${id}`, id, name } }));
+        return Object.entries(LANGUAGES).map(([id, [name, code]]) => ({ languageConstant: { resourceName: `languageConstants/${id}`, id, name, code, targetable: true } }));
       default:
         throw new Error(`The demo account supports these GAQL resources: customer, customer_client, campaign, ad_group, keyword_view, ad_group_criterion, `
           + `search_term_view, campaign_criterion, ad_group_ad, asset, campaign_asset, shared_set, shared_criterion, campaign_shared_set, user_list, recommendation, `
@@ -373,11 +380,15 @@ function collectionOf(opKey: string): string {
 
 const camel = (s: string) => s.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
 /** The locations and languages the demo can name: the ones the tools' descriptions use as examples, plus the demo's own city. */
-const GEOS: Record<string, string> = {
-  "2840": "United States", "2826": "United Kingdom", "2124": "Canada", "2036": "Australia", "2372": "Ireland", "2554": "New Zealand",
-  "1016367": "Chicago,Illinois,United States",
+const DEMO_CITY = "1016367";
+const GEOS: Record<string, [canonicalName: string, countryCode: string]> = {
+  "2840": ["United States", "US"], "2826": ["United Kingdom", "GB"], "2124": ["Canada", "CA"], "2036": ["Australia", "AU"],
+  "2372": ["Ireland", "IE"], "2554": ["New Zealand", "NZ"], "2040": ["Austria", "AT"],
+  [DEMO_CITY]: ["Chicago,Illinois,United States", "US"],
 };
-const LANGUAGES: Record<string, string> = { "1000": "English", "1003": "Spanish", "1002": "French", "1001": "German" };
+const LANGUAGES: Record<string, [name: string, code: string]> = {
+  "1000": ["English", "en"], "1003": ["Spanish", "es"], "1002": ["French", "fr"], "1001": ["German", "de"], "1014": ["Portuguese", "pt"],
+};
 
 const get = (row: any, path: string[]) => path.reduce((o, k) => (o == null ? undefined : o[k]), row);
 const lit = (v: string): string | number => {

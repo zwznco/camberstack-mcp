@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.36.0", date: "2026-11-16",
+    summary: "Keyword research counts searches where your campaigns run, and you can name a market in words.",
+    items: [
+      "**Your own market by default.** Keyword ideas and search volumes used to count the United States in English unless your AI passed a location. They now count the locations your campaigns target, in your campaigns' language. An account with no location targeting still gets the United States in English.",
+      "**Markets in words.** Your AI can ask for \"Austria\", \"AT\" or \"Springfield, Illinois\" instead of looking up Google's location ids first, and a language as \"German\" or \"de\". A place name that matches several places comes back with each one's id to pick from.",
+      "**Every result says which market it counted**, by name, and whether that came from your campaigns, from the request or from the default. A market you name counts searches in every language unless a language is named too.",
+    ],
+  },
+  {
     version: "0.35.12", date: "2026-11-15",
     summary: "Switching a campaign's conversion goal works when Google won't turn one of its goals on.",
     items: [

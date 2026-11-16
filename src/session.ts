@@ -22,6 +22,7 @@ import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole }
 import { writeFileSync } from "node:fs";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, queryShape } from "./gaql.js";
 import { reportBug, reportError } from "./sentry.js";
+import { CRITERIA_QUERY, campaignMarket, chooseTarget, describeTarget, resolveLanguage, resolveLocations, type PlanTarget, type Search } from "./keyword-target.js";
 import { markNoted, takeNote, type NoteVia } from "./result-notes.js";
 import { CAVEATS, MIN_DAYS, add, changeLogQuery, changeLogWindow, overlapNote, overlaps, addDays, between, blocks, localDay, measurable, minus, reading, shown, targets, windows, zero, type Metrics, type Target, type Windows } from "./results.js";
 import {
@@ -930,9 +931,11 @@ export class UserSession {
     if (!keywords.length && !o.url) throw new Error("Give at least one seed keyword or a URL.");
     const seed = keywords.length && o.url ? { keywordAndUrlSeed: { keywords, url: o.url } }
       : keywords.length ? { keywordSeed: { keywords } } : { urlSeed: { url: o.url } };
-    const [res, have] = await Promise.all([
-      this.keywordPlan(a, "generateKeywordIdeas", o, { includeAdultKeywords: false, ...seed }),
+    const t = await this.planTarget(a, o);
+    const [res, have, target] = await Promise.all([
+      this.keywordPlan(a, "generateKeywordIdeas", t, { includeAdultKeywords: false, ...seed }),
       this.keywordsInAccount(a),
+      this.describePlanTarget(a, t),
     ]);
     const ideas = (res.results ?? [])
       .map((r) => keywordRow(r.text, r.keywordIdeaMetrics, have))
@@ -941,7 +944,7 @@ export class UserSession {
     return {
       account: { customer_id: a.customerId, name: a.name, currency: a.currency },
       ...demoNote(a.customerId),
-      target: { location_ids: o.location_ids, language_id: o.language_id },
+      target,
       ideas: ideas.slice(0, o.limit), total_ideas: ideas.length,
     };
   }
@@ -950,9 +953,11 @@ export class UserSession {
   async keywordMetrics(customerId: string, o: KeywordPlanOpts & { keywords: string[] }) {
     const a = await this.account(customerId);
     const keywords = [...new Set(o.keywords.map((k) => k.trim()).filter(Boolean))];
-    const [res, have] = await Promise.all([
-      this.keywordPlan(a, "generateKeywordHistoricalMetrics", o, { includeAdultKeywords: false, keywords }),
+    const t = await this.planTarget(a, o);
+    const [res, have, target] = await Promise.all([
+      this.keywordPlan(a, "generateKeywordHistoricalMetrics", t, { includeAdultKeywords: false, keywords }),
       this.keywordsInAccount(a),
+      this.describePlanTarget(a, t),
     ]);
     const rows = (res.results ?? []).map((r) => ({
       ...keywordRow(r.text, r.keywordMetrics, have),
@@ -964,7 +969,7 @@ export class UserSession {
     const head = {
       account: { customer_id: a.customerId, name: a.name, currency: a.currency },
       ...demoNote(a.customerId),
-      target: { location_ids: o.location_ids, language_id: o.language_id },
+      target,
     };
     const noData = keywords.filter((k) => !covered.has(k.toLowerCase()));
     if (rows.length <= COMPACT_OVER) return { ...head, keywords: rows, no_data: noData };
@@ -985,16 +990,44 @@ export class UserSession {
    * say which of several ids it means, and models passing a batch retried blind (prod 2026-11-04, #12283 and #12287, the
    * second ending the session). Only on that error: look the ids up, and say which ones Google doesn't know.
    */
-  private async keywordPlan(a: Account, method: "generateKeywordIdeas" | "generateKeywordHistoricalMetrics", o: KeywordPlanOpts, req: object) {
+  private async keywordPlan(a: Account, method: "generateKeywordIdeas" | "generateKeywordHistoricalMetrics", t: PlanTarget, req: object) {
     try {
-      return await this.ads.keywordPlan(a.customerId, method, { ...planTarget(o), ...req }, a.loginCustomerId);
+      return await this.ads.keywordPlan(a.customerId, method, { ...plannerTarget(t), ...req }, a.loginCustomerId);
     } catch (e) {
       if (e instanceof AdsApiError && e.status === 400 && e.message.includes("(field geo_target_constants)")) {
-        const fix = await this.badLocations(a, o.location_ids).catch(() => null);
+        const fix = await this.badLocations(a, t.location_ids).catch(() => null);
         if (fix) (e as Error).message = e.message.replace(/→ a location ID isn't a valid geo target\..*?(?=; [A-Z_]{3,} |\n|$)/, `→ ${fix}`);
       }
       throw e;
     }
+  }
+
+  /**
+   * The market a Keyword Planner call counts (keyword-target.ts): what the caller named, resolved to ids, else the
+   * locations the account's campaigns target. A failed criteria read fails the call rather than quietly counting the default.
+   */
+  private async planTarget(a: Account, o: KeywordPlanOpts): Promise<PlanTarget> {
+    const q: Search = (query) => this.ads.search(a.customerId, query, a.loginCustomerId);
+    const named = !!o.location_ids?.length;
+    const [location_ids, language_id, market] = await Promise.all([
+      named ? resolveLocations(o.location_ids!, q) : undefined,
+      o.language_id ? resolveLanguage(o.language_id, q) : undefined,
+      named ? null : q(CRITERIA_QUERY).then(campaignMarket),
+    ]);
+    return chooseTarget({ location_ids, language_id }, market);
+  }
+
+  /** The result's `target`: the market with names. A failed name lookup leaves the ids; it never fails the call. */
+  private async describePlanTarget(a: Account, t: PlanTarget) {
+    const q: Search = (query) => this.ads.search(a.customerId, query, a.loginCustomerId);
+    const [geo, lang] = await Promise.all([
+      q(`SELECT geo_target_constant.id, geo_target_constant.canonical_name, geo_target_constant.status FROM geo_target_constant WHERE geo_target_constant.id IN (${t.location_ids.join(", ")})`)
+        .then((rows) => new Map(rows.map((r: any) => [String(r.geoTargetConstant?.id), String(r.geoTargetConstant?.canonicalName)])))
+        .catch(() => new Map<string, string>()),
+      t.language_id ? q(`SELECT language_constant.id, language_constant.name FROM language_constant WHERE language_constant.id = ${t.language_id}`)
+        .then((rows) => (rows[0]?.languageConstant?.name as string | undefined) ?? null).catch(() => null) : null,
+    ]);
+    return describeTarget(t, geo, lang);
   }
 
   /** Which of `ids` aren't enabled geo targets, as the message's fix; null when the lookup can't tell. */
@@ -1932,14 +1965,16 @@ export class UserSession {
   }
 }
 
-interface KeywordPlanOpts { location_ids: string[]; language_id: string }
+/** What the caller named; either left out means "work it out" (keyword-target.ts). */
+interface KeywordPlanOpts { location_ids?: string[]; language_id?: string }
 
 /** keyword_metrics answers with one object per keyword up to this many, a compact table above it. */
 const COMPACT_OVER = 100;
 
-const planTarget = (o: KeywordPlanOpts) => ({
-  language: `languageConstants/${o.language_id}`,
-  geoTargetConstants: o.location_ids.map((id) => `geoTargetConstants/${id}`),
+/** Keyword Planner's targeting fields; no language means every language. */
+const plannerTarget = (t: PlanTarget) => ({
+  ...(t.language_id ? { language: `languageConstants/${t.language_id}` } : {}),
+  geoTargetConstants: t.location_ids.map((id) => `geoTargetConstants/${id}`),
   keywordPlanNetwork: "GOOGLE_SEARCH",
 });
 

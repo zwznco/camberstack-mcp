@@ -20,13 +20,13 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.35.12";
+export const SERVER_VERSION = "0.36.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
 Never call apply_changes unless the user has explicitly approved that specific proposal in this conversation. Applied proposals can be reversed with undo_changes, except deletions Google can't reverse: their summary says so with a ⚠, so tell the user before they approve.
 Each Google service is added separately: when a result says one isn't part of the connection, give the user its grant_url (one click adds it); never tell them to reconnect.
-For keyword_ideas and keyword_metrics, pass the account's own market: location_ids default to the United States.
+For keyword_ideas and keyword_metrics, leave out location_ids to count searches where the account's campaigns target; pass them (a country, a place or an id) to research another market. Each result's target says which market was counted.
 For Search Console, lead with search_console_summary (per-query rows leave out rare queries). Camberstack can submit and remove sitemaps and add or remove properties, as proposals like any other change. It can't request indexing, and verifying a property's ownership is done in Search Console.
 Account 000-000-0001 is a demo with sample data: anyone can try every tool on it, and changes there never touch Google. Always say when you are using it.`;
 
@@ -104,12 +104,11 @@ const isLookup = (name: string, a: unknown) => {
 const UNLISTED = new Set<string>();
 
 const customerId = z.string().describe("Google Ads customer ID, with or without dashes (from list_accounts)");
-const locationIds = z.array(z.string().regex(/^\d+$/)).min(1).max(10).default(["2840"])
-  .describe("Google geo target IDs. 2840 United States, 2826 United Kingdom, 2124 Canada, 2036 Australia, 2356 India. "
-    + "For a state, city or other country, look the ID up with run_gaql: SELECT geo_target_constant.id, geo_target_constant.canonical_name "
-    + "FROM geo_target_constant WHERE geo_target_constant.name = 'Denver'");
-const languageId = z.string().regex(/^\d+$/).default("1000")
-  .describe("Google language ID. 1000 English, 1003 Spanish, 1002 French, 1001 German, 1014 Portuguese");
+const locationIds = z.array(z.string().trim().min(1).max(80)).min(1).max(10).optional()
+  .describe("Where to count searches; leave out for where the account's campaigns target. Each a geo target id (2840 United States, "
+    + "2040 Austria), a country or its code (\"Austria\", \"AT\"), or a place (\"Springfield, Illinois\")");
+const languageId = z.string().trim().min(1).max(40).optional()
+  .describe("Language id (1000 English, 1001 German), name or code (\"de\"). Leave out for the campaigns' language, or every language when you name locations");
 const siteUrl = z.string().min(1).describe("Search Console property exactly as search_console_sites lists it, e.g. sc-domain:example.com or https://www.example.com/");
 const days = z.number().int().min(1).max(365).default(30).describe("Look-back window in days, ending yesterday");
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -328,7 +327,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       limit: z.number().int().min(1).max(200).default(50).describe("Most ideas to return"),
     },
     annotations: read,
-  }, ({ customer_id, ...o }: { customer_id: string; keywords?: string[]; url?: string; location_ids: string[]; language_id: string; min_searches: number; limit: number }) =>
+  }, ({ customer_id, ...o }: { customer_id: string; keywords?: string[]; url?: string; location_ids?: string[]; language_id?: string; min_searches: number; limit: number }) =>
     session().keywordIdeas(customer_id, o));
 
   tool("keyword_metrics", {
@@ -342,7 +341,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       location_ids: locationIds, language_id: languageId,
     },
     annotations: read,
-  }, ({ customer_id, ...o }: { customer_id: string; keywords: string[]; location_ids: string[]; language_id: string }) =>
+  }, ({ customer_id, ...o }: { customer_id: string; keywords: string[]; location_ids?: string[]; language_id?: string }) =>
     session().keywordMetrics(customer_id, o));
 
   tool("search_console_sites", {

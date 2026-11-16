@@ -89,9 +89,23 @@ class FakeAds {
     return [{ resourceName: "googleAdsFields/segments.search_term", name: "segments.search_term", category: "SEGMENT", selectable: true,
       selectableWith: Array.from({ length: 650 }, (_, i) => `resource_${i}`) }];
   }
+  /** The campaigns' location and language criteria (keyword-target.ts CRITERIA_QUERY); none unless a test sets them. */
+  market: any[] = [];
   async search(_cid: string, q: string): Promise<any[]> {
+    if (q.includes("campaign_criterion.type IN ('LOCATION', 'LANGUAGE') AND campaign_criterion.negative = FALSE")) return this.market;
+    if (q.includes("geo_target_constant.target_type = 'Country'")) return [
+      { geoTargetConstant: { id: "2040", name: "Austria", countryCode: "AT" } }, { geoTargetConstant: { id: "2826", name: "United Kingdom", countryCode: "GB" } },
+      { geoTargetConstant: { id: "2840", name: "United States", countryCode: "US" } }];
+    if (q.includes("FROM language_constant WHERE language_constant.targetable")) return [
+      { languageConstant: { id: "1000", name: "English", code: "en" } }, { languageConstant: { id: "1001", name: "German", code: "de" } }];
+    if (q.includes("FROM language_constant WHERE language_constant.id = ")) {
+      const name = ({ "1000": "English", "1001": "German" } as Record<string, string>)[/id = (\d+)/.exec(q)![1]!];
+      return name ? [{ languageConstant: { name } }] : [];
+    }
     if (q.includes("FROM geo_target_constant WHERE geo_target_constant.id IN")) return [
       { geoTargetConstant: { id: "2840", canonicalName: "United States", status: "ENABLED" } },
+      { geoTargetConstant: { id: "2826", canonicalName: "United Kingdom", status: "ENABLED" } },
+      { geoTargetConstant: { id: "2040", canonicalName: "Austria", status: "ENABLED" } },
       { geoTargetConstant: { id: "2764", canonicalName: "Thailand", status: "ENABLED" } },
       { geoTargetConstant: { id: "1012873", canonicalName: "Bangkok,Thailand", status: "REMOVAL_PLANNED" } },
     ].filter((r) => q.includes(r.geoTargetConstant.id));
@@ -185,7 +199,7 @@ class FakeAds {
   plannerCalls: { method: string; req: any }[] = [];
   async keywordPlan(_cid: string, method: string, req: any) {
     this.plannerCalls.push({ method, req });
-    if (req.geoTargetConstants.some((g: string) => !/\/(2840|2826)$/.test(g)))
+    if (req.geoTargetConstants.some((g: string) => !/\/(2840|2826|2040)$/.test(g)))
       throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { fieldError: "INVALID_VALUE" },
         message: "The input has an invalid value.", location: { fieldPathElements: [{ fieldName: "geo_target_constants" }] } }] }] } }));
     if (method === "generateKeywordIdeas") {
@@ -1608,9 +1622,16 @@ describe("OAuth + MCP end to end", () => {
     expect(i.json.ideas[1].top_of_page_bid).toEqual({ low: 8, high: 31 });
     expect(i.json.ideas[0].in_account).toBe("keyword");
     expect(i.json.ideas[1].in_account).toBeUndefined();
+    // No campaign targets a location: the old default, said so, with names.
+    expect(i.json.target).toMatchObject({ locations: [{ id: "2840", name: "United States" }], language: { id: "1000", name: "English" },
+      locations_from: "default", language_from: "default" });
+    expect(i.json.target.note).toContain("No campaign in this account targets a location");
 
     const m = await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["Invoicing Software", "zzz"], location_ids: ["2826"] });
     expect(ads.plannerCalls.at(-1)!.req.geoTargetConstants).toEqual(["geoTargetConstants/2826"]);
+    // A market the caller names counts every language: no language sent.
+    expect(ads.plannerCalls.at(-1)!.req.language).toBeUndefined();
+    expect(m.json.target).toMatchObject({ locations: [{ id: "2826", name: "United Kingdom" }], language: "all languages", locations_from: "given", language_from: "all" });
     expect(m.json.keywords[0]).toMatchObject({ keyword: "invoice software", avg_monthly_searches: 12100, monthly: { "2026-08": 11000, "2026-09": 13000 } });
     expect(m.json.no_data).toEqual(["zzz"]);
 
@@ -1633,6 +1654,36 @@ describe("OAuth + MCP end to end", () => {
     expect(bad.text).toContain("not a usable geo target: 1012873 (Bangkok,Thailand, REMOVAL_PLANNED), 9999999 (no such location). These are fine: 2840 United States.");
     expect(bad.text).not.toContain("a location ID isn't a valid geo target");
     expect(ads.mutations.length).toBe(before);
+  });
+
+  it("counts Keyword Planner searches where the account's campaigns target, or in a market named in words", async () => {
+    const crit = (campaign: string, status: string, k: object) => ({ campaign: { id: campaign, status }, campaignCriterion: { negative: false, status: "ENABLED", ...k } });
+    ads.market = [
+      crit("10", "ENABLED", { type: "LOCATION", location: { geoTargetConstant: "geoTargetConstants/2040" } }),
+      crit("10", "ENABLED", { type: "LANGUAGE", language: { languageConstant: "languageConstants/1001" } }),
+      crit("11", "PAUSED", { type: "LOCATION", location: { geoTargetConstant: "geoTargetConstants/2840" } }),
+    ];
+    try {
+      const m = await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoice software"] });
+      expect(m.isError).toBe(false);
+      expect(ads.plannerCalls.at(-1)!.req).toMatchObject({ geoTargetConstants: ["geoTargetConstants/2040"], language: "languageConstants/1001" });
+      expect(m.json.target).toEqual({ locations: [{ id: "2040", name: "Austria" }], language: { id: "1001", name: "German" },
+        locations_from: "campaigns", language_from: "campaigns", note: "Locations are the ones this account's campaigns target." });
+
+      // Named in words: a country code and a language name, resolved before Keyword Planner is asked.
+      const named = await call(token, "keyword_ideas", { customer_id: "1112223333", keywords: ["invoice"], location_ids: ["uk"], language_id: "english" });
+      expect(ads.plannerCalls.at(-1)!.req).toMatchObject({ geoTargetConstants: ["geoTargetConstants/2826"], language: "languageConstants/1000" });
+      expect(named.json.target).toMatchObject({ locations_from: "given", language_from: "given" });
+
+      // A name nothing matches: refused before Keyword Planner, which isn't called.
+      const calls = ads.plannerCalls.length;
+      const none = await call(token, "keyword_ideas", { customer_id: "1112223333", keywords: ["invoice"], location_ids: ["Atlantis"] });
+      expect(none.isError).toBe(true);
+      expect(none.text).toContain(`no location named "Atlantis"`);
+      expect(ads.plannerCalls.length).toBe(calls);
+    } finally {
+      ads.market = [];
+    }
   });
 
   it("reads Search Console and joins it with the account's search terms, changing nothing", async () => {
@@ -2102,6 +2153,9 @@ describe("OAuth + MCP end to end", () => {
     expect(ideas.note).toContain("Sample data");
     expect(ideas.ideas[0].keyword).toBe("tankless water heater");
     expect(ideas.ideas.find((x: any) => x.keyword === "water heater repair").in_account).toBe("keyword");
+    // The demo's campaigns target Chicago in English, so that's the market counted.
+    expect(ideas.target).toMatchObject({ locations: [{ id: "1016367", name: "Chicago,Illinois,United States" }], language: { id: "1000", name: "English" },
+      locations_from: "campaigns", language_from: "campaigns" });
     const kws = (await call(token, "keyword_metrics", { customer_id: "0000000001", keywords: ["sewer line repair"] })).json;
     expect(Object.keys(kws.keywords[0].monthly)).toHaveLength(12);
 
@@ -3066,7 +3120,7 @@ describe("OAuth + MCP end to end", () => {
     expect(page).toContain(`${names.length} tools`);
     // Parameters come from the schemas: defaults and descriptions, not hand-written copy.
     expect(page).toContain("<code>location_ids</code>");
-    expect(page).toContain("Default [&quot;2840&quot;].");
+    expect(page).toContain("leave out for where the account&#39;s campaigns target");
     expect(page).toContain("https://github.com/zwznco/camberstack-mcp");
     expect(page).toContain('<span class="pill act">Needs your go-ahead</span>');
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/tools`);
