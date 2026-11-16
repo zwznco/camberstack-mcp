@@ -23,8 +23,9 @@ import { AdConversions } from "./adconversions.js";
 import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
 import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
+import { Survey } from "./survey.js";
 import { CHANGELOG } from "./changelog.js";
-import { aboutPage, changelogPage, docsPage, errorPage, infoPage, homePage, chatgptGuidePage, chatgptGuidePagePt, claudeGuidePage, geminiGuidePage, llmsTxt, merchantCenterPage, analyticsPage, tagManagerPage, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
+import { aboutPage, changelogPage, docsPage, errorPage, infoPage, surveyPage, homePage, chatgptGuidePage, chatgptGuidePagePt, claudeGuidePage, geminiGuidePage, llmsTxt, merchantCenterPage, analyticsPage, tagManagerPage, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
 import { setChangeCap } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
@@ -80,7 +81,9 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     agencyLink: (userId) => billing.link("agency", userId, "email"),
     plusLink: (userId) => billing.link("plus", userId, "email"),
   });
-  const announcements = new Announcements({ db, lifecycle, internalEmails, canSend: !!cfg.mail });
+  // Same key as unsubscribe links (a different message is signed), so no new secret.
+  const survey = new Survey({ db, baseUrl: cfg.baseUrl, signingKey: lifecycleSigningKey(cfg.encryptionKey) });
+  const announcements = new Announcements({ db, lifecycle, internalEmails, canSend: !!cfg.mail, survey });
   const info = (title: string, body: string) => infoPage(cfg.baseUrl, title, body);
 
   const provider = new CamberstackProvider(db, {
@@ -410,6 +413,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   billing.mount(app, info);
   grants.mount(app, info);
   lifecycle.mount(app, info);
+  survey.mount(app, (lang, title, body) => surveyPage(cfg.baseUrl, lang, title, body));
 
   // Page-view beacon (analytics.ts): only browsers that run JS are counted, which keeps bots out.
   const beaconJs = BEACON_JS + (cfg.ga4MeasurementId ? gtagJs(cfg.ga4MeasurementId) : "");

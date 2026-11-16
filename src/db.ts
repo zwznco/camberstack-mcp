@@ -243,6 +243,17 @@ CREATE TABLE IF NOT EXISTS result_notes (
   noted_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS result_notes_at ON result_notes(noted_at);
+
+-- Clicks on a survey email's answer links (survey.ts). Every click is kept; a user's latest one is their answer.
+CREATE TABLE IF NOT EXISTS survey_answers (
+  id       INTEGER PRIMARY KEY,
+  survey   TEXT NOT NULL,
+  user_id  TEXT NOT NULL,
+  choice   TEXT NOT NULL,
+  lang     TEXT NOT NULL,      -- the email's language
+  at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS survey_answers_user ON survey_answers(survey, user_id);
 `;
 
 export function openDb(dataDir: string): DB {

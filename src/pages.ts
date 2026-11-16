@@ -1704,6 +1704,12 @@ export function infoPage(baseUrl: string, title: string, body: string): string {
   return layout({ baseUrl, path: "/", title: `${esc(title)} | Camberstack`, description: title, body: `<h1>${esc(title)}</h1>${body}` });
 }
 
+/** infoPage in another language, never indexed: the survey email's answer page (survey.ts). */
+export function surveyPage(baseUrl: string, lang: string, title: string, body: string): string {
+  return layout({ baseUrl, path: "/survey", lang, noindex: true, title: `${esc(title)} | Camberstack`, description: title,
+    body: `<h1${lang === "ar" ? ' dir="rtl"' : ""}>${esc(title)}</h1>${body}` });
+}
+
 /**
  * /authorize: which app is asking, and where the sign-in goes back to, before we send anyone to Google.
  * Google's own screen names only Camberstack, so without this a link built by a stranger looks identical.

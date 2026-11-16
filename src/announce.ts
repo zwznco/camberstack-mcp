@@ -22,6 +22,7 @@ import type { DB } from "./db.js";
 import { now } from "./db.js";
 import type { Lifecycle } from "./lifecycle.js";
 import { esc } from "./pages.js";
+import { LANGS, SURVEY_ID, type Lang, type Survey } from "./survey.js";
 
 export type Audience = "all" | "free" | "pro";
 export const AUDIENCES: Record<Audience, string> = { all: "Everyone", free: "Free plan", pro: "Paid and complimentary plans (Plus, Pro, Agency)" };
@@ -36,6 +37,8 @@ export interface Preset {
   subject: string;
   /** Plain text: blank lines between paragraphs, "- " bullets, **bold**, [text](https://…) links, bare https:// URLs. */
   body: string;
+  /** A different email per recipient (their language, their own links); subject and body above are the English preview. */
+  personal?: (u: { id: string; time_zone: string | null }, s: Survey, lang?: Lang) => { subject: string; body: string; rtl?: boolean };
 }
 
 export const PRESETS: Preset[] = [
@@ -104,6 +107,27 @@ More on what it can do: https://camberstack.io/google-tag-manager-mcp
 
 Adam`,
   },
+  {
+    id: SURVEY_ID,
+    plan: "One-click survey (projects/camberstack/SURVEY-EMAIL.md): each answer is a signed link, so a click is the answer. "
+      + "In the recipient's language by their Google Ads time zone (8 languages, English otherwise). Results on this page.",
+    audience: "all",
+    subject: "One click: what should Camberstack get better at?",
+    body: `Hi,
+
+You've been using Camberstack with your Google accounts. Which of these should it get better at first? One click is your answer, no reply needed.
+
+- [Answering questions about my ads](https://camberstack.io/survey)
+- [Checking my conversion tracking](https://camberstack.io/survey)
+- [Cleaning up wasted search terms](https://camberstack.io/survey)
+- [Keyword research](https://camberstack.io/survey)
+- [Website traffic and SEO reports](https://camberstack.io/survey)
+- [It already does what I need](https://camberstack.io/survey)
+
+Thanks,
+Adam`,
+    personal: (u, s, lang) => s.email(u.id, u.time_zone, lang),
+  },
 ];
 
 export interface SendState { started_at: number | null; sent_at: number | null; sent: number }
@@ -122,6 +146,8 @@ export interface AnnounceDeps {
   canSend: boolean;
   dailyLimit?: number;
   sleep?: (ms: number) => Promise<void>;
+  /** Builds the survey preset's per-recipient links; a personal preset can't send without it. */
+  survey?: Survey;
 }
 
 export class Announcements {
@@ -130,6 +156,9 @@ export class Announcements {
   constructor(private d: AnnounceDeps) {}
 
   get canSend(): boolean { return this.d.canSend; }
+
+  /** The survey's answers so far (survey.ts), for its page in the admin. */
+  surveyResults() { return this.d.survey?.results() ?? null; }
 
   /** False while what the preset describes isn't live yet. */
   ready(p: Preset): boolean { return p.ready?.() ?? true; }
@@ -150,22 +179,35 @@ export class Announcements {
   }
 
   /** Who it would go to now, or still will if a send was interrupted. Empty once it has been sent. */
-  recipients(p: Preset): { id: string; email: string; plan: string }[] {
+  recipients(p: Preset): { id: string; email: string; plan: string; time_zone: string | null }[] {
     const s = this.state(p.id);
     if (s.sent_at) return [];
     const plan = p.audience === "free" ? "AND u.plan = 'free'" : p.audience === "pro" ? "AND u.plan != 'free'" : "";
-    return (this.d.db.prepare(`SELECT u.id, u.email, u.plan FROM users u WHERE u.email_opt_out = 0 ${plan} AND u.created_at <= ?
+    return (this.d.db.prepare(`SELECT u.id, u.email, u.plan, u.time_zone FROM users u WHERE u.email_opt_out = 0 ${plan} AND u.created_at <= ?
         AND NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = ?) ORDER BY u.created_at`)
-      .all(s.started_at ?? now(), `announce:${p.id}`) as { id: string; email: string; plan: string }[])
+      .all(s.started_at ?? now(), `announce:${p.id}`) as { id: string; email: string; plan: string; time_zone: string | null }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
   }
 
-  /** One copy to one address, logged nowhere: for checking a preset before its send. */
+  /** One copy to one address, logged nowhere: for checking a preset before its send. A personal preset sends one per language. */
   async sendTest(id: string, to: string): Promise<void> {
     const p = this.preset(id);
     if (!p) throw new Error("No such announcement.");
     if (!this.d.canSend) throw new Error("Email isn't configured (RESEND_API_KEY).");
-    await this.d.lifecycle.sendAnnouncement(to, render(p, true), "preview");
+    if (!p.personal) { await this.d.lifecycle.sendAnnouncement(to, render(p, true), "preview"); return; }
+    const sleep = this.d.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    for (const lang of LANGS) {
+      await this.d.lifecycle.sendAnnouncement(to, this.message(p, { id: "preview", time_zone: null }, true, lang), "preview");
+      await sleep(GAP_MS);
+    }
+  }
+
+  /** The email one recipient gets. */
+  private message(p: Preset, u: { id: string; time_zone: string | null }, test: boolean, lang?: Lang) {
+    if (!p.personal) return render(p, test);
+    if (!this.d.survey) throw new Error("This announcement needs the survey links (Survey), which aren't set up.");
+    const m = p.personal(u, this.d.survey, lang);
+    return render(m, test, m.rtl);
   }
 
   /**
@@ -200,14 +242,13 @@ export class Announcements {
    * everyone else. Anything else (429 quota, 5xx, network) is about Resend: stop until the next run.
    */
   private async run(p: Preset): Promise<{ sent: number; left: number }> {
-    const m = render(p, false);
     const sleep = this.d.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
     const kind = `announce:${p.id}`;
     let sent = 0;
     for (const u of this.recipients(p).slice(0, this.batchLeft())) {
       if (!this.d.db.prepare("INSERT OR IGNORE INTO email_log (user_id, kind, sent_at) VALUES (?, ?, ?)").run(u.id, kind, now()).changes) continue;
       try {
-        await this.d.lifecycle.sendAnnouncement(u.email, m, u.id, `${u.id}:${kind}`);
+        await this.d.lifecycle.sendAnnouncement(u.email, this.message(p, u, false), u.id, `${u.id}:${kind}`);
         sent++;
       } catch (e) {
         this.d.db.prepare("DELETE FROM email_log WHERE user_id = ? AND kind = ?").run(u.id, kind);
@@ -223,7 +264,7 @@ export class Announcements {
 }
 
 /** Subject + body as an email: paragraphs, "- " bullets, **bold**, [text](https://…) and bare https:// links. */
-export function render(a: Pick<Preset, "subject" | "body">, test: boolean): { subject: string; text: string; html: string } {
+export function render(a: Pick<Preset, "subject" | "body">, test: boolean, rtl = false): { subject: string; text: string; html: string } {
   const inline = (s: string) => esc(s)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, (_m, t: string, u: string) => `<a href="${u}">${t}</a>`)
@@ -238,6 +279,6 @@ export function render(a: Pick<Preset, "subject" | "body">, test: boolean): { su
   return {
     subject: `${test ? "[TEST] " : ""}${a.subject}`,
     text: a.body.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, "$1 ($2)"),
-    html: `<div style="font:16px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;color:#1c1b19;max-width:560px">${html}</div>`,
+    html: `<div${rtl ? ' dir="rtl"' : ""} style="font:16px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;color:#1c1b19;max-width:560px">${html}</div>`,
   };
 }

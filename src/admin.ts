@@ -17,6 +17,7 @@ import { changeCap, changeCapFrom, planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
 import { FEEDBACK_KINDS, feedbackCount, recentFeedback, type FeedbackRow } from "./feedback.js";
 import { AUDIENCES, DAILY_LIMIT, PRESETS, render as renderAnnouncement, type Announcements, type Preset, type SendState } from "./announce.js";
+import { CHOICES, LANGS, SURVEY_ID, choiceLabel, langFor } from "./survey.js";
 
 export interface AdminDeps {
   db: DB;
@@ -629,9 +630,26 @@ ${ready ? "" : `<p class="warn">Locked: what this describes isn't live yet. A te
 ${card("Preview", `<div class="pad"><p class="dim" style="margin:0 0 4px">Subject</p><p style="margin:0 0 16px;font-weight:600">${esc(m.subject)}</p>
 <div class="mail">${m.html}<hr><p class="dim" style="font-size:12px">You're getting this because you connected Camberstack (camberstack.io) to Google Ads. … Unsubscribe</p></div></div>`)}
 ${card(st.sent_at ? "Recipients" : `Recipients (${to.length})`, st.sent_at ? `<p class="empty">Sent to ${people(st.sent)}. It can't send again.</p>`
+    : p.personal ? table(["email", "plan", "language"], to.map((u) => [esc(u.email), esc(u.plan), esc(langFor(u.time_zone))]), "Nobody matches this audience.")
     : table(["email", "plan"], to.map((u) => [esc(u.email), esc(u.plan)]), "Nobody matches this audience."))}
 </div>
+${p.id === SURVEY_ID ? surveyCard(ann, to) : ""}
 ${STYLE}`;
+}
+
+/** The survey's answers: each user's latest click, by choice and by the email's language; plus who gets which language. */
+function surveyCard(ann: Announcements, to: { time_zone: string | null }[]): string {
+  const r = ann.surveyResults();
+  if (!r) return "";
+  const pct = (n: number) => r.total ? ` <span class="dim">${Math.round(100 * n / r.total)}%</span>` : "";
+  const planned: Record<string, number> = {};
+  for (const u of to) planned[langFor(u.time_zone)] = (planned[langFor(u.time_zone)] ?? 0) + 1;
+  return `<div class="grid2">
+${card(`Answers (${r.total} ${r.total === 1 ? "person" : "people"}, ${r.clicks} clicks)`, table(["answer", "people"],
+    CHOICES.map((c) => [esc(choiceLabel(c)), `${r.byChoice[c] ?? 0}${pct(r.byChoice[c] ?? 0)}`]), "No answers yet."))}
+${card("By language", table(["language", "answered", "still to send"],
+    LANGS.map((l) => [l, String(r.byLang[l] ?? 0), String(planned[l] ?? 0)]), "—"))}
+</div>`;
 }
 
 const STYLE = `<style>
