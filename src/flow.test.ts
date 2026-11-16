@@ -2796,6 +2796,7 @@ describe("OAuth + MCP end to end", () => {
           headlines: ["Invoices that get paid"], long_headlines: ["Send an invoice with a pay button"], descriptions: ["Clients pay by card."],
           business_name: "Acme", logo_image: "https://img.example.com/logo.png", final_url: "https://example.com/" }] }] }]);
       expect(dg.summary).toContain('Create Demand Gen (YouTube video ads) campaign "YouTube Test", PAUSED (nothing spends until you enable it): 15.00/day, maximize conversions');
+      expect(dg.summary).toContain("Google may lay text from the ad over the videos");
       expect(dg.summary).toContain("⚠ bidding for conversions needs working conversion tracking");
       const gops = ads.mutations.at(-1)!.operations;
       expect(gops[1].campaignOperation.create).toMatchObject({ advertisingChannelType: "DEMAND_GEN", maximizeConversions: {} });

@@ -735,7 +735,7 @@ export async function resolveChange(
         change, service: "googleAds", operations: ops,
         describe: `${buildHead("Demand Gen (YouTube video ads)", c)}, ${chosenBidding(c.bidding).label}${c.end_date ? `, ends ${c.end_date}` : ""}; ` +
           `${c.ad_groups.length} ad group(s): ${groups.join("; ")}; ${vids.count} video(s), ${imgs.summary}` +
-          (c.bidding === "MAXIMIZE_CONVERSIONS" ? CONVERSIONS_WARN : "") + budgetWarn(c.daily_budget),
+          (c.bidding === "MAXIMIZE_CONVERSIONS" ? CONVERSIONS_WARN : "") + OVERLAY_NOTE + budgetWarn(c.daily_budget),
       };
     }
     case "create_performance_max_campaign": {
@@ -1889,6 +1889,11 @@ function campaignOps(T: ReturnType<typeof tempIds>, c: { name: string; daily_bud
 const buildHead = (kind: string, c: { name: string; daily_budget: number }) =>
   `Create ${kind} campaign "${c.name}", PAUSED (nothing spends until you enable it): ${c.daily_budget.toFixed(2)}/day`;
 const budgetWarn = (daily: number) => (daily >= 100 ? ` ⚠ budget ${daily.toFixed(2)}/day` : "");
+/**
+ * Since API v26.2, new Demand Gen video ads are opted in to OVERLAY_TEXT_ON_VIDEOS (it was off before). Left at Google's
+ * default and said in the proposal, rather than opted out (operator, 2026-11-16).
+ */
+const OVERLAY_NOTE = " ⚠ Google may lay text from the ad over the videos: it's on by default for new Demand Gen video ads";
 const CONVERSIONS_WARN = " ⚠ bidding for conversions needs working conversion tracking, or Google has nothing to optimize for";
 const textList = (xs: string[]) => xs.map((text) => ({ text }));
 const geoMode = (presenceOnly: boolean) =>
