@@ -29,7 +29,7 @@ export const TAG_MANAGER_SCOPES = ["https://www.googleapis.com/auth/tagmanager.e
   "https://www.googleapis.com/auth/tagmanager.edit.containerversions", "https://www.googleapis.com/auth/tagmanager.publish",
   "https://www.googleapis.com/auth/tagmanager.delete.containers"];
 const GOOGLE_SCOPES = ["openid", "email", ADS_SCOPE, SEARCH_CONSOLE_SCOPE];
-const ADS_API = "https://googleads.googleapis.com/v23";
+const ADS_API = "https://googleads.googleapis.com/v26";
 
 /** The Ads API counts money in millionths of the account currency. */
 export const micros = (m: unknown) => Number(m ?? 0) / 1_000_000;
