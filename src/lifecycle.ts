@@ -1,6 +1,9 @@
 /**
  * Lifecycle emails, each sent at most once per user, through Resend:
- *   first_steps    connected 2–14 days ago and never asked anything real → the first question to ask, and the demo
+ *   first_steps    connected 2–14 days ago and never asked anything real → the first question to ask, and the demo.
+ *                  If their login has no Google Ads account (ads_accounts = 0, no manager), the same slot says so instead:
+ *                  reconnect with the login that has one, or create one; Camberstack can't. Added 2026-11-16: a user with
+ *                  no account got "ask about your campaigns" and replied he'd try it
  *   limit_reached  a tool refused a second Google Ads account (the Free plan's limit), still free the next morning (6+ hours later) → one note:
  *                  when another account opens, what Pro covers, the upgrade link
  *   (switch_wanted, sent when a Free user was stopped before spending the account switch, went with the switch on 2026-11-06;
@@ -110,7 +113,7 @@ const USED_TOOLS = "('account_overview','run_gaql','keyword_ideas','keyword_metr
   + "'search_console_inspect_urls','search_console_sitemaps','analytics_report','analytics_landing_pages','propose_analytics_changes','propose_search_console_changes',"
   + "'merchant_product_issues','merchant_report','merchant_ad_spend','propose_merchant_changes')";
 
-type Due = { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string; plan?: string; afterAccountEmail?: boolean };
+type Due = { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string; plan?: string; afterAccountEmail?: boolean; noAds?: boolean };
 
 /** At most one email per user, by PRIORITY, and none too soon after the user's last email (see the header). */
 export function spaced(due: Due[], lastEmail: Map<string, number>, lastSales: Map<string, number>, t: number): Due[] {
@@ -141,11 +144,12 @@ export class Lifecycle {
     const t = now();
     const eligible = `u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan = 'free'`;
     const notSent = (k: string) => `NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = '${k}')`;
-    const first = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.created_at FROM users u WHERE ${eligible}
+    const first = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.created_at,
+      (u.ads_accounts = 0 AND coalesce(u.ads_managers, 0) = 0) no_ads FROM users u WHERE ${eligible}
       AND u.created_at BETWEEN ? AND ? AND ${notSent("first_steps")}
       AND NOT EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.error IS NULL AND c.tool IN ${USED_TOOLS}
         AND NOT (c.tool = 'run_gaql' AND c.customer_id IS NULL))`)  // a run_gaql field lookup reads no account; error set = a notice or grant link, not use
-      .all(t - (15 + GAP_DAYS) * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; created_at: number }[];
+      .all(t - (15 + GAP_DAYS) * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; created_at: number; no_ads: number | null }[];
     // Refused a second account by the plan gate (session.ts checkAccount), the last refusal 6 hours to 30 days ago. A refusal
     // logs as ok since it became a notice (it was ok = 0 before), so it's matched on the text; Merchant ones by their wording.
     // A refusal means they're working on more than one account now (there is no switch since 2026-11-06): the next
@@ -201,7 +205,7 @@ export class Lifecycle {
     const lastSales = latest(SALES_SQL);
     const accountEmailed = new Set(latest("kind IN ('limit_reached','switch_wanted')").keys());
     const due = [
-      ...first.filter(ok).map((u) => ({ kind: "first_steps" as const, id: u.id, email: u.email, days: Math.floor((t - u.created_at) / DAY) })),
+      ...first.filter(ok).map((u) => ({ kind: "first_steps" as const, id: u.id, email: u.email, days: Math.floor((t - u.created_at) / DAY), noAds: u.no_ads === 1 })),
       // Every refusal's text names when another account opens (session.ts refuse: "opens on YYYY-MM-DD"; before 0.29.0 "the next opens YYYY-MM-DD").
       // Both stops by the same morning: change_limit only, so one upgrade email, not two.
       ...limit.filter((u) => ok(u) && !atCap.some((c) => c.id === u.id)).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
@@ -218,7 +222,7 @@ export class Lifecycle {
   /** Hourly. */
   async run(): Promise<number> {
     if (!this.d.mail) return 0;
-    return this.deliver(this.due(), (u) => u.kind === "first_steps" ? firstSteps(u.days)
+    return this.deliver(this.due(), (u) => u.kind === "first_steps" ? (u.noAds ? noAdsAccount(u.days) : firstSteps(u.days))
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
       : u.kind === "paid_limit" ? paidLimit(this.d.baseUrl, u.plan === "pro" ? "pro" : "plus",
         u.plan === "pro" ? this.d.agencyLink?.(u.id) ?? null : this.d.upgradeLink(u.id), u.opens)
@@ -341,6 +345,30 @@ Camberstack`,
       + p("From there, ask whatever you'd ask about your account: search terms, keywords, budgets. Nothing changes until you approve it.")
       + p(`Rather try it on sample data first? Ask: <em>“Show me Camberstack's demo account.”</em>`)
       + p("If something didn't work when you tried, just reply. I read every email.") + p("Adam<br>Camberstack")),
+  };
+}
+
+/** first_steps for a login with no Google Ads account: the campaign question would only get "no accounts". No demo pitch (nobody uses it). */
+function noAdsAccount(days: number) {
+  const ago = `${days} days ago`;
+  return {
+    subject: "Camberstack can't find a Google Ads account",
+    text: `Hi,
+
+You connected Camberstack ${ago}, but the Google login you used doesn't have access to any Google Ads account, so there's nothing for it to work with yet.
+
+If your Google Ads account is under a different Google login (a work one, say): disconnect Camberstack in Claude or ChatGPT, connect again, and choose that login when Google asks. In Google Ads, Admin > Access and security shows which logins have access.
+
+If you don't have a Google Ads account yet, you'd create one at ads.google.com first. Camberstack works with an existing account and can't set one up for you.
+
+If it's neither, just reply. I read every email.
+
+Adam
+Camberstack`,
+    html: wrap(p("Hi,") + p(`You connected Camberstack ${ago}, but the Google login you used doesn't have access to any Google Ads account, so there's nothing for it to work with yet.`)
+      + p("If your Google Ads account is under a different Google login (a work one, say): disconnect Camberstack in Claude or ChatGPT, connect again, and choose that login when Google asks. In Google Ads, <strong>Admin</strong> &gt; <strong>Access and security</strong> shows which logins have access.")
+      + p(`If you don't have a Google Ads account yet, you'd create one at <a href="https://ads.google.com">ads.google.com</a> first. Camberstack works with an existing account and can't set one up for you.`)
+      + p("If it's neither, just reply. I read every email.") + p("Adam<br>Camberstack")),
   };
 }
 

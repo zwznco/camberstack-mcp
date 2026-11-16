@@ -51,6 +51,23 @@ describe("lifecycle emails", () => {
     expect(await lc.run()).toBe(0);  // never twice
   });
 
+  it("tells a first_steps user whose login has no Google Ads account so, instead of the campaign question (2026-11-16)", async () => {
+    const { db, lc, sent, user } = setup();
+    user("none", "none@example.com", 3); db.prepare("UPDATE users SET ads_accounts = 0, ads_managers = 0 WHERE id = 'none'").run();
+    user("mcc", "mcc@example.com", 3); db.prepare("UPDATE users SET ads_accounts = 0, ads_managers = 1 WHERE id = 'mcc'").run();
+    user("unknown", "unknown@example.com", 3);       // never listed: the usual email
+    expect(await lc.run()).toBe(3);
+    const by = Object.fromEntries(sent.map((m) => [m.to[0], m]));
+    expect(by["none@example.com"].subject).toBe("Camberstack can't find a Google Ads account");
+    expect(by["none@example.com"].text).toContain("different Google login");
+    expect(by["none@example.com"].text).not.toContain("demo");
+    expect(by["none@example.com"].text).not.toContain("last month");
+    expect(by["mcc@example.com"].subject).toBe("The first thing to ask Camberstack");
+    expect(by["unknown@example.com"].subject).toBe("The first thing to ask Camberstack");
+    expect(db.prepare("SELECT kind FROM email_log WHERE user_id = 'none'").all()).toEqual([{ kind: "first_steps" }]);
+    expect(await lc.run()).toBe(0);
+  });
+
   it("doesn't count a run_gaql field lookup as using Camberstack: it reads no account (0.14.0)", async () => {
     const { db, lc, sent, user } = setup();
     const gaql = (userId: string, cid: string | null) =>
