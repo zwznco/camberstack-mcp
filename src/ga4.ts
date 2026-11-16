@@ -256,12 +256,15 @@ async function fieldHint(ga: Analytics, propertyId: string, message: string): Pr
   const scope = /^(custom(?:Event|User|Item)):/.exec(name)?.[1];
   if (scope) {
     const mine = pool.filter((n) => n.startsWith(`${scope}:`));
-    // A dimension Camberstack can register itself (ga4-changes.ts); a custom metric needs a unit, so that stays in GA4's admin.
+    // Camberstack registers either kind itself (ga4-changes.ts). Custom metrics are event-scoped only.
     const param = name.slice(scope.length + 1);
-    const register = kind === "dimension" && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(param)
-      ? ` If the site sends ${param}, register it: propose the Google Analytics change register_custom_dimension (parameter_name ${param}, scope `
-        + `${({ customEvent: "EVENT", customUser: "USER", customItem: "ITEM" } as Record<string, string>)[scope]}). GA4 counts it from then on, not for earlier dates, and reports have it after 24-48 hours.`
-      : " An event parameter is reportable only once it is registered as a custom definition in GA4 (Admin, Custom definitions).";
+    const ok = /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(param) && (kind === "dimension" || scope === "customEvent");
+    const register = !ok ? ` ${name} can't be registered: ${kind === "metric" ? "custom metrics are customEvent: only, and a" : "a"} parameter name is letters, digits and underscores, starting with a letter.`
+      : kind === "dimension"
+        ? ` If the site sends ${param}, register it: propose the Google Analytics change register_custom_dimension (parameter_name ${param}, scope `
+          + `${({ customEvent: "EVENT", customUser: "USER", customItem: "ITEM" } as Record<string, string>)[scope]}). GA4 counts it from then on, not for earlier dates, and reports have it after 24-48 hours.`
+        : ` If the site sends ${param} as a number, register it: propose the Google Analytics change register_custom_metric (parameter_name ${param}, `
+          + "unit STANDARD unless it's money, distance or time). GA4 counts it from then on, not for earlier dates, and reports have it after 24-48 hours.";
     return `\nThis property's own ${kind} list (GA4 metadata): ${name} isn't in it, and Google's "Did you mean" above is only a spelling guess. `
       + (mine.length ? `Its registered ${scope}: ${kind}s are: ${mine.slice(0, 20).join(", ")}${mine.length > 20 ? ` (and ${mine.length - 20} more)` : ""}.`
         : `It has no ${scope}: ${kind}s registered.`) + register;
@@ -313,6 +316,7 @@ interface DemoGaState {
   adsLinks: { id: number; customerId: string }[];
   /** Added 0.37.0: a state saved before then has none. */
   customDimensions?: { id: number; parameterName: string; displayName: string; scope: string }[];
+  customMetrics?: { id: number; parameterName: string; displayName: string; measurementUnit: string }[];
   nextId: number;
 }
 const freshGa = (): DemoGaState => ({ keyEvents: [{ id: 1, eventName: "generate_lead", countingMethod: "ONCE_PER_EVENT" }], adsLinks: [], nextId: 2 });
@@ -341,6 +345,18 @@ export class DemoAnalytics implements Analytics {
     const keyName = (id: number) => `${p}/keyEvents/${id}`, linkName = (id: number) => `${p}/googleAdsLinks/${id}`;
     const dimName = (id: number) => `${p}/customDimensions/${id}`;
     const dims = (s.customDimensions ??= []);
+    const mets = (s.customMetrics ??= []);
+    if (method === "POST" && path === `${p}/customMetrics`) {
+      const id = s.nextId++;
+      mets.push({ id, parameterName: body.parameterName, displayName: body.displayName, measurementUnit: body.measurementUnit });
+      this.save(s);
+      return { name: `${p}/customMetrics/${id}`, ...body };
+    }
+    if (method === "POST" && path.startsWith(`${p}/customMetrics/`) && path.endsWith(":archive")) {
+      s.customMetrics = mets.filter((m) => `${p}/customMetrics/${m.id}:archive` !== path);
+      this.save(s);
+      return {};
+    }
     if (method === "POST" && path === `${p}/customDimensions`) {
       const id = s.nextId++;
       dims.push({ id, parameterName: body.parameterName, displayName: body.displayName, scope: body.scope });
@@ -388,7 +404,8 @@ export class DemoAnalytics implements Analytics {
     if (path.startsWith(`${p}/keyEvents`)) return { keyEvents: s.keyEvents.map((k) => ({ name: keyName(k.id), eventName: k.eventName, countingMethod: k.countingMethod, deletable: true })) };
     if (path.startsWith(`${p}/googleAdsLinks`)) return { googleAdsLinks: s.adsLinks.map((l) => ({ name: linkName(l.id), customerId: l.customerId })) };
     if (path.startsWith(`${p}/customDimensions`)) return { customDimensions: dims.map((d) => ({ name: dimName(d.id), parameterName: d.parameterName, displayName: d.displayName, scope: d.scope })) };
-    if (path.startsWith(`${p}/customMetrics`)) return {};
+    if (path.startsWith(`${p}/customMetrics`)) return { customMetrics: mets.map((m) => ({ name: `${p}/customMetrics/${m.id}`, parameterName: m.parameterName,
+      displayName: m.displayName, measurementUnit: m.measurementUnit })) };
     throw new Error(`The demo property doesn't support ${method} ${path}.`);
   }
 

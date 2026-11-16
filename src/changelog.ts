@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.38.0", date: "2026-11-16",
+    summary: "Custom metrics too: Camberstack can register a number your site sends as a Google Analytics custom metric.",
+    items: [
+      "**Register custom metrics** (`register_custom_metric`): a numeric parameter like an order's weight or a video's watch time, as a plain number, money, distance or time. A money metric is marked as revenue or cost data, as Google requires, and the proposal says who in Google Analytics stops seeing it. Undo archives it.",
+      "Asking for an unregistered custom metric in a report now leads to that proposal instead of Google Analytics' admin, so custom definitions no longer need a trip there.",
+    ],
+  },
+  {
     version: "0.37.0", date: "2026-11-16",
     summary: "Report on the parameters your site sends: Camberstack can register them as Google Analytics custom dimensions.",
     items: [

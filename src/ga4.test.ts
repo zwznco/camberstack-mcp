@@ -80,11 +80,17 @@ describe("AnalyticsClient", () => {
     // ...and how to register it through Camberstack, with what GA4 won't do (2026-10-27: form_id, after form_variant was registered by hand).
     expect((e4 as Error).message).toContain("If the site sends form_id, register it: propose the Google Analytics change register_custom_dimension (parameter_name form_id, scope EVENT). "
       + "GA4 counts it from then on, not for earlier dates, and reports have it after 24-48 hours.");
-    // A custom metric needs a unit Camberstack doesn't ask for: still GA4's admin.
+    // A custom metric: register_custom_metric, with its unit.
     const ga5 = client((u) => u.endsWith("/metadata") ? json({ dimensions: [], metrics: [{ apiName: "sessions" }] })
       : json({ error: { code: 400, message: "Field customEvent:order_weight is not a valid metric." } }, 400));
     const e5 = await report(ga5, "9", { days: 7, dimensions: [], metrics: ["customEvent:order_weight"], limit: 10 }).catch((x: Error) => x);
-    expect((e5 as Error).message).toContain("It has no customEvent: metrics registered. An event parameter is reportable only once it is registered as a custom definition in GA4 (Admin, Custom definitions).");
+    expect((e5 as Error).message).toContain("It has no customEvent: metrics registered. If the site sends order_weight as a number, register it: "
+      + "propose the Google Analytics change register_custom_metric (parameter_name order_weight, unit STANDARD unless it's money, distance or time).");
+    // Custom metrics are event-scoped only: a customUser: metric can't be registered, and the hint says so instead of proposing it.
+    const ga6 = client((u) => u.endsWith("/metadata") ? json({ dimensions: [], metrics: [] })
+      : json({ error: { code: 400, message: "Field customUser:ltv is not a valid metric." } }, 400));
+    const e6 = await report(ga6, "9", { days: 7, dimensions: [], metrics: ["customUser:ltv"], limit: 10 }).catch((x: Error) => x);
+    expect((e6 as Error).message).toContain("customUser:ltv can't be registered: custom metrics are customEvent: only");
     // Metadata unreadable: Google's message alone, unchanged.
     const ga3 = client((u) => u.endsWith("/metadata") ? json({ error: { code: 500, message: "x" } }, 500)
       : json({ error: { code: 400, message: "Field purchases is not a valid metric." } }, 400));
@@ -307,5 +313,44 @@ describe("register_custom_dimension", () => {
     expect(a.operations).toEqual([]);  // the fake no longer lists /3, so it reads as archived already
     await writeGa(ga, [{ method: "POST", path: "properties/9/customDimensions/3:archive", body: {} }]);
     expect(seen.at(-1)).toEqual({ m: "POST", u: "properties/9/customDimensions/3:archive", b: "{}" });
+  });
+});
+
+describe("register_custom_metric", () => {
+  const P = DEMO_PROPERTY;
+  const reg = { type: "register_custom_metric" as const, property_id: P, parameter_name: "order_weight", unit: "STANDARD" as const };
+
+  it("registers a numeric parameter, lists it with its unit, and undo archives it", async () => {
+    const ga = new DemoAnalytics();
+    const r = await resolveGaChange(ga, reg);
+    expect(r.operations).toEqual([{ method: "POST", path: `properties/${P}/customMetrics`,
+      body: { parameterName: "order_weight", displayName: "order_weight", measurementUnit: "STANDARD", scope: "EVENT" } }]);
+    expect(r.describe).toBe('Register "order_weight" as a custom metric "order_weight" (a plain number) in GA4 property "DEMO: Northwind Plumbing (sample data)", reported as customEvent:order_weight. '
+      + "GA4 counts it from registration on, not for earlier visits, and it reaches reports after 24-48 hours. Undoing it archives it, which GA4 can't reverse");
+    const out = await writeGa(ga, r.operations);
+    expect((await gaSetup(ga, P)).custom_metrics).toEqual([{ parameter: "order_weight", display_name: "order_weight", unit: "STANDARD", report_as: "customEvent:order_weight" }]);
+    expect((await resolveGaChange(ga, reg)).describe).toContain('(already registered as "order_weight", unit STANDARD; report it as customEvent:order_weight)');
+
+    const undo = gaInverseAfterApply(r, out)!;
+    expect(undo).toEqual({ type: "archive_custom_metric", property_id: P, resource_name: out[0]!.resourceName, parameter_name: "order_weight" });
+    const u = await resolveGaChange(ga, undo);
+    expect(u.operations).toEqual([{ method: "POST", path: `${out[0]!.resourceName}:archive`, body: {} }]);
+    expect(u.describe).toContain("⚠ GA4 can't restore an archived custom metric");
+    await writeGa(ga, u.operations);
+    expect((await gaSetup(ga, P)).custom_metrics).toEqual([]);
+    expect(gaInverseAfterApply(u, [])).toBeUndefined();
+  });
+
+  it("marks a money metric as revenue (or cost) data, as Google requires, and says who stops seeing it", async () => {
+    const ga = new DemoAnalytics();
+    const r = await resolveGaChange(ga, { ...reg, parameter_name: "tip_amount", unit: "CURRENCY" });
+    expect((r.operations[0]!.body as any).restrictedMetricType).toEqual(["REVENUE_DATA"]);
+    expect(r.describe).toContain("(unit CURRENCY)");
+    expect(r.describe).toContain("It is marked as revenue data, so GA4 users without access to revenue data won't see it.");
+    const cost = await resolveGaChange(ga, { ...reg, parameter_name: "shipping_cost", unit: "CURRENCY", currency_data: "COST_DATA" });
+    expect((cost.operations[0]!.body as any).restrictedMetricType).toEqual(["COST_DATA"]);
+    await expect(resolveGaChange(ga, { ...reg, currency_data: "COST_DATA" })).rejects.toThrow(/applies only to unit CURRENCY/);
+    await writeGa(ga, r.operations);
+    await expect(resolveGaChange(ga, { ...reg, parameter_name: "tip2", display_name: "tip_amount" })).rejects.toThrow('already has a custom metric named "tip_amount"');
   });
 });
