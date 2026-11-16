@@ -77,6 +77,14 @@ describe("AnalyticsClient", () => {
       : json({ error: { code: 400, message: "Did you mean customEvent:form_variant? Field customEvent:form_id is not a valid dimension." } }, 400));
     const e4 = await report(ga4, "9", { days: 7, dimensions: ["customEvent:form_id"], metrics: ["sessions"], limit: 10 }).catch((x: Error) => x);
     expect((e4 as Error).message).toContain("Its registered customEvent: dimensions are: customEvent:form_variant.");
+    // ...and how to register it through Camberstack, with what GA4 won't do (2026-10-27: form_id, after form_variant was registered by hand).
+    expect((e4 as Error).message).toContain("If the site sends form_id, register it: propose the Google Analytics change register_custom_dimension (parameter_name form_id, scope EVENT). "
+      + "GA4 counts it from then on, not for earlier dates, and reports have it after 24-48 hours.");
+    // A custom metric needs a unit Camberstack doesn't ask for: still GA4's admin.
+    const ga5 = client((u) => u.endsWith("/metadata") ? json({ dimensions: [], metrics: [{ apiName: "sessions" }] })
+      : json({ error: { code: 400, message: "Field customEvent:order_weight is not a valid metric." } }, 400));
+    const e5 = await report(ga5, "9", { days: 7, dimensions: [], metrics: ["customEvent:order_weight"], limit: 10 }).catch((x: Error) => x);
+    expect((e5 as Error).message).toContain("It has no customEvent: metrics registered. An event parameter is reportable only once it is registered as a custom definition in GA4 (Admin, Custom definitions).");
     // Metadata unreadable: Google's message alone, unchanged.
     const ga3 = client((u) => u.endsWith("/metadata") ? json({ error: { code: 500, message: "x" } }, 500)
       : json({ error: { code: 400, message: "Field purchases is not a valid metric." } }, 400));
@@ -237,5 +245,67 @@ describe("analytics_setup", () => {
     await writeGa(ga, (await resolveGaChange(ga, gaInverseAfterApply(r, out)!)).operations);
     expect((await gaSetup(ga, DEMO_PROPERTY)).key_events).toEqual([{ event_name: "generate_lead", counting: "ONCE_PER_EVENT" }]);
     await expect(resolveGaChange(ga, { ...set, event_name: "phone_call" })).rejects.toThrow(/isn't a key event.*mark_key_event/);
+  });
+});
+
+describe("register_custom_dimension", () => {
+  const P = DEMO_PROPERTY;
+  const reg = { type: "register_custom_dimension" as const, property_id: P, parameter_name: "form_id", scope: "EVENT" as const };
+
+  it("registers a parameter, lists it in analytics_setup with the name reports take, and undo archives it", async () => {
+    const ga = new DemoAnalytics();
+    const r = await resolveGaChange(ga, reg);
+    expect(r.operations).toEqual([{ method: "POST", path: `properties/${P}/customDimensions`, body: { parameterName: "form_id", displayName: "form_id", scope: "EVENT" } }]);
+    expect(r.describe).toBe('Register "form_id" as an event-scoped custom dimension "form_id" in GA4 property "DEMO: Northwind Plumbing (sample data)", reported as customEvent:form_id. '
+      + "GA4 counts it from registration on, not for earlier visits, and it reaches reports after 24-48 hours. Undoing it archives it, which GA4 can't reverse");
+    const out = await writeGa(ga, r.operations);
+    expect((await gaSetup(ga, P)).custom_dimensions).toEqual([{ parameter: "form_id", scope: "EVENT", display_name: "form_id", report_as: "customEvent:form_id" }]);
+
+    // Proposing it again changes nothing.
+    expect((await resolveGaChange(ga, reg)).operations).toEqual([]);
+    expect((await resolveGaChange(ga, reg)).describe).toContain('(already registered as "form_id"; report it as customEvent:form_id)');
+
+    const undo = gaInverseAfterApply(r, out)!;
+    expect(undo).toEqual({ type: "archive_custom_dimension", property_id: P, resource_name: out[0]!.resourceName, parameter_name: "form_id", scope: "EVENT" });
+    const u = await resolveGaChange(ga, undo);
+    expect(u.operations).toEqual([{ method: "POST", path: `${out[0]!.resourceName}:archive`, body: {} }]);
+    expect(u.describe).toContain("⚠ GA4 can't restore an archived custom dimension");
+    expect(await writeGa(ga, u.operations)).toEqual([{ resourceName: out[0]!.resourceName }]);  // an archive answers {}
+    expect((await gaSetup(ga, P)).custom_dimensions).toEqual([]);
+    expect(gaInverseAfterApply(u, [])).toBeUndefined();  // nothing undoes an archive
+    expect((await resolveGaChange(ga, undo)).describe).toContain("(already archived)");
+  });
+
+  it("names user and item scopes as reports do, and keeps GA4's limits", async () => {
+    const ga = new DemoAnalytics();
+    const user = await resolveGaChange(ga, { ...reg, parameter_name: "plan_tier", scope: "USER", display_name: "Plan tier" });
+    expect(user.describe).toContain('a user-scoped custom dimension "Plan tier"');
+    expect(user.describe).toContain("reported as customUser:plan_tier");
+    await writeGa(ga, user.operations);
+    await expect(resolveGaChange(ga, { ...reg, parameter_name: "a_user_property_name_too_long", scope: "USER" })).rejects.toThrow(/24 characters at most/);
+    await expect(resolveGaChange(ga, { ...reg, parameter_name: "tier", display_name: "Plan tier" })).rejects.toThrow('already has a custom dimension named "Plan tier" (parameter plan_tier)');
+    expect((await resolveGaChange(ga, { ...reg, parameter_name: "item_size", scope: "ITEM" })).describe).toContain("reported as customItem:item_size");
+  });
+
+  it("sends the Admin API v1beta requests Google documents", async () => {
+    const seen: { m: string; u: string; b?: string }[] = [];
+    const ga = client((u, i) => {
+      seen.push({ m: String(i?.method), u: u.split("/v1beta/")[1]!, b: i?.body as string | undefined });
+      if (u.endsWith("/properties/9")) return json({ displayName: "Site" });
+      if (u.includes("customDimensions?pageSize=200")) return u.includes("pageToken=n2")
+        ? json({ customDimensions: [{ name: "properties/9/customDimensions/2", parameterName: "b", displayName: "b", scope: "EVENT" }] })
+        : json({ customDimensions: [{ name: "properties/9/customDimensions/1", parameterName: "a", displayName: "a", scope: "EVENT" }], nextPageToken: "n2" });
+      if (u.endsWith("/customDimensions")) return json({ name: "properties/9/customDimensions/3" });
+      return json({});
+    });
+    const r = await resolveGaChange(ga, { ...reg, property_id: "9", parameter_name: "b" });
+    expect(r.operations).toEqual([]);  // found on the second page
+    const r2 = await resolveGaChange(ga, { ...reg, property_id: "9" });
+    const out = await writeGa(ga, r2.operations);
+    expect(seen.at(-1)).toEqual({ m: "POST", u: "properties/9/customDimensions", b: JSON.stringify({ parameterName: "form_id", displayName: "form_id", scope: "EVENT" }) });
+    const a = await resolveGaChange(ga, gaInverseAfterApply(r2, out)!);
+    expect(a.operations).toEqual([]);  // the fake no longer lists /3, so it reads as archived already
+    await writeGa(ga, [{ method: "POST", path: "properties/9/customDimensions/3:archive", body: {} }]);
+    expect(seen.at(-1)).toEqual({ m: "POST", u: "properties/9/customDimensions/3:archive", b: "{}" });
   });
 });

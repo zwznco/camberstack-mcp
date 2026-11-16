@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.37.0", date: "2026-11-16",
+    summary: "Report on the parameters your site sends: Camberstack can register them as Google Analytics custom dimensions.",
+    items: [
+      "**Register custom dimensions.** Google Analytics reports an event parameter (a form's id, a plan name) only once it's registered as a custom dimension. Your AI used to send you to Google Analytics' admin to do that. It can now propose it (`register_custom_dimension`) for you to approve, and undo archives it.",
+      "**See what's registered.** Analytics setup now lists the property's custom dimensions and metrics, with the exact name a report uses (for example customEvent:form_id).",
+      "Google Analytics counts a new custom dimension from when it's registered, not for earlier visits, and it shows in reports after 24 to 48 hours. The proposal says so before you approve.",
+    ],
+  },
+  {
     version: "0.36.0", date: "2026-11-16",
     summary: "Keyword research counts searches where your campaigns run, and you can name a market in words.",
     items: [

@@ -1,6 +1,6 @@
 /**
  * Google Analytics setup changes: create a property with its web stream, mark or unmark key events (conversions), link
- * or unlink a Google Ads account. They go through the same propose → approve → apply → undo cycle as Google Ads changes
+ * or unlink a Google Ads account, register a custom dimension. They go through the same propose → approve → apply → undo cycle as Google Ads changes
  * (session.ts), stored as proposals whose customer_id is GA_TARGET. Each resolves against the live property first, so
  * something already in place is skipped, and records what undoes it. The GA4 Admin API has no dry run: re-resolving at
  * apply and rolling back on a failed write is what keeps a proposal all or nothing.
@@ -17,6 +17,13 @@ const eventName = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/, "a GA4 event 
   .describe("GA4 event name, e.g. generate_lead, purchase, sign_up, or a custom event the site sends");
 const adsCustomer = z.string().regex(/^\d{3}-?\d{3}-?\d{4}$/).transform((s) => s.replace(/-/g, "")).describe("Google Ads customer ID, with or without dashes");
 const counting = z.enum(["ONCE_PER_EVENT", "ONCE_PER_SESSION"]);
+/** Admin API v1beta CustomDimension rules: parameterName starts with a letter, letters/digits/underscores, 40 at most (24 for USER). */
+const parameterName = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/, "letters, digits and underscores, starting with a letter, 40 at most");
+const dimensionScope = z.enum(["EVENT", "USER", "ITEM"]);
+type DimensionScope = z.infer<typeof dimensionScope>;
+/** How the Data API names a custom dimension in reports (and the prefix fieldHint looks for). */
+export const REPORT_PREFIX: Record<DimensionScope, string> = { EVENT: "customEvent", USER: "customUser", ITEM: "customItem" };
+const SCOPE_LABEL: Record<DimensionScope, string> = { EVENT: "an event-scoped", USER: "a user-scoped", ITEM: "an item-scoped" };
 
 export const PUBLIC_GA_CHANGES = [
   z.object({ type: z.literal("create_ga4_property"), account_id: digits.describe("Google Analytics account id (from analytics_properties' accounts)"),
@@ -37,6 +44,12 @@ export const PUBLIC_GA_CHANGES = [
     .describe("Link a GA4 property to a Google Ads account, so Ads can import its key events and GA4 shows ad clicks and cost (the user must be an admin of both)"),
   z.object({ type: z.literal("unlink_google_ads"), property_id: propertyId, customer_id: adsCustomer })
     .describe("Remove the link between a GA4 property and a Google Ads account"),
+  z.object({ type: z.literal("register_custom_dimension"), property_id: propertyId,
+    parameter_name: parameterName.describe("The parameter the site already sends, e.g. form_id"),
+    scope: dimensionScope.default("EVENT").describe("EVENT: an event parameter; USER: a user property; ITEM: an ecommerce item parameter"),
+    display_name: z.string().regex(/^[A-Za-z][A-Za-z0-9_ ]{0,81}$/, "letters, digits, spaces and underscores, starting with a letter, 82 at most").optional()
+      .describe("Name shown in GA4; defaults to parameter_name") })
+    .describe("Register a parameter as a GA4 custom dimension so reports can use it (customEvent:<parameter_name>). Counted from registration on, in reports after 24-48 hours"),
 ] as const;
 
 export const PublicGaChangeSchema = z.discriminatedUnion("type", [...PUBLIC_GA_CHANGES]);
@@ -44,6 +57,8 @@ export const GaChangeSchema = z.discriminatedUnion("type", [
   ...PUBLIC_GA_CHANGES,
   // Only undo creates it: a property Camberstack created goes to Google Analytics' trash (restorable there for 35 days).
   z.object({ type: z.literal("delete_ga4_property"), property_id: propertyId, name: z.string() }),
+  // Only undo creates it: the Admin API can't delete a custom dimension, only archive it, and an archive can't be undone.
+  z.object({ type: z.literal("archive_custom_dimension"), property_id: propertyId, resource_name: z.string(), parameter_name: z.string(), scope: dimensionScope }),
 ]);
 export type GaChange = z.infer<typeof GaChangeSchema>;
 
@@ -145,6 +160,41 @@ export async function resolveGaChange(ga: Analytics, change: GaChange): Promise<
         describe: `Unlink GA4 property "${name}" from Google Ads account ${fmtCid(change.customer_id)}` + (l ? "" : " (not linked)"),
         inverse: l ? { type: "link_google_ads", property_id: change.property_id, customer_id: change.customer_id } : undefined };
     }
+    case "register_custom_dimension": {
+      // GA4 reports an event parameter only once it's registered. Before this, the AI could only send the user to GA4's admin:
+      // one user registered form_variant there by hand, then hit the same wall with form_id (prod, 2026-10-26/27).
+      const name = await propertyName(change.property_id);
+      const have = await customDimensions(ga, change.property_id);
+      if (change.scope === "USER" && change.parameter_name.length > 24) {
+        throw new Error(`A user-scoped custom dimension's parameter_name can be 24 characters at most; "${change.parameter_name}" has ${change.parameter_name.length}.`);
+      }
+      const reportAs = `${REPORT_PREFIX[change.scope]}:${change.parameter_name}`;
+      const same = have.find((d) => d.parameterName === change.parameter_name && d.scope === change.scope);
+      if (same) {
+        return { ...base, operations: [],
+          describe: `Register "${change.parameter_name}" as ${SCOPE_LABEL[change.scope]} custom dimension in GA4 property "${name}" (already registered as "${same.displayName}"; report it as ${reportAs})` };
+      }
+      const display = change.display_name ?? change.parameter_name;
+      const clash = have.find((d) => d.displayName === display);
+      if (clash) {
+        throw new Error(`GA4 property "${name}" already has a custom dimension named "${display}" (parameter ${clash.parameterName}). Pass another display_name.`);
+      }
+      return { ...base,
+        operations: [{ method: "POST", path: `properties/${change.property_id}/customDimensions`,
+          body: { parameterName: change.parameter_name, displayName: display, scope: change.scope } }],
+        describe: `Register "${change.parameter_name}" as ${SCOPE_LABEL[change.scope]} custom dimension "${display}" in GA4 property "${name}", reported as ${reportAs}. `
+          + "GA4 counts it from registration on, not for earlier visits, and it reaches reports after 24-48 hours. Undoing it archives it, which GA4 can't reverse" };
+    }
+    case "archive_custom_dimension": {
+      const name = await propertyName(change.property_id);
+      const live = (await customDimensions(ga, change.property_id)).find((d) => d.name === change.resource_name);
+      const reportAs = `${REPORT_PREFIX[change.scope]}:${change.parameter_name}`;
+      return { ...base,
+        operations: live ? [{ method: "POST", path: `${change.resource_name}:archive`, body: {} }] : [],
+        describe: `Archive custom dimension ${reportAs} in GA4 property "${name}"` + (live
+          ? " ⚠ GA4 can't restore an archived custom dimension: reports, explorations and audiences using it stop getting it (it can be registered again, as a new one)"
+          : " (already archived)") };
+    }
     case "delete_ga4_property":
       return { ...base, operations: [{ method: "DELETE", path: `properties/${change.property_id}` }],
         describe: `Delete GA4 property "${change.name}" (Camberstack created it; Google Analytics keeps it in its trash for 35 days)` };
@@ -157,7 +207,7 @@ export async function writeGa(ga: Analytics, ops: GaOp[]): Promise<GaWriteResult
   for (const op of ops) {
     const r = await ga.admin(op.method, op.path, op.body);
     if (op.method === "DELETE") { out.push({ resourceName: op.path }); continue; }
-    out.push({ resourceName: r.name });
+    out.push({ resourceName: r?.name ?? op.path.replace(/:archive$/, "") });  // an archive answers {}
     if (op.stream) {
       const s = await ga.admin("POST", `${r.name}/dataStreams`,
         { type: "WEB_DATA_STREAM", displayName: op.stream.displayName, webStreamData: { defaultUri: op.stream.defaultUri } });
@@ -175,6 +225,9 @@ export function gaInverseAfterApply(r: GaResolved, results: GaWriteResult[]): Ga
   }
   if (c.type === "mark_key_event" && results.length) return { type: "unmark_key_event", property_id: c.property_id, event_name: c.event_name };
   if (c.type === "link_google_ads" && results.length) return { type: "unlink_google_ads", property_id: c.property_id, customer_id: c.customer_id };
+  if (c.type === "register_custom_dimension" && results[0]) {
+    return { type: "archive_custom_dimension", property_id: c.property_id, resource_name: results[0].resourceName, parameter_name: c.parameter_name, scope: c.scope };
+  }
   return r.inverse;
 }
 
@@ -187,16 +240,35 @@ export function gaNoteAfterApply(results: GaWriteResult[]): string | undefined {
     + `<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${id}');</script>`;
 }
 
-/** analytics_setup: the property's web streams (measurement IDs), key events and Google Ads links. Read-only. */
+interface CustomDimension { name: string; parameterName: string; displayName: string; scope: DimensionScope }
+/** The property's active custom dimensions (archived ones aren't listed). A property holds at most 250 (GA4 360), so one page of 200 plus the next. */
+async function customDimensions(ga: Analytics, propertyId: string): Promise<CustomDimension[]> {
+  const out: CustomDimension[] = [];
+  let page = "";
+  do {
+    const r = await ga.admin("GET", `properties/${propertyId}/customDimensions?pageSize=200${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
+    out.push(...(r.customDimensions ?? []));
+    page = r.nextPageToken ?? "";
+  } while (page);
+  return out;
+}
+
+/** analytics_setup: the property's web streams (measurement IDs), key events, Google Ads links and custom definitions. Read-only. */
 export async function gaSetup(ga: Analytics, propertyId: string) {
   const p = `properties/${propertyId}`;
-  const [prop, streams, keys, links] = await Promise.all([ga.admin("GET", p), ga.admin("GET", `${p}/dataStreams?pageSize=200`),
-    ga.admin("GET", `${p}/keyEvents?pageSize=200`), ga.admin("GET", `${p}/googleAdsLinks?pageSize=200`)]);
+  const [prop, streams, keys, links, dims, metrics] = await Promise.all([ga.admin("GET", p), ga.admin("GET", `${p}/dataStreams?pageSize=200`),
+    ga.admin("GET", `${p}/keyEvents?pageSize=200`), ga.admin("GET", `${p}/googleAdsLinks?pageSize=200`),
+    customDimensions(ga, propertyId), ga.admin("GET", `${p}/customMetrics?pageSize=200`)]);
   return {
     property_id: propertyId, name: prop.displayName, time_zone: prop.timeZone, currency: prop.currencyCode,
     web_streams: (streams.dataStreams ?? []).filter((s: any) => s.type === "WEB_DATA_STREAM")
       .map((s: any) => ({ name: s.displayName, measurement_id: s.webStreamData?.measurementId, url: s.webStreamData?.defaultUri })),
     key_events: (keys.keyEvents ?? []).map((k: any) => ({ event_name: k.eventName, counting: k.countingMethod })),
     google_ads_links: (links.googleAdsLinks ?? []).map((l: any) => ({ customer_id: fmtCid(String(l.customerId)) })),
+    // report_as is the name analytics_report takes. A parameter the site sends but isn't listed here can't be reported on yet.
+    custom_dimensions: dims.map((d) => ({ parameter: d.parameterName, scope: d.scope, display_name: d.displayName,
+      report_as: `${REPORT_PREFIX[d.scope] ?? "customEvent"}:${d.parameterName}` })),
+    custom_metrics: (metrics.customMetrics ?? []).map((m: any) => ({ parameter: m.parameterName, display_name: m.displayName, unit: m.measurementUnit,
+      report_as: `customEvent:${m.parameterName}` })),
   };
 }
