@@ -34,8 +34,13 @@ export const CRITERIA_QUERY = `SELECT campaign.id, campaign.status, campaign_cri
   FROM campaign_criterion WHERE campaign_criterion.type IN ('LOCATION', 'LANGUAGE') AND campaign_criterion.negative = FALSE
   AND campaign.status != 'REMOVED' AND campaign_criterion.status != 'REMOVED'`;
 
+/**
+ * Every top-level place, not just target_type 'Country': Google types 27 country-level places as 'Region' with no parent
+ * (Taiwan, Hong Kong, Macao, Puerto Rico, Greenland, Kosovo, …), so "TW" was refused (prod #27472, 2026-11-17). The
+ * parentless set is the 219 countries plus those 27, each with its own country code (checked against Google 2026-11-17).
+ */
 const COUNTRIES_QUERY = `SELECT geo_target_constant.id, geo_target_constant.name, geo_target_constant.country_code
-  FROM geo_target_constant WHERE geo_target_constant.target_type = 'Country' AND geo_target_constant.status = 'ENABLED'`;
+  FROM geo_target_constant WHERE geo_target_constant.parent_geo_target IS NULL AND geo_target_constant.status = 'ENABLED'`;
 const LANGUAGES_QUERY = `SELECT language_constant.id, language_constant.name, language_constant.code
   FROM language_constant WHERE language_constant.targetable = TRUE`;
 
@@ -145,6 +150,16 @@ export async function resolveLanguage(input: string, search: Search): Promise<st
   const hit = langs.find((l) => String(l.name).toLowerCase() === v.toLowerCase() || String(l.code).toLowerCase() === code)
     ?? langs.find((l) => String(l.code).toLowerCase() === code.split("_")[0]);
   if (hit) return String(hit.id);
+  // A language Keyword Planner takes only by variant: "zh" and "Chinese" (1008) aren't targetable, zh_CN and zh_TW are
+  // (prod #27473, 2026-11-17). One variant is taken; several are named so the caller picks.
+  const base = code.split("_")[0];
+  const variants = langs.filter((l) => String(l.code).toLowerCase().startsWith(`${base}_`)
+    || String(l.name).toLowerCase().startsWith(`${v.toLowerCase()} (`));
+  if (variants.length === 1) return String(variants[0].id);
+  if (variants.length > 1) {
+    throw new Error(`Keyword Planner takes "${input}" only as one of: ${variants.map((l) => `${l.id} ${l.name} (${l.code})`).join(", ")}. `
+      + "Pass one of those ids, or leave language_id out to count every language. Nothing was looked up in Keyword Planner.");
+  }
   throw new Error(`"${input}" isn't a language Keyword Planner takes. Pass a language id (1000 English, 1001 German, 1003 Spanish), `
     + "its English name (\"German\") or its code (\"de\"). Leave language_id out to count every language. Nothing was looked up in Keyword Planner.");
 }

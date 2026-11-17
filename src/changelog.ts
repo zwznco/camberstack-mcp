@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.42.1", date: "2026-11-17",
+    summary: "Keyword research takes Taiwan, Hong Kong and the other places Google doesn't list as countries, and says which Chinese to count.",
+    items: [
+      "**Markets by code:** \"TW\", \"HK\", \"PR\" and 24 more places Google keeps apart from its country list (Macao, Puerto Rico, Greenland, Kosovo, …) now work by name or two-letter code, like any country.",
+      "**Chinese:** Keyword Planner counts Chinese only as simplified or traditional. Asking for \"zh\" or \"Chinese\" now names both, so your AI can pick one instead of hitting a dead end.",
+    ],
+  },
+  {
     version: "0.42.0", date: "2026-11-16",
     summary: "Camberstack now uses Google Ads API v26, ahead of v23's retirement in February 2027.",
     items: [

@@ -94,7 +94,7 @@ class FakeAds {
   market: any[] = [];
   async search(_cid: string, q: string): Promise<any[]> {
     if (q.includes("campaign_criterion.type IN ('LOCATION', 'LANGUAGE') AND campaign_criterion.negative = FALSE")) return this.market;
-    if (q.includes("geo_target_constant.target_type = 'Country'")) return [
+    if (q.includes("geo_target_constant.parent_geo_target IS NULL")) return [
       { geoTargetConstant: { id: "2040", name: "Austria", countryCode: "AT" } }, { geoTargetConstant: { id: "2826", name: "United Kingdom", countryCode: "GB" } },
       { geoTargetConstant: { id: "2840", name: "United States", countryCode: "US" } }];
     if (q.includes("FROM language_constant WHERE language_constant.targetable")) return [

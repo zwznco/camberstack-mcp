@@ -12,21 +12,23 @@ const crit = (campaign: string, status: string, type: "LOCATION" | "LANGUAGE", i
 const g = (id: string, name: string, canonicalName: string, countryCode: string, targetType: string, status = "ENABLED") =>
   ({ geoTargetConstant: { id, name, canonicalName, countryCode, targetType, status } });
 const COUNTRIES = [g("2040", "Austria", "Austria", "AT", "Country"), g("2826", "United Kingdom", "United Kingdom", "GB", "Country"),
-  g("2840", "United States", "United States", "US", "Country"), g("2268", "Georgia", "Georgia", "GE", "Country")];
+  g("2840", "United States", "United States", "US", "Country"), g("2268", "Georgia", "Georgia", "GE", "Country"),
+  g("2158", "Taiwan", "Taiwan", "TW", "Region"), g("2344", "Hong Kong", "Hong Kong", "HK", "Region")];
 const PLACES: Record<string, any[]> = {
   Vienna: [g("20050", "Vienna", "Vienna,Austria", "AT", "State"), g("1000997", "Vienna", "Vienna,Vienna,Vienna,Austria", "AT", "City"),
     g("1027317", "Vienna", "Vienna,Virginia,United States", "US", "City"), g("9198853", "Vienna", "Vienna,Vienna,Austria", "AT", "Municipality")],
   Chicago: [g("1016367", "Chicago", "Chicago,Illinois,United States", "US", "City")],
   Bangkok: [g("1012873", "Bangkok", "Bangkok,Thailand", "TH", "City", "REMOVAL_PLANNED"), g("9112482", "Bangkok", "Bangkok,Thailand", "TH", "Province")],
 };
-const LANGS = [["1000", "English", "en"], ["1001", "German", "de"], ["1014", "Portuguese", "pt"], ["1017", "Chinese (simplified)", "zh_CN"]]
+const LANGS = [["1000", "English", "en"], ["1001", "German", "de"], ["1014", "Portuguese", "pt"], ["1017", "Chinese (simplified)", "zh_CN"],
+  ["1018", "Chinese (traditional)", "zh_TW"]]
   .map(([id, name, code]) => ({ languageConstant: { id, name, code } }));
 
 function fakeSearch() {
   const queries: string[] = [];
   const search: Search = async (q) => {
     queries.push(q);
-    if (q.includes("target_type = 'Country'")) return COUNTRIES;
+    if (q.includes("parent_geo_target IS NULL")) return COUNTRIES;
     const name = /geo_target_constant\.name = '((?:[^'\\]|\\.)*)'/.exec(q)?.[1];
     if (name !== undefined) return PLACES[name] ?? [];
     if (q.includes("FROM language_constant")) return LANGS;
@@ -104,7 +106,11 @@ describe("resolveLocations", () => {
   it("takes a country by name or two-letter code, in any case, reading the country list once", async () => {
     const f = fakeSearch();
     expect(await resolveLocations(["austria", "AT", "us", "UK", "United Kingdom"], f.search)).toEqual(["2040", "2840", "2826"]);
-    expect(f.queries.filter((q) => q.includes("'Country'"))).toHaveLength(1);
+    expect(f.queries.filter((q) => q.includes("parent_geo_target IS NULL"))).toHaveLength(1);
+  });
+
+  it("takes the places Google types as a Region with no parent, like Taiwan and Hong Kong", async () => {
+    expect(await resolveLocations(["TW", "tw", "Hong Kong", "HK"], fakeSearch().search)).toEqual(["2158", "2344"]);
   });
 
   it("takes a place that matches one enabled location, retrying in Google's capitalisation", async () => {
@@ -148,6 +154,12 @@ describe("resolveLanguage", () => {
     expect(await resolveLanguage("DE", f.search)).toBe("1001");
     expect(await resolveLanguage("zh-CN", f.search)).toBe("1017");
     expect(await resolveLanguage("pt-BR", f.search)).toBe("1014");  // pt_BR isn't targetable; its base language is
+  });
+  it("names the variants when Keyword Planner takes a language only by variant", async () => {
+    const err = await resolveLanguage("zh", fakeSearch().search).catch((e: Error) => e.message);
+    expect(err).toContain(`Keyword Planner takes "zh" only as one of: 1017 Chinese (simplified) (zh_CN), 1018 Chinese (traditional) (zh_TW).`);
+    await expect(resolveLanguage("Chinese", fakeSearch().search)).rejects.toThrow("1017 Chinese (simplified)");
+    expect(await resolveLanguage("zh-TW", fakeSearch().search)).toBe("1018");
   });
   it("refuses a language Keyword Planner doesn't take", async () => {
     await expect(resolveLanguage("Klingon", fakeSearch().search)).rejects.toThrow(`"Klingon" isn't a language Keyword Planner takes`);
