@@ -445,7 +445,7 @@ export class UserSession {
           // A read-only look before choosing (Forum & Lex, 2026-11-17: "a quick read-only look at each account before locking
           // one in"): account_overview only, once per account per window, and it takes nothing. Not counted in flight either.
           if (previewable && this.previewOpen(cid)) {
-            return this.takePreview(cid, `nothing else can be done on it until the user picks it with ${this.tool("switch_account")}`);
+            return this.takePreview(cid, "choosing", `nothing else can be done on it until the user picks it with ${this.tool("switch_account")}`);
           }
           this.noticeChoice(await this.withActivity(counted));
         }
@@ -470,7 +470,7 @@ export class UserSession {
           // The same look at a locked account: a full plan is where a user wants it most ("a quick read-only look at each account",
           // Forum & Lex, 2026-11-17, a month into using their one Free account). Read-only, so it opens nothing.
           if (previewable && pool === "ads" && this.previewOpen(cid)) {
-            return this.takePreview(cid, `the plan's accounts are taken (${st.active.join(", ")}), so nothing else can be done on it `
+            return this.takePreview(cid, "locked", `the plan's accounts are taken (${st.active.join(", ")}), so nothing else can be done on it `
               + (st.opensOn ? `until a slot opens on ${st.opensOn}` : "for now"));
           }
           this.refuse(cid, st, pool);
@@ -492,8 +492,8 @@ export class UserSession {
   }
 
   /** Record a preview of `cid` and let the call through without taking it; `why` says what else is closed on it. */
-  private takePreview(cid: string, why: string): Release {
-    this.deps.db.prepare("INSERT INTO account_previews (user_id, customer_id, at) VALUES (?, ?, ?)").run(this.user.id, cid, now());
+  private takePreview(cid: string, kind: "choosing" | "locked", why: string): Release {
+    this.deps.db.prepare("INSERT INTO account_previews (user_id, customer_id, at, kind) VALUES (?, ?, ?, ?)").run(this.user.id, cid, now(), kind);
     return Object.assign(() => {}, { preview: `A read-only preview: this account isn't one of the plan's, and ${why}. `
       + `One preview per account every ${ACCOUNT_WINDOW_DAYS} days.` });
   }

@@ -325,12 +325,45 @@ ${card("Connects by app", table(["app", ["users", "r"], [`new · ${w}`, "r"], ["
       num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>app of first call, else token</small>`)}
 ${resultsCard(v)}
 <div class="grid2">
+${checksCard(v)}
+${previewsCard(v)}
+</div>
+<div class="grid2">
 ${card("Latest signups", table(["user", "plan", "permissions", ["signed up", "r"]], [...r.users].sort((a, b) => b.created_at - a.created_at).slice(0, 6)
     .map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }), `<span class="r">${when(u.created_at)}</span>`])),
     `<a class="muted" href="/users${qs(v)}">all users →</a>`)}
 ${card("Top tools", table(["tool", ["calls", "r"], ["errors", "r"]], r.tools.slice(0, 6).map((t) => [`<code>${esc(t.tool)}</code>`, num(t.calls), bad(t.errors)]), "No calls in this window."),
     `<a class="muted" href="/activity${qs(v)}">activity →</a>`)}
 </div>`;
+}
+
+/** The account a preview looked at, from tool_calls.flags (tools.ts flagsOf). */
+const previewOf = (flags: string | null | undefined) => flags?.split(",").find((f) => f.startsWith("preview:"))?.slice(8) ?? null;
+
+/** What each flag means, for the Checks card. */
+const CHECK_LABELS: Record<string, string> = {
+  conversions_stopped: "conversions stopped", primary_conversions_quiet_for_30_days: "primary conversions quiet 30d",
+  short_calls_not_counted: "short calls not counted", keyword_urls_override_ads: "keyword URL overrides ad",
+  bid_strategy_changes_last_30_days: "bid strategy changed", attorney_advertising_wording: "legal wording (live ads)",
+  wording_review: "legal wording (proposal)", ads_with_policy_problems: "ads with policy problems",
+  google_recommendations: "Google recommendations", lsa_data: "Local Services: has data", lsa_empty: "Local Services: none",
+};
+
+/** account_overview's checks, proposals' wording flag and the Local Services report (checks.ts checksReport), since 0.44.1. */
+function checksCard(v: View): string {
+  const c = v.report.checks;
+  return card("Checks raised", table(["check", ["calls", "r"], ["users", "r"]], c.flags.map((f) => [
+    CHECK_LABELS[f.flag] ? `${esc(CHECK_LABELS[f.flag]!)} <span class="dim"><code>${esc(f.flag)}</code></span>` : `<code>${esc(f.flag)}</code>`, num(f.calls), num(f.users)]),
+    "Nothing raised in this window."),
+    `<small title="From tool_calls.flags, logged since 0.44.1 (2026-11-17). A check that never shows up here never fired.">${lastW(v.days)} · of ${num(c.overviews.calls)} overviews by ${num(c.overviews.users)} users</small>`);
+}
+
+/** Read-only looks at accounts the plan doesn't cover (account_previews): what the user did next. */
+function previewsCard(v: View): string {
+  return card("Account previews", table(["when", ["previews", "r"], ["users", "r"], ["took it", "r"], ["clicked upgrade", "r"], ["paid", "r"]],
+    v.report.previews.map((p) => [p.kind === "locked" ? "plan full (locked)" : p.kind === "choosing" ? "before first pick" : esc(p.kind),
+      num(p.previews), num(p.users), num(p.took), num(p.clicked), num(p.paid)]), "No previews in this window."),
+    `<small title="took it = that account used for real after the preview; clicked upgrade / paid = users, any time after their preview">${lastW(v.days)}</small>`);
 }
 
 /** Results-ready notes (result-notes.ts): did a note lead to change_results? A "via change_results" row reached results unprompted. */
@@ -513,11 +546,12 @@ function toolList(x: UserDetail, client: string): string {
   return `<span class="${stale ? "bad" : "ok"}" title="${how} ${date(t.fetched_at)} UTC${stale ? `; current is ${SERVER_VERSION}` : ""}">${esc(t.version)}</span> <span class="dim">${ago(t.fetched_at)}</span>`;
 }
 
-function callsTable(rows: { at: number; email: string | null; id?: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }[], v?: View): string {
+function callsTable(rows: { at: number; email: string | null; id?: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string; flags?: string | null }[], v?: View): string {
   const withUser = rows.some((c) => c.email);
   return table(["when", ...(withUser ? ["user"] : []), "tool", "account", ["ms", "r"], "result", "app"], rows.map((c) => [
     `<span class="mono" title="${date(c.at)} UTC">${date(c.at).slice(5)}</span>`, ...(withUser ? [v && c.id ? userLink(v, c.id, c.email!) : esc(c.email ?? "")] : []),
-    `<code>${esc(c.tool)}</code>`, cid(c.customer_id), num(c.ms),
+    // A preview logs no account (it takes none for the plan): show the one it looked at, marked.
+    `<code>${esc(c.tool)}</code>`, previewOf(c.flags) ? `${cid(previewOf(c.flags))} <span class="chip">preview</span>` : cid(c.customer_id), num(c.ms),
     c.ok ? `<span class="ok">ok</span>` : `<span class="err">${errorText(c.error)}</span>`, `<span class="muted">${esc(c.client)}</span>`]))
     .replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">');
 }

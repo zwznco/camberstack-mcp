@@ -4,6 +4,7 @@
  * disagree about a number.
  */
 import { notesFunnel } from "./result-notes.js";
+import { checksReport, previewsReport } from "./checks.js";
 import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
@@ -204,6 +205,8 @@ export function buildReport(db: DB, o: ReportOptions) {
     paywall: paywall(q, o.changeCapFrom || changeCapFrom() || undefined),
     /** Results-ready notes (result-notes.ts): raised, and followed by change_results within the hour. */
     resultNotes: notesFunnel(q, since),
+    checks: checksReport(q, since),
+    previews: previewsReport(q, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
     sources: byApp(q<{ app: string | null; connected: number; in_window: number; used_real: number; applied: number }>(
       `SELECT ${cameFrom} app, count(*) connected,
@@ -263,8 +266,8 @@ export function buildReport(db: DB, o: ReportOptions) {
        FROM {U} u JOIN e ON e.user_id = u.id
        GROUP BY u.id HAVING switches + stops > 0 ORDER BY last DESC`, now() - SWITCH_DAYS * 86400, now() - SWITCH_DAYS * 86400),
     churn: churn(q),
-    recent: q<{ at: number; email: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
-      `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client
+    recent: q<{ at: number; email: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string; flags: string | null }>(
+      `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client, c.flags
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id
        ORDER BY c.id DESC LIMIT 50`),
   };
@@ -460,8 +463,8 @@ export function userDetail(db: DB, id: string, since = 0) {
     proposals: all<{ id: string; customer_id: string; summary: string; status: string; undo_of: string | null; created_at: number; applied_at: number | null }>(
       "SELECT id, customer_id, summary, status, undo_of, created_at, applied_at FROM proposals WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
     emails: all<{ kind: string; sent_at: number }>("SELECT kind, sent_at FROM email_log WHERE user_id = ? ORDER BY sent_at"),
-    recent: calls<{ at: number; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string }>(
-      `SELECT c.at, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client
+    recent: calls<{ at: number; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string; flags: string | null }>(
+      `SELECT c.at, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client, c.flags
        FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = ? AND c.at >= ? ORDER BY c.id DESC LIMIT 100`),
   };
 }

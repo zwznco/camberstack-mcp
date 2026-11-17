@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.44.0";
+export const SERVER_VERSION = "0.44.1";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -162,6 +162,23 @@ interface ToolCall {
   service?: string | null;
   /** The grant link this call handed out (google.ts grantName), in an error or a result's grant_url. */
   grantOffered?: string | null;
+  /** What the result raised (flagsOf), comma-joined. */
+  flags?: string | null;
+}
+
+/**
+ * What a result raised, for the admin's Checks and Previews cards (0.44.1): account_overview's attention keys (the counts
+ * and links riding along aside), preview:<account> for a preview, wording_review on a proposal, and whether a Local
+ * Services report found anything. Keys and ids only, never values.
+ */
+export function flagsOf(name: string, result: unknown, previewOf: string | null): string | null {
+  const r = (result && typeof result === "object" ? result : {}) as Record<string, unknown>;
+  const f: string[] = [];
+  if (previewOf) f.push(`preview:${previewOf}`);
+  if (r.attention && typeof r.attention === "object") f.push(...Object.keys(r.attention).filter((k) => !k.startsWith("more_") && k !== "recommendations_page"));
+  if (r.wording_review) f.push("wording_review");
+  if (name === "local_services_report") f.push(r.none ? "lsa_empty" : "lsa_data");
+  return f.length ? f.join(",") : null;
 }
 
 /** A personal grant link (grant.ts) in a tool's output; the group is its kind. */
@@ -186,6 +203,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       let notice: string | null = null;
       let preview = false;
       let previewText: string | null = null;
+      let flags: string | null = null;
       let offered: string | null = null;
       const services = servicesOf(name, a);
       try {
@@ -198,6 +216,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           release = () => { prev(); done(); };
         }
         const result = await fn(a);
+        try { flags = flagsOf(name, result, preview && typeof cid === "string" ? cid.replace(/-/g, "") : null); } catch { /* never breaks a tool */ }
         // A look before the plan's first pick (session.ts admit): it took no account, and the model should say so.
         out = ok(previewText ? { preview: previewText, ...(result as object) } : result);
       } catch (e) {
@@ -230,6 +249,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           service: services.length && !("isError" in out) && !notice && !preview ? services.join(",") : null,
           // A result's grant_url (search_console_sites, analytics_properties, …) names only the service, never edit.
           grantOffered: offered ?? GRANT_LINK.exec(out.content[0]!.text)?.[1] ?? null,
+          flags,
         });
       } catch { /* logging must never break a tool */ }
       release();  // after the log: the account now counts as used from tool_calls instead

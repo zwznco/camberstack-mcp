@@ -5,6 +5,7 @@
  * wording. Pure functions over Google's rows, so each is testable without Google; session.ts runs the queries.
  */
 import { BIDDING, BY } from "./results.js";
+import { DEMO_CID } from "./demo.js";
 
 /** How many examples each check names; the rest are counted. */
 export const CHECK_EXAMPLES = 10;
@@ -192,4 +193,37 @@ export function adCopyOf(change: unknown): string[] {
   };
   walk(change, false);
   return out;
+}
+
+// ---------------------------------------------------------------- admin (report.ts, admin.ts)
+
+type Q = <T>(sql: string, ...p: unknown[]) => T[];
+
+/**
+ * What the checks raised in the window (tool_calls.flags, logged since 0.44.1): per flag, the calls and users it came up
+ * for, beside how many real overviews ran, so a check that never fires shows as a row that never appears.
+ */
+export function checksReport(q: Q, since: number) {
+  const overviews = q<{ calls: number; users: number }>(`SELECT count(*) calls, count(DISTINCT c.user_id) users FROM tool_calls c
+      JOIN {U} u ON u.id = c.user_id WHERE c.tool = 'account_overview' AND c.ok = 1 AND c.error IS NULL AND c.at >= ?
+      AND coalesce(c.customer_id, '') != '${DEMO_CID}'`, since)[0] ?? { calls: 0, users: 0 };
+  const rows = q<{ user_id: string; tool: string; flags: string }>(`SELECT c.user_id, c.tool, c.flags FROM tool_calls c JOIN {U} u ON u.id = c.user_id
+      WHERE c.at >= ? AND c.ok = 1 AND c.flags IS NOT NULL`, since);
+  const by = new Map<string, { calls: number; users: Set<string> }>();
+  for (const r of rows) for (const f of r.flags.split(",")) {
+    if (!f || f.startsWith("preview:")) continue;
+    const e = by.get(f) ?? by.set(f, { calls: 0, users: new Set() }).get(f)!;
+    e.calls++; e.users.add(r.user_id);
+  }
+  return { overviews, flags: [...by].map(([flag, e]) => ({ flag, calls: e.calls, users: e.users.size })).sort((a, b) => b.users - a.users || b.calls - a.calls) };
+}
+
+/** Previews in the window (account_previews), by kind, and what the user did after: took that account, clicked upgrade, paid. */
+export function previewsReport(q: Q, since: number) {
+  return q<{ kind: string; previews: number; users: number; took: number; clicked: number; paid: number }>(
+    `SELECT coalesce(p.kind, 'unknown') kind, count(*) previews, count(DISTINCT p.user_id) users,
+       sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = p.user_id AND c.customer_id = p.customer_id AND c.ok = 1 AND c.error IS NULL AND c.at > p.at)) took,
+       count(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM plan_events e WHERE e.user_id = p.user_id AND e.kind = 'upgrade_click' AND e.at > p.at) THEN p.user_id END) clicked,
+       count(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM plan_events e WHERE e.user_id = p.user_id AND e.kind = 'paid' AND e.at > p.at) THEN p.user_id END) paid
+     FROM account_previews p JOIN {U} u ON u.id = p.user_id WHERE p.at >= ? GROUP BY 1 ORDER BY 1`, since);
 }

@@ -331,3 +331,37 @@ describe("capUsage", () => {
     } finally { setChangeCap(null); }
   });
 });
+
+describe("checks and previews (0.44.1)", () => {
+  it("counts each raised check by calls and users, and what users did after a preview", () => {
+    const db = openDb(":memory:");
+    const user = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, 'free', ?)");
+    user.run("a", "g1", "a@example.com", now() - 86400);
+    user.run("b", "g2", "b@example.com", now() - 86400);
+    const call = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes, flags) VALUES (?, ?, ?, ?, 1, NULL, 5, 10, ?)");
+    call.run(now() - 600, "a", "account_overview", "111", "conversions_stopped,bid_strategy_changes_last_30_days");
+    call.run(now() - 500, "b", "account_overview", "222", "conversions_stopped,more_ads_with_policy_problems");
+    call.run(now() - 400, "b", "account_overview", null, "preview:333,keyword_urls_override_ads");
+    call.run(now() - 300, "b", "account_overview", "333", null);  // b took the previewed account
+    call.run(now() - 200, "a", "propose_changes", "111", "wording_review");
+    call.run(now() - 100, "a", "account_overview", "0000000001", null);  // the demo isn't an overview of their own
+    const prev = db.prepare("INSERT INTO account_previews (user_id, customer_id, at, kind) VALUES (?, ?, ?, ?)");
+    prev.run("b", "333", now() - 400, "choosing");
+    prev.run("a", "444", now() - 450, "locked");
+    db.prepare("INSERT INTO plan_events (user_id, kind, at) VALUES ('a', 'upgrade_click', ?)").run(now() - 50);
+    const r = buildReport(db, { days: 7, exclude: [] });
+    expect(r.checks.overviews).toEqual({ calls: 4, users: 2 });
+    expect(r.checks.flags).toEqual([
+      { flag: "conversions_stopped", calls: 2, users: 2 },
+      { flag: "bid_strategy_changes_last_30_days", calls: 1, users: 1 },
+      { flag: "more_ads_with_policy_problems", calls: 1, users: 1 },
+      { flag: "keyword_urls_override_ads", calls: 1, users: 1 },
+      { flag: "wording_review", calls: 1, users: 1 },
+    ]);
+    expect(r.previews).toEqual([
+      { kind: "choosing", previews: 1, users: 1, took: 1, clicked: 0, paid: 0 },
+      { kind: "locked", previews: 1, users: 1, took: 0, clicked: 1, paid: 0 },
+    ]);
+    expect(r.recent.find((c) => c.flags?.startsWith("preview:"))?.customer_id).toBeNull();
+  });
+});

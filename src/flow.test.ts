@@ -1596,7 +1596,10 @@ describe("OAuth + MCP end to end", () => {
         expect(t.json.preview).toContain("read-only preview");
         expect(t.json.campaigns).toBeDefined();
       }
-      expect(db.prepare("SELECT count(*) n FROM account_previews WHERE user_id = ?").get(uid)).toEqual({ n: 2 });
+      expect(db.prepare("SELECT count(*) n FROM account_previews WHERE user_id = ? AND kind = 'choosing'").get(uid)).toEqual({ n: 2 });
+      // Logged with the account it looked at in flags, never in customer_id (0.44.1).
+      expect((db.prepare("SELECT flags FROM tool_calls WHERE user_id = ? AND id > ? AND flags LIKE 'preview:%' AND customer_id IS NULL").all(uid, since) as { flags: string }[])
+        .map((r) => r.flags.split(",")[0]).sort()).toEqual(["preview:1112223333", "preview:2223334444"]);
       expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").get(uid)).toEqual({ n: 0 });
       // One preview per account: a second look, like every other tool, stops for the choice, and offers no preview now.
       const tries = await Promise.all(["111-222-3333", "222-333-4444"].map((c) => call(fresh, "account_overview", { customer_id: c, days: 30 })));
@@ -2401,10 +2404,15 @@ describe("OAuth + MCP end to end", () => {
     db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, google_scopes, enc_refresh) VALUES ('u_cust', 'sub-cust', 'customer@example.com', 'free', unixepoch(), ?, 'x')")
       .run(owner.google_scopes);
     db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes) VALUES (unixepoch(), 'u_cust', 'account_overview', '1112223333', 1, 5, 10)").run();
+    // A check raised and a preview (0.44.1): the Checks and Previews cards, and the preview's account in Recent calls.
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes, flags) VALUES (unixepoch(), 'u_cust', 'account_overview', NULL, 1, 5, 10, 'preview:9998887777,conversions_stopped')").run();
+    db.prepare("INSERT INTO account_previews (user_id, customer_id, at, kind) VALUES ('u_cust', '9998887777', unixepoch(), 'locked')").run();
     const page = await fetch(`${admin}/?days=30`, { headers: { cookie } });
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain("Top tools");
+    expect(html).toMatch(/Checks raised[\s\S]*conversions stopped/);
+    expect(html).toMatch(/Account previews[\s\S]*plan full \(locked\)/);
     expect(html).toContain("Use by service");
     expect(html).toMatch(/Use by service[\s\S]*Tag Manager/);
     expect(html).toMatch(/Google permissions[\s\S]*Tag Manager/);   // which tools make its top 6 depends on the whole run; /activity (below) lists them all

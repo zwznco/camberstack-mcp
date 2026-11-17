@@ -104,8 +104,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };
   const mcpUrl = new URL(`${cfg.baseUrl}/mcp`);
-  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service, grant_offered)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service, grant_offered, flags)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
 
   app.use((req, res, next) => {
@@ -262,7 +262,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     let session: UserSession | undefined;
     const email = (db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string } | undefined)?.email.toLowerCase();
     return buildServer(() => (session ??= UserSession.load(deps, userId, { chatgpt })), (c) => {
-      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.grantOffered ?? null);
+      logCall.run(now(), userId, clientId, c.tool, c.customerId, c.ok ? 1 : 0, c.error, c.ms, c.bytes, c.queryShape ?? null, c.service ?? null, c.grantOffered ?? null, c.flags ?? null);
     }, [], { chatgpt, pagespeed,
       feedback: async (kind, message) => {
         if (!email) throw new Error("Feedback needs a connected account.");

@@ -89,3 +89,15 @@ describe("attorney advertising wording", () => {
       .toEqual(["A", "B", "C", "D", "E", "F"]);
   });
 });
+
+describe("flagsOf (tools.ts)", () => {
+  it("logs check keys, a preview's account, wording_review and Local Services data, never the values", async () => {
+    const { flagsOf } = await import("./tools.js");
+    expect(flagsOf("account_overview", { attention: { conversions_stopped: {}, ads_with_policy_problems: [], more_ads_with_policy_problems: 3, recommendations_page: "u" } }, "333"))
+      .toBe("preview:333,conversions_stopped,ads_with_policy_problems");
+    expect(flagsOf("propose_changes", { proposal_id: "p_1", wording_review: { items: [] } }, null)).toBe("wording_review");
+    expect(flagsOf("local_services_report", { none: "…" }, null)).toBe("lsa_empty");
+    expect(flagsOf("local_services_report", { campaigns: [] }, null)).toBe("lsa_data");
+    expect(flagsOf("run_gaql", { rows: [] }, null)).toBeNull();
+  });
+});

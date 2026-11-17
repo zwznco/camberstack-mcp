@@ -260,7 +260,8 @@ CREATE INDEX IF NOT EXISTS survey_answers_user ON survey_answers(survey, user_id
 CREATE TABLE IF NOT EXISTS account_previews (
   user_id      TEXT NOT NULL,
   customer_id  TEXT NOT NULL,
-  at           INTEGER NOT NULL
+  at           INTEGER NOT NULL,
+  kind         TEXT              -- choosing (before the first pick) | locked (on a full plan)
 );
 CREATE INDEX IF NOT EXISTS account_previews_user ON account_previews(user_id, customer_id);
 `;
@@ -330,6 +331,12 @@ export function openDb(dataDir: string): DB {
   if (!tc.has("service_wanted")) db.exec("ALTER TABLE tool_calls ADD COLUMN service_wanted TEXT");
   // Which grant link the call handed the user (2026-11-02): grantName(), e.g. search-console-edit. Offered vs grant_added in Matomo.
   if (!tc.has("grant_offered")) db.exec("ALTER TABLE tool_calls ADD COLUMN grant_offered TEXT");
+  // What a call's result raised (tools.ts flagsOf, 0.44.1), comma-joined: account_overview's attention keys, preview:<account>,
+  // wording_review, lsa_data / lsa_empty. For the admin's Checks and Previews cards; never the values.
+  if (!tc.has("flags")) db.exec("ALTER TABLE tool_calls ADD COLUMN flags TEXT");
+  // account_previews.kind came a release after the table (0.44.1).
+  const ap = new Set((db.prepare("PRAGMA table_info(account_previews)").all() as { name: string }[]).map((c) => c.name));
+  if (!ap.has("kind")) db.exec("ALTER TABLE account_previews ADD COLUMN kind TEXT");
   // The admin's email on an /account session opened through "Log in as user" (account.ts); NULL = the user's own.
   const ws = new Set((db.prepare("PRAGMA table_info(web_sessions)").all() as { name: string }[]).map((c) => c.name));
   if (!ws.has("impersonator")) db.exec("ALTER TABLE web_sessions ADD COLUMN impersonator TEXT");
