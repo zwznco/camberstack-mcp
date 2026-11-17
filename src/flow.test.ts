@@ -136,6 +136,9 @@ class FakeAds {
       return this.negatives.map((n) => ({ campaign: { id: "10" }, campaignCriterion: { keyword: { text: n.text, matchType: n.matchType } } }));
     }
     if (q.includes("FROM ad_group_criterion")) {
+      // Criterion 99 is a Shopping product group: a real criterion with no `keyword`, which Google leaves out of a type = 'KEYWORD' query.
+      if (q.includes("criterion_id = 99")) return q.includes("type = 'KEYWORD'") ? [] :
+        [{ adGroupCriterion: { type: "LISTING_GROUP", cpcBidMicros: "500000", listingGroup: { type: "UNIT" } }, adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Shopping" } }];
       return [{ adGroupCriterion: { status: this.kwStatus, cpcBidMicros: this.kwBid, keyword: { text: "invoice", matchType: "BROAD" } }, adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Search" } }];
     }
     if (q.includes("WHERE campaign_conversion_goal.biddable = TRUE")) {
@@ -2869,6 +2872,14 @@ describe("OAuth + MCP end to end", () => {
     expect(kwUndo.summary).toContain("to the ad group's 1.00");
     await call(token, "apply_changes", { proposal_id: kwUndo.proposal_id });
     expect(last().operations[0]).toEqual({ update: { resourceName: "customers/1112223333/adGroupCriteria/20~30" }, updateMask: "cpc_bid_micros" });  // cleared
+
+    // A Shopping product group's criterion_id passed as a keyword's (2026-11-17: crashed reading keyword.text). Each keyword change says so.
+    for (const change of [{ type: "set_keyword_bid", max_cpc: 2 }, { type: "pause_keyword" }, { type: "enable_keyword" }, { type: "delete_keyword" }]) {
+      const r = await call(token, "propose_changes", { customer_id: "1112223333", changes: [{ ...change, ad_group_id: "20", criterion_id: "99" }] });
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain("Keyword 99 not found in ad group 20");
+      expect(r.text).toContain("Shopping product groups");
+    }
 
     const ad = await propose([{ type: "pause_ad", ad_group_id: "20", ad_id: "40" }]);
     expect(ad.summary).toContain('Pause ad 40 (→ https://example.com/old) in ad group "AG"');

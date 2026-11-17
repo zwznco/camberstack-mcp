@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.42.2", date: "2026-11-17",
+    summary: "Asking to change a Shopping product group as if it were a keyword now gets a clear answer instead of an error.",
+    items: [
+      "**Shopping product groups:** keyword bid, pause, enable and delete changes take keywords only. Given a product group (or an audience), they now say so and point your AI to the ad group's bid, instead of failing with an internal error.",
+    ],
+  },
+  {
     version: "0.42.1", date: "2026-11-17",
     summary: "Keyword research takes Taiwan, Hong Kong and the other places Google doesn't list as countries, and says which Chinese to count.",
     items: [

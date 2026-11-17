@@ -568,7 +568,7 @@ export async function resolveChange(
       const k = await one(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
           ad_group_criterion.status, ad_group.name, campaign.name
         FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
-        AND ad_group_criterion.criterion_id = ${change.criterion_id}`, `Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
+        AND ad_group_criterion.criterion_id = ${change.criterion_id} AND ad_group_criterion.type = 'KEYWORD'`, keywordMissing(change));
       const { ad_group_id, criterion_id } = change;
       return toggle(change, "pause_keyword", "enable_keyword", (type) => ({ type, ad_group_id, criterion_id }), {
         service: "adGroupCriteria", before: k.adGroupCriterion.status,
@@ -933,7 +933,7 @@ export async function resolveChange(
     case "set_keyword_bid": {
       const k = await one(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.cpc_bid_micros,
           ad_group.name, ad_group.cpc_bid_micros FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
-          AND ad_group_criterion.criterion_id = ${change.criterion_id}`, `Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
+          AND ad_group_criterion.criterion_id = ${change.criterion_id} AND ad_group_criterion.type = 'KEYWORD'`, keywordMissing(change));
       const before = k.adGroupCriterion.cpcBidMicros ? micros(k.adGroupCriterion.cpcBidMicros) : null;
       const label = (v: number | null) => (v == null ? `the ad group's ${micros(k.adGroup.cpcBidMicros).toFixed(2)}` : v.toFixed(2));
       const same = before === change.max_cpc;
@@ -1310,7 +1310,7 @@ export async function resolveChange(
     case "delete_keyword": {
       const k = await one(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.cpc_bid_micros,
           ad_group_criterion.status, ad_group.name, campaign.name FROM ad_group_criterion WHERE ad_group.id = ${change.ad_group_id}
-          AND ad_group_criterion.criterion_id = ${change.criterion_id}`, `Keyword ${change.criterion_id} not found in ad group ${change.ad_group_id}`);
+          AND ad_group_criterion.criterion_id = ${change.criterion_id} AND ad_group_criterion.type = 'KEYWORD'`, keywordMissing(change));
       const c = k.adGroupCriterion, label = fmtKw(c.keyword.text, c.keyword.matchType);
       if (c.status === "REMOVED") return { change, service: "adGroupCriteria", operations: [], describe: `Delete keyword ${label} (already in place)` };
       // add_keywords creates ENABLED, so undoing the delete of a paused keyword would start it spending.
@@ -2125,6 +2125,13 @@ export function inverseAfterApply(r: ResolvedChange, resourceNames: string[]): C
     return { type: "remove_campaign_assets", resource_names: of("campaignAssets"), what: `${c.sitelinks.length} sitelink(s) Camberstack added: ${c.sitelinks.map((x) => `"${x.text}"`).join(", ")}` };
   }
   return r.inverse;
+}
+
+/** A keyword change's criterion that isn't a keyword: a Shopping product group, an audience, an age range… (2026-11-17: a listing group crashed set_keyword_bid). */
+function keywordMissing(c: { ad_group_id: string; criterion_id: string }): string {
+  return `Keyword ${c.criterion_id} not found in ad group ${c.ad_group_id}. This change takes a keyword's criterion_id (ad_group_criterion.type = 'KEYWORD'); ` +
+    `Shopping product groups, audiences and other criteria aren't keywords, and Camberstack can't change their bids or status. ` +
+    `To change what a Shopping ad group bids, use set_ad_group_bid.`;
 }
 
 function fmtKw(text: string, matchType: string): string {
