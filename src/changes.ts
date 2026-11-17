@@ -276,6 +276,10 @@ export const PUBLIC_CHANGES = [
   z.object({ type: z.literal("set_keyword_bid"), ad_group_id: adGroupId, criterion_id: criterionId,
     max_cpc: bid.nullable().describe("New max cost per click for this keyword, or null to clear it so the keyword uses the ad group's bid") })
     .describe("Change one keyword's max CPC (manual CPC campaigns)"),
+  z.object({ type: z.literal("set_product_group_bid"), ad_group_id: adGroupId,
+    criterion_id: id.describe("Product group criterion id, digits only (ad_group_criterion.criterion_id where ad_group_criterion.type = 'LISTING_GROUP', from run_gaql)"),
+    max_cpc: bid.nullable().describe("New max cost per click for this product group, or null to clear it so it uses the ad group's bid") })
+    .describe("Change one product group's max CPC in a Shopping campaign (manual CPC). Only a group that isn't split further (listing_group.type UNIT) has a bid"),
   z.object({ type: z.literal("set_ad_group_bid"), ad_group_id: adGroupId, max_cpc: bid.describe("New default max cost per click for the ad group") })
     .describe("Change an ad group's default max CPC, which its keywords use unless they have their own"),
   z.object({ type: z.literal("pause_ad"), ad_group_id: adGroupId, ad_id: id.describe("Ad id, digits only (ad_group_ad.ad.id from run_gaql)") }).describe("Pause one ad"),
@@ -944,6 +948,31 @@ export async function resolveChange(
         describe: `Set max CPC of keyword ${fmtKw(k.adGroupCriterion.keyword.text, k.adGroupCriterion.keyword.matchType)} in ad group "${k.adGroup.name}" from ${label(before)} to ${label(change.max_cpc)}` +
           bidWarn(before ?? micros(k.adGroup.cpcBidMicros), change.max_cpc),
         inverse: same ? undefined : { type: "set_keyword_bid", ad_group_id: change.ad_group_id, criterion_id: change.criterion_id, max_cpc: before },
+      };
+    }
+    case "set_product_group_bid": {
+      const g = await one(`SELECT ad_group_criterion.listing_group.type, ad_group_criterion.listing_group.parent_ad_group_criterion,
+          ${PRODUCT_GROUP_FIELDS}, ad_group_criterion.negative, ad_group_criterion.cpc_bid_micros,
+          ad_group.name, ad_group.cpc_bid_micros, campaign.name, campaign.bidding_strategy_type FROM ad_group_criterion
+          WHERE ad_group.id = ${change.ad_group_id} AND ad_group_criterion.criterion_id = ${change.criterion_id}
+          AND ad_group_criterion.type = 'LISTING_GROUP'`, productGroupMissing(change));
+      const c = g.adGroupCriterion, name = productGroupName(c.listingGroup);
+      if (c.listingGroup?.type === "SUBDIVISION")
+        throw new Error(`Product group ${name} (${change.criterion_id}) is split into smaller groups, and only those hold bids. ` +
+          `Find them with ad_group_criterion.listing_group.parent_ad_group_criterion = 'customers/${customerId}/adGroupCriteria/${change.ad_group_id}~${change.criterion_id}'.`);
+      if (c.negative) throw new Error(`Product group ${name} (${change.criterion_id}) is excluded from the ad group, so it has no bid.`);
+      const before = c.cpcBidMicros ? micros(c.cpcBidMicros) : null;
+      const label = (v: number | null) => (v == null ? `the ad group's ${micros(g.adGroup.cpcBidMicros).toFixed(2)}` : v.toFixed(2));
+      const same = before === change.max_cpc;
+      const auto = g.campaign.biddingStrategyType && g.campaign.biddingStrategyType !== "MANUAL_CPC"
+        ? ` ⚠ campaign "${g.campaign.name}" bids automatically (${g.campaign.biddingStrategyType.toLowerCase().replace(/_/g, " ")}), so Google ignores product group bids until it's on manual CPC` : "";
+      return {
+        change, service: "adGroupCriteria",
+        operations: same ? [] : [{ update: { resourceName: `customers/${customerId}/adGroupCriteria/${change.ad_group_id}~${change.criterion_id}`,
+          ...(change.max_cpc != null ? { cpcBidMicros: toMicros(change.max_cpc) } : {}) }, updateMask: "cpc_bid_micros" }],
+        describe: `Set max CPC of product group ${name} in ad group "${g.adGroup.name}" from ${label(before)} to ${label(change.max_cpc)}` +
+          bidWarn(before ?? micros(g.adGroup.cpcBidMicros), change.max_cpc) + auto,
+        inverse: same ? undefined : { type: "set_product_group_bid", ad_group_id: change.ad_group_id, criterion_id: change.criterion_id, max_cpc: before },
       };
     }
     case "set_ad_group_bid": {
@@ -2130,8 +2159,33 @@ export function inverseAfterApply(r: ResolvedChange, resourceNames: string[]): C
 /** A keyword change's criterion that isn't a keyword: a Shopping product group, an audience, an age range… (2026-11-17: a listing group crashed set_keyword_bid). */
 function keywordMissing(c: { ad_group_id: string; criterion_id: string }): string {
   return `Keyword ${c.criterion_id} not found in ad group ${c.ad_group_id}. This change takes a keyword's criterion_id (ad_group_criterion.type = 'KEYWORD'); ` +
-    `Shopping product groups, audiences and other criteria aren't keywords, and Camberstack can't change their bids or status. ` +
-    `To change what a Shopping ad group bids, use set_ad_group_bid.`;
+    `Shopping product groups, audiences and other criteria aren't keywords. For a product group's bid, use set_product_group_bid.`;
+}
+
+function productGroupMissing(c: { ad_group_id: string; criterion_id: string }): string {
+  return `Product group ${c.criterion_id} not found in ad group ${c.ad_group_id}. This change takes a Shopping campaign's product group ` +
+    `(ad_group_criterion.type = 'LISTING_GROUP'). Performance Max product groups (asset_group_listing_group_filter) have no bids: Google sets them.`;
+}
+
+const PRODUCT_GROUP_FIELDS = ["product_item_id.value", "product_brand.value", "product_condition.condition", "product_custom_attribute.index",
+  "product_custom_attribute.value", "product_type.level", "product_type.value", "product_category.level", "product_category.category_id",
+  "product_channel.channel", "product_channel_exclusivity.channel_exclusivity"].map((f) => `ad_group_criterion.listing_group.case_value.${f}`).join(", ");
+
+const levelOf = (l?: string) => (l ? ` level ${l.replace(/\D/g, "")}` : "");
+
+/** A product group named by what it selects: brand "Acme", custom label 0 "sale", "All products" at the root, "Everything else" for a catch-all. */
+export function productGroupName(lg: { parentAdGroupCriterion?: string; caseValue?: Record<string, any> } | undefined): string {
+  const v = lg?.caseValue ?? {};
+  const named =
+    v.productItemId?.value ? `item ID "${v.productItemId.value}"` :
+    v.productBrand?.value ? `brand "${v.productBrand.value}"` :
+    v.productCondition?.condition ? `condition ${v.productCondition.condition.toLowerCase()}` :
+    v.productCustomAttribute?.value ? `custom label ${String(v.productCustomAttribute.index ?? "").replace(/\D/g, "")} "${v.productCustomAttribute.value}"` :
+    v.productType?.value ? `product type${levelOf(v.productType.level)} "${v.productType.value}"` :
+    v.productCategory?.categoryId ? `category ${v.productCategory.categoryId}${levelOf(v.productCategory.level)}` :
+    v.productChannel?.channel ? `channel ${v.productChannel.channel.toLowerCase()}` :
+    v.productChannelExclusivity?.channelExclusivity ? `${v.productChannelExclusivity.channelExclusivity.toLowerCase().replace(/_/g, " ")}` : null;
+  return named ?? (lg?.parentAdGroupCriterion ? `"Everything else"` : `"All products"`);
 }
 
 function fmtKw(text: string, matchType: string): string {

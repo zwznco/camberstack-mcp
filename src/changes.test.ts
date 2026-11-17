@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inverseAfterApply, resolveChange } from "./changes.js";
+import { inverseAfterApply, productGroupName, resolveChange } from "./changes.js";
 import { AdsApiError } from "./google.js";
 
 /** A campaign that targets the United States and English only. */
@@ -308,5 +308,17 @@ describe("set_conversion_goal", () => {
     expect(validated).toHaveLength(2);
     expect(r.operations.map((o: any) => [o.update.resourceName.split("/").pop(), o.update.biddable])).toEqual([["10~PURCHASE~WEBSITE", false], ["10~CONTACT~WEBSITE", true]]);
     expect(r.describe).toContain("⚠ Google won't let the API turn on the CONTACT goal from GOOGLE_HOSTED, so it stays off");
+  });
+});
+
+describe("productGroupName", () => {
+  it("names a product group by what it selects", () => {
+    const child = "customers/1/adGroupCriteria/2~3";
+    expect(productGroupName({})).toBe('"All products"');
+    expect(productGroupName({ parentAdGroupCriterion: child, caseValue: { productBrand: {} } })).toBe('"Everything else"');
+    expect(productGroupName({ parentAdGroupCriterion: child, caseValue: { productCustomAttribute: { index: "INDEX0", value: "sale" } } })).toBe('custom label 0 "sale"');
+    expect(productGroupName({ parentAdGroupCriterion: child, caseValue: { productType: { level: "LEVEL2", value: "boots" } } })).toBe('product type level 2 "boots"');
+    expect(productGroupName({ parentAdGroupCriterion: child, caseValue: { productItemId: { value: "sku-1" } } })).toBe('item ID "sku-1"');
+    expect(productGroupName({ parentAdGroupCriterion: child, caseValue: { productCondition: { condition: "USED" } } })).toBe("condition used");
   });
 });

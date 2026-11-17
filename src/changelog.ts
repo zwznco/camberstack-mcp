@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.43.0", date: "2026-11-17",
+    summary: "Your AI can now change the bid on a Shopping product group, with an undo like any other change.",
+    items: [
+      "**Product group bids** (`set_product_group_bid`): raise, lower or clear the max CPC of one product group in a Shopping campaign. The proposal names the group by what it holds, such as brand \"Acme\" or custom label 0 \"sale\", and shows the bid before and after.",
+      "**Warnings first:** the proposal flags a bid more than twice the current one, and a campaign that bids automatically, where Google ignores product group bids.",
+    ],
+  },
+  {
     version: "0.42.2", date: "2026-11-17",
     summary: "Asking to change a Shopping product group as if it were a keyword now gets a clear answer instead of an error.",
     items: [

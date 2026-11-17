@@ -136,9 +136,15 @@ class FakeAds {
       return this.negatives.map((n) => ({ campaign: { id: "10" }, campaignCriterion: { keyword: { text: n.text, matchType: n.matchType } } }));
     }
     if (q.includes("FROM ad_group_criterion")) {
-      // Criterion 99 is a Shopping product group: a real criterion with no `keyword`, which Google leaves out of a type = 'KEYWORD' query.
+      // Criteria 98 and 99 are Shopping product groups: real criteria with no `keyword`, which Google leaves out of a type = 'KEYWORD' query.
+      // 99 is brand "Acme" (a UNIT, which holds a bid), 98 the root split by brand (a SUBDIVISION). Keyword 30 isn't a LISTING_GROUP.
+      const shopping = { adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Shopping", biddingStrategyType: this.shoppingBidding } };
       if (q.includes("criterion_id = 99")) return q.includes("type = 'KEYWORD'") ? [] :
-        [{ adGroupCriterion: { type: "LISTING_GROUP", cpcBidMicros: "500000", listingGroup: { type: "UNIT" } }, adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Shopping" } }];
+        [{ adGroupCriterion: { type: "LISTING_GROUP", cpcBidMicros: this.pgBid, negative: false,
+          listingGroup: { type: "UNIT", parentAdGroupCriterion: "customers/1112223333/adGroupCriteria/20~98", caseValue: { productBrand: { value: "Acme" } } } }, ...shopping }];
+      if (q.includes("criterion_id = 98")) return q.includes("type = 'KEYWORD'") ? [] :
+        [{ adGroupCriterion: { type: "LISTING_GROUP", negative: false, listingGroup: { type: "SUBDIVISION" } }, ...shopping }];
+      if (q.includes("type = 'LISTING_GROUP'")) return [];
       return [{ adGroupCriterion: { status: this.kwStatus, cpcBidMicros: this.kwBid, keyword: { text: "invoice", matchType: "BROAD" } }, adGroup: { name: "AG", cpcBidMicros: this.agBid }, campaign: { name: "Search" } }];
     }
     if (q.includes("WHERE campaign_conversion_goal.biddable = TRUE")) {
@@ -240,6 +246,8 @@ class FakeAds {
   agBid = "1000000";
   rsas = 1;
   kwBid: string | undefined;
+  pgBid: string | undefined = "500000";
+  shoppingBidding = "MANUAL_CPC";
   removed: string[] = [];
   /** A test can make Google refuse operations mentioning `text`: at validation too, or only on the real write. */
   failOn: { text: string; writesOnly?: boolean } | undefined;
@@ -302,7 +310,9 @@ class FakeAds {
         }
         if (op.remove) { this.negatives = this.negatives.filter((n) => n.rn !== op.remove); return { resourceName: op.remove }; }
         if (op.updateMask === "cpc_bid_micros") {
-          if (service === "adGroups") this.agBid = op.update.cpcBidMicros; else this.kwBid = op.update.cpcBidMicros;
+          if (service === "adGroups") this.agBid = op.update.cpcBidMicros;
+          else if (op.update.resourceName.endsWith("~99")) this.pgBid = op.update.cpcBidMicros;
+          else this.kwBid = op.update.cpcBidMicros;
           return { resourceName: op.update.resourceName };
         }
         if (op.update?.containsEuPoliticalAdvertising) { this.euPolitical = op.update.containsEuPoliticalAdvertising; return { resourceName: op.update.resourceName }; }
@@ -710,8 +720,8 @@ describe("OAuth + MCP end to end", () => {
     // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +7.2K for its three tools;
     // +0.2K for create_container and delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
     // change_results (2026-11-12): +1.2K. register_custom_dimension + analytics_setup's custom definitions (2026-11-16): +0.9K; register_custom_metric: +1.1K, taking propose_analytics_changes past 6K; set_custom_metric_unit: +0.65K; archive_custom_dimension / _metric public: +1.25K (propose_analytics_changes 9K).
-    // +200 (0.40.0): the keyword tools' `months`; +300 (0.41.0): keyword_ideas `site`, keyword_metrics `by_location`.
-    expectToolBudget(tools, { total: 124_200, perTool: 6_000, except: { propose_changes: 56_800, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
+    // +200 (0.40.0): the keyword tools' `months`; +300 (0.41.0): keyword_ideas `site`, keyword_metrics `by_location`. +800 (0.43.0): set_product_group_bid.
+    expectToolBudget(tools, { total: 125_000, perTool: 6_000, except: { propose_changes: 57_200, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1313,7 +1323,7 @@ describe("OAuth + MCP end to end", () => {
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
       // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K; propose_archive_custom_dimension / _metric: +2.2K.
-      expectToolBudget(tools, { total: 165_400, perTool: 6_000 });  // +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`
+      expectToolBudget(tools, { total: 166_800, perTool: 6_000 });  // +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -2878,8 +2888,26 @@ describe("OAuth + MCP end to end", () => {
       const r = await call(token, "propose_changes", { customer_id: "1112223333", changes: [{ ...change, ad_group_id: "20", criterion_id: "99" }] });
       expect(r.isError).toBe(true);
       expect(r.text).toContain("Keyword 99 not found in ad group 20");
-      expect(r.text).toContain("Shopping product groups");
+      expect(r.text).toContain("For a product group's bid, use set_product_group_bid");
     }
+
+    // Shopping product group bids (0.43.0), named by what the group selects, with an undo.
+    const pg = await propose([{ type: "set_product_group_bid", ad_group_id: "20", criterion_id: "99", max_cpc: 0.8 }]);
+    expect(pg.summary).toContain('Set max CPC of product group brand "Acme" in ad group "AG" from 0.50 to 0.80');
+    expect(pg.summary).not.toContain("⚠");
+    const pgUndo = await applyUndo(pg.proposal_id);
+    expect(ads.pgBid).toBe("800000");
+    expect(pgUndo.summary).toContain("from 0.80 to 0.50");
+    await call(token, "apply_changes", { proposal_id: pgUndo.proposal_id });
+    expect(ads.pgBid).toBe("500000");
+    ads.shoppingBidding = "TARGET_ROAS";
+    expect((await propose([{ type: "set_product_group_bid", ad_group_id: "20", criterion_id: "99", max_cpc: 0.6 }])).summary)
+      .toContain('⚠ campaign "Shopping" bids automatically (target roas), so Google ignores product group bids');
+    ads.shoppingBidding = "MANUAL_CPC";
+    const pgErr = async (criterion_id: string) => (await call(token, "propose_changes", { customer_id: "1112223333",
+      changes: [{ type: "set_product_group_bid", ad_group_id: "20", criterion_id, max_cpc: 1 }] })).text;
+    expect(await pgErr("98")).toContain("is split into smaller groups, and only those hold bids");
+    expect(await pgErr("30")).toContain("Product group 30 not found in ad group 20");
 
     const ad = await propose([{ type: "pause_ad", ad_group_id: "20", ad_id: "40" }]);
     expect(ad.summary).toContain('Pause ad 40 (→ https://example.com/old) in ad group "AG"');
