@@ -3381,6 +3381,14 @@ describe("OAuth + MCP end to end", () => {
     expect(pt).toContain(`hreflang="en" href="${base}/google-ads-chatgpt"`);
     expect(gg).toContain(`hreflang="pt-BR" href="${base}/pt/google-ads-chatgpt"`);
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/pt/google-ads-chatgpt`);
+    // The Spanish copy (Latin America ad landing page, 2026-11-17): same shape as the Portuguese one.
+    const es = await (await fetch(`${base}/es/google-ads-chatgpt`)).text();
+    expect(es).toContain('<html lang="es-419">');
+    expect(es).toContain("Conecta Google Ads a ChatGPT");
+    expect(es).toContain(`hreflang="pt-BR" href="${base}/pt/google-ads-chatgpt"`);
+    expect(gg).toContain(`hreflang="es-419" href="${base}/es/google-ads-chatgpt"`);
+    expect(pt).toContain(`hreflang="es-419" href="${base}/es/google-ads-chatgpt"`);
+    expect(await (await fetch(`${base}/sitemap.xml`)).text()).toContain(`${base}/es/google-ads-chatgpt`);
     expect(claude).toContain('src="/shots/gemini-3.webp"');
     // Gemini doesn't complete the connection yet: the guide stays up but unlisted.
     expect(await (await fetch(`${base}/sitemap.xml`)).text()).not.toContain(`${base}/google-ads-gemini`);

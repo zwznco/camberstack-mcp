@@ -658,11 +658,11 @@ ${guideBody(`
 <h2 id="setup">Set it up</h2>
 <ol class="steps">
 <li>Open <a href="https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866">Camberstack in ChatGPT's plugin directory</a>, and click <strong>Install plugin</strong>. It's listed as
-<strong>Camberstack: Google Ads</strong>.
+<strong>Google Ads by Camberstack</strong>.
 On Business or Enterprise, a workspace admin may need to allow it first.
 ${shot("chatgpt-plugin.webp", 540, 842, "Camberstack: Google Ads in ChatGPT's plugin directory, with the Install plugin button")}</li>
 <li>Sign in with the Google account that has access to your Google Ads. Google shows exactly what's being shared before you agree.</li>
-<li>In a chat, type <strong>@Camberstack</strong> and pick <strong>Camberstack: Google Ads</strong>, then your question:
+<li>In a chat, type <strong>@Camberstack</strong> and pick <strong>Google Ads by Camberstack</strong>, then your question:
 <em>"@Camberstack how did my campaigns do last month?"</em> Once it's added, it works in the ChatGPT phone app too.</li>
 </ol>
 
@@ -712,8 +712,8 @@ ${closer("Ask ChatGPT about your Google Ads.", `Free for one account, with ${fre
   });
 }
 
-/** The ChatGPT guide and its Portuguese copy point at each other (hreflang). */
-const CHATGPT_GUIDE_ALTERNATES = { en: "/google-ads-chatgpt", "pt-BR": "/pt/google-ads-chatgpt", "x-default": "/google-ads-chatgpt" };
+/** The ChatGPT guide and its Portuguese and Spanish copies point at each other (hreflang). */
+const CHATGPT_GUIDE_ALTERNATES = { en: "/google-ads-chatgpt", "pt-BR": "/pt/google-ads-chatgpt", "es-419": "/es/google-ads-chatgpt", "x-default": "/google-ads-chatgpt" };
 const CHATGPT_PLUGIN_URL = "https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866";
 /** "10 mudanças por mês" / "mudanças ilimitadas": freeChangesShort() in Portuguese. */
 const freeChangesShortPt = () => (changeCap() ? `${changeCap()} mudanças por mês` : "mudanças ilimitadas");
@@ -759,10 +759,10 @@ ${guideBody(`
 <h2 id="setup">Como configurar</h2>
 <ol class="steps">
 <li>Abra o <a href="${CHATGPT_PLUGIN_URL}">Camberstack no diretório de plugins do ChatGPT</a> e instale o plugin. Ele aparece como
-<strong>Camberstack: Google Ads</strong>. Nos planos Business ou Enterprise, um administrador do workspace pode precisar liberá-lo antes.
+<strong>Google Ads by Camberstack</strong>. Nos planos Business ou Enterprise, um administrador do workspace pode precisar liberá-lo antes.
 ${shot("chatgpt-plugin.webp", 540, 842, "Camberstack: Google Ads no diretório de plugins do ChatGPT, com o botão de instalar")}</li>
 <li>Entre com a conta do Google que tem acesso ao seu Google Ads. O Google mostra exatamente o que será compartilhado antes de você aceitar.</li>
-<li>Em uma conversa, digite <strong>@Camberstack</strong>, escolha <strong>Camberstack: Google Ads</strong> e faça sua pergunta:
+<li>Em uma conversa, digite <strong>@Camberstack</strong>, escolha <strong>Google Ads by Camberstack</strong> e faça sua pergunta:
 <em>"@Camberstack como foram minhas campanhas no mês passado?"</em> Depois de adicionado, ele também funciona no app do ChatGPT no celular.</li>
 </ol>
 <p class="muted">O Camberstack responde no idioma em que você pergunta. Esta página, a tela de login e o resto do site estão em inglês por enquanto.</p>
@@ -809,6 +809,104 @@ Os <a href="/#pricing">planos pagos</a> liberam mais mudanças e mais contas.</p
 `)}
 ${closer("Pergunte ao ChatGPT sobre seu Google Ads.", `Grátis para uma conta, com ${freeChangesShortPt()} e desfazer.`,
   `<a class="btn btn-lg" href="${CHATGPT_PLUGIN_URL}">Abrir no diretório do ChatGPT</a><a class="btn btn-lg btn-ghost" href="#setup">Ver os passos</a>`)}
+`,
+  });
+}
+
+/** "10 cambios al mes" / "cambios ilimitados": freeChangesShort() in Spanish. */
+const freeChangesShortEs = () => (changeCap() ? `${changeCap()} cambios al mes` : "cambios ilimitados");
+
+/**
+ * Latin American Spanish copy of the ChatGPT guide (2026-11-17): the landing page of the Spanish Latin America ChatGPT
+ * Ads campaign (projects/camberstack/chatgpt-ads/OPERATIONS.md). The English ad and page got clicks in MX/CO/AR/CL but
+ * ~1.6% connected and none used a real account. Only this page is translated, as with the Portuguese one.
+ */
+export function chatgptGuidePageEs(baseUrl: string): string {
+  return layout({
+    baseUrl, path: "/es/google-ads-chatgpt", wide: true, lang: "es-419", alternates: CHATGPT_GUIDE_ALTERNATES,
+    title: "Conecta Google Ads a ChatGPT: configuración paso a paso | Camberstack",
+    description: "Conecta tu cuenta de Google Ads a ChatGPT con un plugin. Sin token de desarrollador ni proyecto en Google Cloud: agrega Camberstack desde el directorio de plugins de ChatGPT, inicia sesión con Google y pregunta sobre tu cuenta.",
+    jsonLd: {
+      "@context": "https://schema.org", "@type": "TechArticle", inLanguage: "es-419",
+      headline: "Conecta Google Ads a ChatGPT", url: `${baseUrl}/es/google-ads-chatgpt`, dateModified: "2026-11-17",
+      author: { "@type": "Organization", name: "Camberstack", url: baseUrl },
+      about: { "@type": "SoftwareApplication", name: "Camberstack", url: baseUrl },
+    },
+    body: `
+${guideHero({
+  kicker: "En el directorio de plugins de ChatGPT",
+  title: "Conecta Google Ads a ChatGPT",
+  lede: `ChatGPT puede leer tu cuenta de Google Ads, responder preguntas sobre ella y hacer los cambios que tú apruebes.
+La configuración es un clic en el directorio de plugins de ChatGPT y un inicio de sesión con Google. Sin token de desarrollador,
+sin proyecto en Google Cloud.`,
+  ctas: `<a class="btn btn-lg" href="${CHATGPT_PLUGIN_URL}">Abrir en el directorio de ChatGPT</a><a class="btn btn-lg btn-ghost" href="#setup">Ver los pasos</a>`,
+  aside: `<figure class="window" aria-label="Cómo se ve un cambio, en la cuenta de demostración">
+<div class="window-bar"><i></i><i></i><i></i><span>Cuenta de demostración · plomero ficticio</span></div>
+<div class="window-body">
+<p class="said you">@Camberstack ¿Qué términos de búsqueda están desperdiciando dinero en la campaña Emergency Plumbing?</p>
+<p class="ai"><em>"plumber jobs near me"</em> costó US$ 84.60 y <em>"plumber salary"</em> US$ 41.20, sin ninguna conversión: son personas buscando empleo, no un plomero. Puedo agregar "jobs" y "salary" como palabras clave negativas.</p>
+<div class="change"><div class="change-top"><strong>Propuesta</strong><span class="pill proposed">propuesta</span></div>
+<ul><li>Agregar 2 palabras clave negativas a la campaña "Emergency Plumbing – Search": "jobs", "salary"</li></ul>
+<div class="change-foot">Verificada con Google, todavía no se cambió nada</div></div>
+<p class="said you">@Camberstack Aplícala.</p>
+<p class="ai"><span class="pill applied">aplicada</span>&nbsp; Listo. Si esto bloquea búsquedas que sí querías, pide deshacerlo: eso quita exactamente esas dos negativas.</p>
+</div>
+</figure>`,
+})}
+${guideBody(`
+<h2 id="setup">Cómo configurarlo</h2>
+<ol class="steps">
+<li>Abre <a href="${CHATGPT_PLUGIN_URL}">Camberstack en el directorio de plugins de ChatGPT</a> e instala el plugin. Aparece como
+<strong>Google Ads by Camberstack</strong>. En los planes Business o Enterprise, puede que un administrador del workspace tenga que habilitarlo primero.
+${shot("chatgpt-plugin.webp", 540, 842, "Camberstack: Google Ads en el directorio de plugins de ChatGPT, con el botón de instalar")}</li>
+<li>Inicia sesión con la cuenta de Google que tiene acceso a tu Google Ads. Google te muestra exactamente qué se compartirá antes de que aceptes.</li>
+<li>En una conversación, escribe <strong>@Camberstack</strong>, elige <strong>Google Ads by Camberstack</strong> y haz tu pregunta:
+<em>"@Camberstack ¿cómo les fue a mis campañas el mes pasado?"</em> Una vez agregado, también funciona en la app de ChatGPT en el celular.</li>
+</ol>
+<p class="muted">Camberstack responde en el idioma en que preguntas. Esta página, la pantalla de inicio de sesión y el resto del sitio están en inglés por ahora.</p>
+
+<h2>Qué protege tu cuenta</h2>
+<ul>
+<li>Los cambios se guardan como una propuesta y primero se verifican con Google; aplicarlos es un paso aparte. ChatGPT te pide
+confirmación antes de cualquier acción que cambie algo, a menos que lo hayas desactivado.</li>
+<li>Los cambios aplicados se pueden deshacer con un mensaje más. Los pocos que Google no puede revertir, como eliminar una campaña, se señalan antes de que apruebes.</li>
+<li>Las campañas nuevas se crean pausadas, y los cambios riesgosos (activar una campaña, un aumento grande de presupuesto o de puja) traen un aviso antes de que apruebes.</li>
+</ul>
+
+<h2>Cómo usarlo en ChatGPT</h2>
+<p>Empieza cada mensaje con <strong>@Camberstack</strong>. Sin la mención, ChatGPT responde con lo que ya sabe y nunca mira tu cuenta.
+Algunas primeras preguntas:</p>
+<ul class="prompts">
+<li><em>"@Camberstack ¿qué campaña tuvo el costo por conversión más alto en los últimos 30 días?"</em></li>
+<li><em>"@Camberstack enumera los términos de búsqueda que gastaron dinero sin conversiones este mes."</em></li>
+<li><em>"@Camberstack busca ideas de palabras clave para mi página de destino y dime las búsquedas mensuales."</em></li>
+<li><em>"@Camberstack muéstrame la cuenta de demostración"</em>, para probarlo antes de usar tu cuenta real.</li>
+</ul>
+<p>Cuando pides un cambio, ChatGPT primero muestra lo que propone Camberstack y luego pregunta antes de aplicarlo.
+Apruébalo en la conversación y el cambio se hace en Google Ads; pide <em>"@Camberstack deshaz eso"</em> para revertirlo.
+Puede cambiar negativas, presupuestos, pujas, segmentación y objetivos de conversión, y crear campañas pausadas
+(<a href="/#changes">lista completa</a>, en inglés). La misma conexión también lee Search Console, Google Analytics 4,
+Merchant Center y Tag Manager.</p>
+
+<h2>Preguntas</h2>
+<h3>ChatGPT no usó mi cuenta</h3>
+<p>ChatGPT solo usa un plugin cuando lo mencionas. Empieza el mensaje con <strong>@</strong> y el nombre:
+<em>"@Camberstack ¿cómo les fue a mis campañas el mes pasado?"</em> Si sigue fallando, quita Camberstack en
+<strong>Plugins</strong> y vuelve a agregarlo desde el <a href="${CHATGPT_PLUGIN_URL}">directorio</a>.</p>
+<h3>¿Cómo me desconecto?</h3>
+<p>Entra a <a href="/account">camberstack.io/account</a> y elige <strong>Disconnect Google Ads</strong>, o quita Camberstack en
+<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
+<h3>¿ChatGPT ve toda mi cuenta de Google?</h3>
+<p>No. El inicio de sesión con Google es de Camberstack, no de ChatGPT, y comparte solo Google Ads, tu dirección de correo y, si los
+dejas marcados, Search Console, Google Analytics, Merchant Center y Tag Manager (que solo se cambian cuando apruebas una propuesta).
+ChatGPT ve únicamente las respuestas que Camberstack devuelve a tus preguntas.</p>
+<h3>¿Necesito un plan de pago?</h3>
+<p>No. Una cuenta de Google Ads es gratis, con todas las herramientas${changeCap() ? ` y ${freeChangesShortEs()}` : ""}.
+Los <a href="/#pricing">planes de pago</a> desbloquean más cambios y más cuentas.</p>
+<p class="muted"><a href="/google-ads-chatgpt" hreflang="en">Read this page in English</a></p>
+`)}
+${closer("Pregúntale a ChatGPT sobre tu Google Ads.", `Gratis para una cuenta, con ${freeChangesShortEs()} y deshacer.`,
+  `<a class="btn btn-lg" href="${CHATGPT_PLUGIN_URL}">Abrir en el directorio de ChatGPT</a><a class="btn btn-lg btn-ghost" href="#setup">Ver los pasos</a>`)}
 `,
   });
 }
@@ -1796,7 +1894,7 @@ export function robotsTxt(baseUrl: string): string {
 }
 
 /** The indexable pages, in sitemap order. */
-export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/pt/google-ads-chatgpt", "/google-search-console-mcp", "/google-analytics-mcp", "/google-merchant-center-mcp", "/google-tag-manager-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
+export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/pt/google-ads-chatgpt", "/es/google-ads-chatgpt", "/google-search-console-mcp", "/google-analytics-mcp", "/google-merchant-center-mcp", "/google-tag-manager-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
 
 /** `lastmod`: each page's own last-changed date (lastmod.ts), never one date for the whole site. */
 export function sitemapXml(baseUrl: string, lastmod: Record<string, string>): string {
