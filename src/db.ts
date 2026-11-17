@@ -254,6 +254,15 @@ CREATE TABLE IF NOT EXISTS survey_answers (
   at       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS survey_answers_user ON survey_answers(survey, user_id);
+
+-- Read-only looks at an account before the plan's first pick (session.ts admit, account_overview only): one per account per
+-- ACCOUNT_WINDOW_DAYS. Kept apart from tool_calls, whose customer_id is what takes an account for the plan.
+CREATE TABLE IF NOT EXISTS account_previews (
+  user_id      TEXT NOT NULL,
+  customer_id  TEXT NOT NULL,
+  at           INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_previews_user ON account_previews(user_id, customer_id);
 `;
 
 export function openDb(dataDir: string): DB {

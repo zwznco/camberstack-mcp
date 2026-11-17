@@ -7,6 +7,16 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.44.0", date: "2026-11-17",
+    summary: "The account overview now runs ready-made checks for problems that used to take custom queries, and Local Services ads have their own report.",
+    items: [
+      "**Ready-made checks** in `account_overview`: conversion actions that were recording and stopped (a lead form or tag that broke), answered calls from ads too short to count as conversions, keywords whose own final URL replaces the ad's page, and bid strategy changes from the last 30 days with who made them.",
+      "**Attorney advertising wording:** on a law firm's account, the overview points out words like \"expert\", \"specialist\", \"top-rated\" or \"guaranteed\" in live ads, and a proposal flags them in new ad text before you approve. Rules differ by state, so it's a prompt to check, not legal advice.",
+      "**Local Services ads** (`local_services_report`, read-only): spend, leads by type, status and charge, credits, and Google's verification checks on the business. Lead contact details are left out.",
+      "**A look at your other accounts:** when your login has more accounts than your plan covers, before you choose or after, `account_overview` can preview any of them once every 30 days, read-only, without changing which accounts your plan covers.",
+    ],
+  },
+  {
     version: "0.43.0", date: "2026-11-17",
     summary: "Your AI can now change the bid on a Shopping product group, with an undo like any other change.",
     items: [

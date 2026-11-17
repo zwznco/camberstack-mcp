@@ -178,14 +178,14 @@ export const changeLogQuery = ([a, b]: [string, string]) => `SELECT change_event
   + `FROM change_event WHERE change_event.change_date_time >= '${a}' AND change_event.change_date_time <= '${addDays(b, 1)}' `
   + `ORDER BY change_event.change_date_time LIMIT 1000`;
 
-const BY: Record<string, string> = {
+export const BY: Record<string, string> = {
   GOOGLE_ADS_WEB_CLIENT: "in Google Ads", GOOGLE_ADS_API: "through the API (Camberstack or another tool)", GOOGLE_ADS_EDITOR: "in Google Ads Editor",
   GOOGLE_ADS_MOBILE_APP: "in the Google Ads app", GOOGLE_ADS_AUTOMATED_RULE: "by an automated rule", GOOGLE_ADS_SCRIPTS: "by a script",
   GOOGLE_ADS_BULK_UPLOAD: "by bulk upload", GOOGLE_ADS_RECOMMENDATIONS: "from a Google recommendation", GOOGLE_ADS_RECOMMENDATIONS_SUBSCRIPTION: "by Google's auto-applied recommendations", INTERNAL_TOOL: "by Google",
 };
 // Google names changed fields in camelCase (seen 2026-11-12: "biddingStrategy", "manualCpc.enhancedCpcEnabled", "amountMicros").
 // Enhanced CPC on its own is a setting, not a strategy change.
-const BIDDING = /biddingStrategy|targetCpa|targetRoas|maximizeConversion|manualCpc(?!\.enhancedCpcEnabled)|targetSpend|targetImpressionShare|percentCpc/;
+export const BIDDING = /biddingStrategy|targetCpa|targetRoas|maximizeConversion|manualCpc(?!\.enhancedCpcEnabled)|targetSpend|targetImpressionShare|percentCpc/;
 
 /** Changes to these campaigns, the notable ones spelled out (status, budget, bidding), the rest counted. */
 export function overlaps(rows: any[], campaigns: Set<string>, window: [string, string]): { notable: Overlap[]; other: number } {

@@ -24,6 +24,7 @@ import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, queryShap
 import { reportBug, reportError } from "./sentry.js";
 import { CRITERIA_QUERY, campaignMarket, chooseTarget, describeTarget, resolveLanguage, resolveLocations, type PlanTarget, type Search } from "./keyword-target.js";
 import { markNoted, takeNote, type NoteVia } from "./result-notes.js";
+import { CONVERSION_ACTIONS_QUERY, KEYWORD_URLS_QUERY, LIVE_ADS_QUERY, adCopyOf, adWording, bidStrategyChanges, callsQuery, campaignChangesQuery, conversionCountsQuery, flaggedWording, keywordUrlOverrides, looksLegal, shortCalls, stoppedConversions, WORDING_NOTE } from "./checks.js";
 import { CAVEATS, MIN_DAYS, add, changeLogQuery, changeLogWindow, overlapNote, overlaps, addDays, between, blocks, localDay, measurable, minus, reading, shown, targets, windows, zero, type Metrics, type Target, type Windows } from "./results.js";
 import {
   ChangeSchema, MAX_CHANGES, inverseAfterApply, quotedKeywords, sameSummary, pendingOf, resolveChange, summarize,
@@ -236,7 +237,9 @@ type AnyChange = Change | GaChange | McChange | ScChange | GtmChange;
 type AnyResolved = ResolvedChange | GaResolved | McResolved | ScResolved | GtmResolved;
 /** `note`: something the user must do next, e.g. a new GA4 property's tag. */
 type Outcome = { describe: string; ok: boolean; error?: string; note?: string; inverse?: AnyChange };
-type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[] };
+/** What the plan gate returns: call it when the tool's call ends. `preview` = a read-only look that took no account. */
+export type Release = (() => void) & { preview?: string };
+type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[]; wording_review?: { items: unknown[]; note: string } };
 type AlreadyInPlace = { status: "already in place"; changes: 0; skipped: string[]; note: string };
 /** What the AI (and the account page) sees of an applied proposal's outcomes. */
 const publicResults = (outcomes: Outcome[]) => outcomes.map(({ describe, ok, error, note }) =>
@@ -417,16 +420,16 @@ export class UserSession {
    *
    * `picked` (switch_account only) is the user's answer to the "Account choice:" notice: it takes that account without asking again.
    */
-  checkAccount(customerId: string, picked = false): Promise<() => void> {
+  checkAccount(customerId: string, picked = false, previewable = false): Promise<Release> {
     const prev = gateQueue.get(this.user.id) ?? Promise.resolve();
-    const run = prev.then(() => this.admit(bareCid(customerId), picked));
+    const run = prev.then(() => this.admit(bareCid(customerId), picked, previewable));
     const tail = run.then(() => {}, () => {});
     gateQueue.set(this.user.id, tail);
     void tail.then(() => { if (gateQueue.get(this.user.id) === tail) gateQueue.delete(this.user.id); });
     return run;
   }
 
-  private async admit(cid: string, picked: boolean): Promise<() => void> {
+  private async admit(cid: string, picked: boolean, previewable: boolean): Promise<Release> {
     if (isDemo(cid) || cid === `mc:${DEMO_MERCHANT}`) return () => {};
     const pool = poolOf(cid);
     // Manager accounts are a Google Ads idea: Merchant Center has none to leave out.
@@ -438,7 +441,14 @@ export class UserSession {
     if (!st.used.length && !picked) {
       if (pool === "ads") {
         const counted = (await this.accounts().catch(() => [] as Account[])).filter((a) => !a.manager && !isDemo(a.customerId));
-        if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) this.noticeChoice(await this.withActivity(counted));
+        if (counted.length > this.accountLimit && counted.some((a) => a.customerId === cid)) {
+          // A read-only look before choosing (Forum & Lex, 2026-11-17: "a quick read-only look at each account before locking
+          // one in"): account_overview only, once per account per window, and it takes nothing. Not counted in flight either.
+          if (previewable && this.previewOpen(cid)) {
+            return this.takePreview(cid, `nothing else can be done on it until the user picks it with ${this.tool("switch_account")}`);
+          }
+          this.noticeChoice(await this.withActivity(counted));
+        }
       } else {
         const counted = await this.merchant.accounts().catch(() => [] as MerchantAccount[]);
         if (counted.length > this.accountLimit && counted.some((a) => `mc:${a.account_id}` === cid)) this.noticeMerchantChoice(counted);
@@ -456,7 +466,15 @@ export class UserSession {
         }
         // An Ads account this login can't reach isn't a second account: the call fails on its own, not on the plan.
         if (!st.allows(cid) && pool === "ads" && !await this.mayReach(cid)) unreachable = true;
-        else if (!st.allows(cid)) this.refuse(cid, st, pool);
+        else if (!st.allows(cid)) {
+          // The same look at a locked account: a full plan is where a user wants it most ("a quick read-only look at each account",
+          // Forum & Lex, 2026-11-17, a month into using their one Free account). Read-only, so it opens nothing.
+          if (previewable && pool === "ads" && this.previewOpen(cid)) {
+            return this.takePreview(cid, `the plan's accounts are taken (${st.active.join(", ")}), so nothing else can be done on it `
+              + (st.opensOn ? `until a slot opens on ${st.opensOn}` : "for now"));
+          }
+          this.refuse(cid, st, pool);
+        }
       }
     }
     // Nor does it count as in use while its call runs. It did: a Free user's AI queried their one account and two ids from
@@ -473,13 +491,34 @@ export class UserSession {
     };
   }
 
-  /** Stop before the plan's first account is taken: the user says which, then switch_account takes it. */
+  /** Record a preview of `cid` and let the call through without taking it; `why` says what else is closed on it. */
+  private takePreview(cid: string, why: string): Release {
+    this.deps.db.prepare("INSERT INTO account_previews (user_id, customer_id, at) VALUES (?, ?, ?)").run(this.user.id, cid, now());
+    return Object.assign(() => {}, { preview: `A read-only preview: this account isn't one of the plan's, and ${why}. `
+      + `One preview per account every ${ACCOUNT_WINDOW_DAYS} days.` });
+  }
+
+  /** Not previewed in the last ACCOUNT_WINDOW_DAYS. */
+  private previewOpen(cid: string): boolean {
+    return !this.deps.db.prepare("SELECT 1 FROM account_previews WHERE user_id = ? AND customer_id = ? AND at >= ?")
+      .get(this.user.id, cid, now() - ACCOUNT_WINDOW_DAYS * 86400);
+  }
+
+  /**
+   * Stop before the plan's first account is taken: the user says which, then switch_account takes it. A user's AI told
+   * them this stop was a failed call caused by the dashes in the id (Forum & Lex, 2026-11-17), so it says neither is so.
+   */
   private noticeChoice(accounts: Account[]): never {
     const n = this.accountLimit, one = n === 1;
+    const previews = accounts.filter((a) => this.previewOpen(a.customerId)).map((a) => a.customerId);
     throw new SwitchNotice(`${ACCOUNT_CHOICE_PREFIX} this plan covers ${n} Google Ads account${one ? "" : "s"} at a time and this login has `
       + `${accounts.length}. The first ${one ? "account" : "accounts"} used become${one ? "s" : ""} the plan's, so nothing has been used yet. `
-      + `Ask the user which to work on; then call ${this.tool("switch_account")} with that customer_id, then this tool again.`,
+      + `Nothing failed, and the customer_id is fine (with or without dashes). Ask the user which to work on; then call `
+      + `${this.tool("switch_account")} with that customer_id, then this tool again.`
+      + (previews.length ? ` If the user wants to compare first, account_overview gives a read-only preview of an account without taking it, `
+        + `once per account every ${ACCOUNT_WINDOW_DAYS} days (open now: ${previews.join(", ")}).` : ""),
       { status: "account_choice_needed", plan: this.planName, accounts_included: n,
+        ...(previews.length ? { preview_with_account_overview: previews } : {}),
         accounts: accounts.map((a) => ({ customer_id: a.customerId, name: a.name,
           ...(a.spentLast30Days === undefined ? {} : { spent_last_30_days: a.spentLast30Days }) })),
         ...(accounts.some((a) => a.spentLast30Days === false) ? { note: "spent_last_30_days false: the account had no ad spend in the last 30 days, so it may be dormant. Show this to the user when they pick." } : {}),
@@ -519,7 +558,9 @@ export class UserSession {
     const common = { plan: this.planName, accounts_in_use: st.used, active_accounts: st.active,
       accounts_included: this.accountLimit, window_days: ACCOUNT_WINDOW_DAYS, refused_account: cid,
       switching: `none: another account opens ${date}`,
-      still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"] };
+      still_available: ["the active accounts", this.tool("undo_changes"), "change_history", "billing"],
+      ...(pool === "ads" && this.previewOpen(cid) ? { read_only_preview: `account_overview on ${cid} works once, read-only, without taking it `
+        + `(one preview per account every ${ACCOUNT_WINDOW_DAYS} days)` } : {}) };
     if (this.isPro) {
       const next = this.nextPlan(), name = planLabel(this.planName);
       throw new SwitchNotice(`${used}; ${name} ${rule} Another opens ${date}.`
@@ -784,6 +825,60 @@ export class UserSession {
     };
   }
 
+  /**
+   * Local Services ads, read-only (Forum & Lex, 2026-11-17: "We're setting up LSA too"): the LOCAL_SERVICES campaigns' spend,
+   * the leads counted by type, status, charge and credit, and the verification checks Google runs on the business. Never the
+   * leads' contact details: a count answers the question, and the people who called don't belong in a chat transcript.
+   */
+  async localServices(customerId: string, days: number) {
+    const a = await this.account(customerId);
+    const read = (q: string) => this.ads.search(a.customerId, q, a.loginCustomerId);
+    // The demo has no Local Services sample data: an empty answer, said as such.
+    const soft = (q: string) => (isDemo(a.customerId) ? read(q).catch(() => []) : read(q));
+    const from = new Date(now() * 1000 - days * 86400_000).toISOString().slice(0, 10);
+    const [campaignRows, leadRows, checkRows] = await Promise.all([
+      soft(`SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros, metrics.cost_micros, metrics.impressions,
+          metrics.clicks, metrics.conversions FROM campaign WHERE campaign.advertising_channel_type = 'LOCAL_SERVICES' AND ${dateRange(days)}`),
+      soft(`SELECT local_services_lead.id, local_services_lead.lead_type, local_services_lead.lead_status, local_services_lead.category_id,
+          local_services_lead.service_id, local_services_lead.lead_charged, local_services_lead.credit_details.credit_state,
+          local_services_lead.creation_date_time FROM local_services_lead WHERE local_services_lead.creation_date_time >= '${from} 00:00:00'
+          LIMIT 10000`),
+      soft(`SELECT local_services_verification_artifact.artifact_type, local_services_verification_artifact.status,
+          local_services_verification_artifact.creation_date_time FROM local_services_verification_artifact LIMIT 100`),
+    ]);
+    const campaigns = aggregate(campaignRows, (r) => String(r.campaign.id), (r) => ({
+      campaign_id: String(r.campaign.id), name: r.campaign.name, status: r.campaign.status, daily_budget: micros(r.campaignBudget?.amountMicros),
+      cost: 0, clicks: 0, impressions: 0, conversions: 0,
+    }), (e, r) => { e.impressions += Number(r.metrics?.impressions ?? 0); }).map((c) => ({ ...c, cost: round(c.cost), conversions: round(c.conversions) }));
+    const tally = (pick: (l: any) => unknown) => {
+      const m: Record<string, number> = {};
+      for (const r of leadRows) { const k = String(pick(r.localServicesLead ?? {}) ?? "unknown").toLowerCase(); m[k] = (m[k] ?? 0) + 1; }
+      return m;
+    };
+    const leads = leadRows.length ? {
+      total: leadRows.length,
+      charged: leadRows.filter((r) => r.localServicesLead?.leadCharged).length,
+      by_type: tally((l) => l.leadType), by_status: tally((l) => l.leadStatus), by_category: tally((l) => l.categoryId),
+      by_service: tally((l) => l.serviceId), credits: tally((l) => l.creditDetails?.creditState ?? "none"),
+      cost_per_charged_lead: (() => {
+        const n = leadRows.filter((r) => r.localServicesLead?.leadCharged).length, cost = campaigns.reduce((t, c) => t + c.cost, 0);
+        return n ? round(cost / n) : null;
+      })(),
+    } : { total: 0 };
+    const verification = checkRows.map((r) => ({ type: r.localServicesVerificationArtifact?.artifactType,
+      status: r.localServicesVerificationArtifact?.status, created: String(r.localServicesVerificationArtifact?.creationDateTime ?? "").slice(0, 10) }));
+    return {
+      account: { customer_id: a.customerId, name: a.name, currency: a.currency },
+      ...demoNote(a.customerId),
+      window: `last ${days} days`,
+      ...(campaigns.length || leadRows.length || verification.length ? { campaigns, leads, ...(verification.length ? { verification } : {}) }
+        : { none: "No Local Services campaign, lead or verification in this account. Local Services ads are set up in Google Ads "
+          + "(Local Services campaigns); once one exists, its spend, leads and verification show here." }),
+      note: "Read-only: Camberstack can't change Local Services ads yet. Profile, service areas, job types, budget and lead disputes "
+        + "are managed in Google Ads' Local Services settings. Lead contact details are left out on purpose.",
+    };
+  }
+
   /** Results ready on these accounts that nothing has pointed out yet (result-notes.ts), once. Never breaks the tool it rides on. */
   resultsNote(customerIds: string[], via: NoteVia) {
     try { return takeNote(this.deps.db, this.user.id, customerIds, via); } catch (e) { reportError(e, `${via} note`); return {}; }
@@ -795,14 +890,20 @@ export class UserSession {
    */
   private async attention(a: Account) {
     const read = (query: string) => this.ads.search(a.customerId, query, a.loginCustomerId);
-    const [adRows, recRows, actionRows, pageRows] = await Promise.all([
+    const today = new Date(now() * 1000).toISOString().slice(0, 10);
+    const [adRows, recRows, actionRows, pageRows, liveAds, keywords, counts, calls, campaignChanges] = await Promise.all([
       read(`SELECT ad_group_ad.ad.id, ad_group_ad.policy_summary.approval_status, ad_group_ad.policy_summary.policy_topic_entries, ad_group.name, campaign.name
         FROM ad_group_ad WHERE ad_group_ad.status = 'ENABLED' AND ad_group_ad.policy_summary.approval_status IN ('DISAPPROVED', 'APPROVED_LIMITED')
         AND campaign.status != 'REMOVED'`).catch(() => []),
       read(`SELECT recommendation.type FROM recommendation WHERE recommendation.dismissed = FALSE`).catch(() => []),
-      read(`SELECT conversion_action.name, conversion_action.primary_for_goal, metrics.conversion_last_conversion_date
-        FROM conversion_action WHERE conversion_action.status = 'ENABLED'`).catch(() => []),
+      read(CONVERSION_ACTIONS_QUERY).catch(() => []),
       read(`SELECT metrics.optimization_score_url FROM customer`).catch(() => []),
+      // The ready-made checks (checks.ts): each read optional like the rest.
+      read(LIVE_ADS_QUERY).catch(() => []),
+      read(KEYWORD_URLS_QUERY).catch(() => []),
+      read(conversionCountsQuery(addDays(today, -90), today)).catch(() => []),
+      read(callsQuery(addDays(today, -30))).catch(() => []),
+      read(campaignChangesQuery(addDays(today, -29), addDays(today, 1))).catch(() => []),
     ]);
     const ads = adRows.filter((r) => r.adGroupAd?.policySummary), recs = recRows.filter((r) => r.recommendation?.type);
     const actions = actionRows.filter((r) => r.conversionAction?.name);
@@ -812,16 +913,23 @@ export class UserSession {
     }));
     const recommendations: Record<string, number> = {};
     for (const r of recs) recommendations[r.recommendation.type] = (recommendations[r.recommendation.type] ?? 0) + 1;
-    // Google leaves the date out for an action that has never had a conversion.
+    const stopped = stoppedConversions(actions, counts, today);
+    // Google leaves the date out for an action that has never had a conversion. One that stopped is named there, not twice.
     const cutoff = new Date(now() * 1000 - ATTENTION_CONVERSION_DAYS * 86400_000).toISOString().slice(0, 10);
-    const quiet = actions.filter((r) => r.conversionAction.primaryForGoal && !(r.metrics?.conversionLastConversionDate >= cutoff))
+    const quiet = actions.filter((r) => r.conversionAction.primaryForGoal && !(r.metrics?.conversionLastConversionDate >= cutoff)
+        && !stopped.names.has(r.conversionAction.name))
       .map((r) => ({ name: r.conversionAction.name, last_conversion: r.metrics?.conversionLastConversionDate ?? "never" }));
     const attention = {
       ...(policy.length ? { ads_with_policy_problems: policy, ...(ads.length > policy.length ? { more_ads_with_policy_problems: ads.length - policy.length } : {}) } : {}),
       ...(recs.length ? { google_recommendations: recommendations } : {}),
       // Google's link carries placeholders for its own tracking; the page opens without them.
       ...(recs.length && pageRows[0]?.metrics?.optimizationScoreUrl ? { recommendations_page: String(pageRows[0].metrics.optimizationScoreUrl).replace(/&?[a-z]*=?%[A-Z_]+%/g, "") } : {}),
+      ...stopped.out,
       ...(quiet.length ? { primary_conversions_quiet_for_30_days: quiet } : {}),
+      ...shortCalls(actions, calls),
+      ...keywordUrlOverrides(keywords, liveAds),
+      ...bidStrategyChanges(campaignChanges),
+      ...adWording(a.name, liveAds),
     };
     return Object.keys(attention).length ? { attention } : {};
   }
@@ -1454,7 +1562,30 @@ export class UserSession {
         VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?)`)
       .run(id, this.user.id, a.customerId, a.loginCustomerId, JSON.stringify(live.map((r) => r.change)), summary, undoOf ?? null, now());
     const skipped = resolved.filter((r) => !r.operations.length).map((r) => r.describe);
-    return { proposal_id: id, summary, changes: live.length, skipped };
+    const wording = ga || mc || sc || gtm || undoOf !== undefined ? null : await this.wordingReview(a as Account, live.flatMap((r) => adCopyOf(r.change)));
+    return { proposal_id: id, summary, changes: live.length, skipped, ...(wording ? { wording_review: wording } : {}) };
+  }
+
+  /**
+   * Attorney-advertising wording in a proposal's ad text (checks.ts), shown beside the summary for the user to weigh
+   * before approving. Not in the stored summary: apply's drift check compares that one. Never blocks, never fails the proposal.
+   */
+  private async wordingReview(a: Account, texts: string[]) {
+    try {
+      const flagged = flaggedWording(texts);
+      if (!flagged.length) return null;
+      // Only a law firm's account: its name, this text, or its live ads (read only when something is flagged).
+      const legal = looksLegal([a.name ?? "", ...texts]) || (!isDemo(a.customerId) && looksLegal((await this.ads.search(a.customerId,
+        LIVE_ADS_QUERY.replace("LIMIT 5000", "LIMIT 200"), a.loginCustomerId)).flatMap((r) => [
+        ...(r.adGroupAd?.ad?.finalUrls ?? []),
+        ...[...(r.adGroupAd?.ad?.responsiveSearchAd?.headlines ?? []), ...(r.adGroupAd?.ad?.responsiveSearchAd?.descriptions ?? [])].map((t: { text?: string }) => t.text ?? ""),
+      ])));
+      if (!legal) return null;
+      return { items: flagged.slice(0, 10), note: `${WORDING_NOTE} Show these to the user with the summary before they approve.` };
+    } catch (e) {
+      reportError(e, "wording review");
+      return null;
+    }
   }
 
   async apply(proposalId: string) {

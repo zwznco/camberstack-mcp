@@ -20,7 +20,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.43.0";
+export const SERVER_VERSION = "0.44.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -48,7 +48,7 @@ For a site's tags and conversion tracking, start with tag_manager_containers, th
 const PICK_TOOLS = new Set(["switch_account", "choose_account"]);
 
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
-const GATED = new Set(["merchant_ad_spend", "account_overview", "change_results", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account", "choose_account",
+const GATED = new Set(["merchant_ad_spend", "account_overview", "local_services_report", "change_results", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account", "choose_account",
   ...[...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES].map((c) => `propose_${c.shape.type.value}`)]);
 
 const LINK_CHANGES = new Set(MERCHANT_LINK_CHANGES.map((c) => c.shape.type.value as string));
@@ -184,16 +184,22 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       let out: ReturnType<typeof ok> | ReturnType<typeof fail>;
       let release = () => {};
       let notice: string | null = null;
+      let preview = false;
+      let previewText: string | null = null;
       let offered: string | null = null;
       const services = servicesOf(name, a);
       try {
         if ((GATED.has(name) || MC_GATED.has(name)) && typeof cid === "string") {
           // switch_account/choose_account is the user's pick after an "Account choice:" notice: it takes the account without asking again.
-          const done = await session().checkAccount(cid, PICK_TOOLS.has(name));
+          const done = await session().checkAccount(cid, PICK_TOOLS.has(name), name === "account_overview");
+          previewText = done.preview ?? null;
+          preview = !!previewText;
           const prev = release;
           release = () => { prev(); done(); };
         }
-        out = ok(await fn(a));
+        const result = await fn(a);
+        // A look before the plan's first pick (session.ts admit): it took no account, and the model should say so.
+        out = ok(previewText ? { preview: previewText, ...(result as object) } : result);
       } catch (e) {
         if (e instanceof SwitchNotice) {
           // A question for the user, not a failure: a normal result (plans.ts SwitchNotice).
@@ -216,11 +222,12 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       try {
         log({
           // A notice logs as ok but with no account, since none was used (session.ts usage); its text stays in error.
-          tool: name, customerId: typeof cid === "string" && !notice ? (cid.startsWith("mc:") ? cid : cid.replace(/-/g, "")) : null,
+          // A preview logs no account either: tool_calls.customer_id is what takes one for the plan (session.ts usage).
+          tool: name, customerId: typeof cid === "string" && !notice && !preview ? (cid.startsWith("mc:") ? cid : cid.replace(/-/g, "")) : null,
           ok: !("isError" in out), error: "isError" in out ? out.content[0]!.text.slice(7, 1007) : notice?.slice(0, 1000) ?? null,
           ms: Date.now() - t0, bytes: out.content[0]!.text.length,
           queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
-          service: services.length && !("isError" in out) && !notice ? services.join(",") : null,
+          service: services.length && !("isError" in out) && !notice && !preview ? services.join(",") : null,
           // A result's grant_url (search_console_sites, analytics_properties, …) names only the service, never edit.
           grantOffered: offered ?? GRANT_LINK.exec(out.content[0]!.text)?.[1] ?? null,
         });
@@ -268,6 +275,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       accounts: st.full ? accounts.map((a) => counted(a) ? { ...a, plan_status: status(a.customerId) } : a) : accounts,
       ...(st.full && accounts.some((a) => counted(a) && !st.active.includes(a.customerId)) ? { plan: {
         plan: s.planName, accounts_included: s.accountLimit, active_accounts: st.active,
+        read_only_preview: `account_overview on a locked account gives a read-only look without taking it, once per account every ${ACCOUNT_WINDOW_DAYS} days`,
         switching: `None: this plan's accounts are taken. Another opens on ${st.opensOn} if ${st.active.at(-1)} isn't used again before then`
             + (s.chatgpt || s.planName === "agency" ? "." : s.planName === "plus" ? ", or on Pro or Agency, which cover more (the billing tool has the switch link)."
               : s.isPro ? ", or on Agency, which covers more (the billing tool has the switch link)."
@@ -280,7 +288,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
         choosing: `This plan covers ${s.accountLimit} Google Ads account${s.accountLimit === 1 ? "" : "s"} at a time, and the first `
           + `${s.accountLimit === 1 ? "account" : "accounts"} a tool is used on become${s.accountLimit === 1 ? "s" : ""} the plan's `
           + `(after that, no switching until one has gone ${ACCOUNT_WINDOW_DAYS} days unused). This login has more, so ask the user which to work on before `
-          + "calling any tool with a customer_id, and don't survey several. The demo account never counts.",
+          + "calling any tool with a customer_id, and don't survey several on your own. If the user wants to compare before choosing, "
+          + `account_overview gives a read-only preview of an account without taking it, once per account every ${ACCOUNT_WINDOW_DAYS} days. The demo account never counts.`,
       } } : {}),
       ...(s.lastUnreadable.length ? { unreadable: s.lastUnreadable } : {}),
       // Results waiting on accounts the plan covers (a locked account's change_results would be refused): result-notes.ts.
@@ -298,10 +307,20 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("account_overview", {
     title: "Account overview",
-    description: "Spend, clicks, conversions and cost per conversion per campaign over a window, plus `attention` when something needs a look: disapproved ads and why, Google's recommendations, primary conversions gone quiet.",
+    description: "Spend, clicks, conversions and cost per conversion per campaign over a window, plus `attention` when something needs a look: "
+      + "disapproved ads, Google's recommendations, conversions that stopped or went quiet, short calls not counted, keyword URLs overriding "
+      + "the ad's, recent bid strategy changes, and wording attorney advertising rules restrict.",
     inputSchema: { customer_id: customerId, days },
     annotations: read,
   }, ({ customer_id, days }: { customer_id: string; days: number }) => session().overview(customer_id, days));
+
+  tool("local_services_report", {
+    title: "Local Services ads report",
+    description: "Local Services ads (read-only): spend per Local Services campaign, leads by type, status, charge and credit, "
+      + "and Google's verification checks on the business. No lead contact details.",
+    inputSchema: { customer_id: customerId, days: z.number().int().min(1).max(90).default(30).describe("Look-back window in days") },
+    annotations: read,
+  }, ({ customer_id, days }: { customer_id: string; days: number }) => session().localServices(customer_id, days));
 
   tool("run_gaql", {
     title: "Run a read-only GAQL query",

@@ -721,7 +721,8 @@ describe("OAuth + MCP end to end", () => {
     // +0.2K for create_container and delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
     // change_results (2026-11-12): +1.2K. register_custom_dimension + analytics_setup's custom definitions (2026-11-16): +0.9K; register_custom_metric: +1.1K, taking propose_analytics_changes past 6K; set_custom_metric_unit: +0.65K; archive_custom_dimension / _metric public: +1.25K (propose_analytics_changes 9K).
     // +200 (0.40.0): the keyword tools' `months`; +300 (0.41.0): keyword_ideas `site`, keyword_metrics `by_location`. +800 (0.43.0): set_product_group_bid.
-    expectToolBudget(tools, { total: 125_000, perTool: 6_000, except: { propose_changes: 57_200, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
+    // +1K (0.44.0): local_services_report, and account_overview naming its new checks.
+    expectToolBudget(tools, { total: 126_000, perTool: 6_000, except: { propose_changes: 57_200, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1007,6 +1008,12 @@ describe("OAuth + MCP end to end", () => {
     const switched = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes) VALUES (?, ?, 'account_overview', '2223334444', 1, 1, 1)")
       .run(Math.floor(Date.now() / 1000) - 5 * 86400, uid).lastInsertRowid;
     try {
+    // A locked account's first account_overview is a read-only preview (Forum & Lex, 2026-11-17): it takes nothing.
+    const look = await call(token, "account_overview", { customer_id: "999-888-7777", days: 30 });
+    expect(look.json.preview).toContain("the plan's accounts are taken (1112223333)");
+    expect(look.json.campaigns).toBeDefined();
+    expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '9998887777'").get(uid)).toEqual({ n: 0 });
+    // The next is the stop.
     const blocked = await call(token, "account_overview", { customer_id: "999-888-7777", days: 30 });
     // A notice, not an error (plans.ts SwitchNotice): errors count against the directories' reliability metrics.
     expect(blocked.isError).toBeFalsy();
@@ -1323,7 +1330,7 @@ describe("OAuth + MCP end to end", () => {
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
       // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K; propose_archive_custom_dimension / _metric: +2.2K.
-      expectToolBudget(tools, { total: 166_800, perTool: 6_000 });  // +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid
+      expectToolBudget(tools, { total: 167_700, perTool: 6_000 });  // +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid, +0.9K (0.44.0) local_services_report + account_overview's checks
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -1478,12 +1485,18 @@ describe("OAuth + MCP end to end", () => {
       ? [...await realSearch(cid, q), { customerClient: { id: "2223334444", descriptiveName: "Beta", currencyCode: "USD", manager: false, level: 1 } }]
       : realSearch(cid, q);
     try {
-      // One account in use on Free: a reachable second one is refused outright, by a read or by switch_account alike.
+      // One account in use on Free: a reachable second one is refused, by a read or by switch_account alike, after
+      // account_overview's one preview of it. A refusal before the preview points to it.
+      const offered = await call(token, "run_gaql", { customer_id: "222-333-4444", query: "SELECT campaign.id FROM campaign" });
+      expect(offered.json.read_only_preview).toContain("account_overview on 2223334444 works once");
+      expect((await call(token, "list_accounts")).json.plan.read_only_preview).toContain("once per account every 30 days");
+      expect((await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 })).json.preview).toContain("isn't one of the plan's");
       for (const r of [await call(token, "account_overview", { customer_id: "222-333-4444", days: 30 }), await call(token, "switch_account", { customer_id: "222-333-4444" })]) {
         expect(r.isError).toBeFalsy();
         expect(r.text).toContain("Plan limit:");
         expect(r.text).not.toContain("Account switch:");
         expect(JSON.parse(r.text)).toMatchObject({ stop: "plan_limit", active_accounts: ["1112223333"], refused_account: "2223334444", upgrade: { plan: "pro" } });
+        expect(JSON.parse(r.text).read_only_preview).toBeUndefined();
       }
       expect((db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id = '2223334444' AND ok = 1").get(uid) as { n: number }).n).toBe(0);
       // A field lookup reads Google's catalog, not the account it names: never refused, and the account isn't logged as used.
@@ -1570,12 +1583,28 @@ describe("OAuth + MCP end to end", () => {
         .toEqual(expect.arrayContaining([["1112223333", true], ["2223334444", false]]));
       expect(db.prepare("SELECT ads_accounts, ads_active FROM users WHERE id = ?").get(uid)).toEqual({ ads_accounts: 2, ads_active: 1 });
       // An AI that goes ahead anyway, even on several at once, is stopped: none of them takes the plan, and nothing is spent.
+      // The stop offers account_overview's preview of each, and says the dashes weren't the problem.
+      db.prepare("DELETE FROM account_previews WHERE user_id = ?").run(uid);  // earlier tests' looks
       const since = (db.prepare("SELECT coalesce(max(id), 0) m FROM tool_calls").get() as { m: number }).m;
+      const first = await call(fresh, "run_gaql", { customer_id: "111-222-3333", query: "SELECT campaign.id FROM campaign" });
+      expect(first.json.notice).toContain("Nothing failed, and the customer_id is fine (with or without dashes)");
+      expect(first.json.preview_with_account_overview).toEqual(["1112223333", "2223334444"]);
+      // account_overview is that preview: read-only, the whole overview, and it takes no account (Forum & Lex, 2026-11-17).
+      const looks = await Promise.all(["111-222-3333", "222-333-4444"].map((c) => call(fresh, "account_overview", { customer_id: c, days: 30 })));
+      for (const t of looks) {
+        expect(t.isError).toBe(false);
+        expect(t.json.preview).toContain("read-only preview");
+        expect(t.json.campaigns).toBeDefined();
+      }
+      expect(db.prepare("SELECT count(*) n FROM account_previews WHERE user_id = ?").get(uid)).toEqual({ n: 2 });
+      expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").get(uid)).toEqual({ n: 0 });
+      // One preview per account: a second look, like every other tool, stops for the choice, and offers no preview now.
       const tries = await Promise.all(["111-222-3333", "222-333-4444"].map((c) => call(fresh, "account_overview", { customer_id: c, days: 30 })));
       for (const t of tries) {
         expect(t.isError).toBe(false);
         expect(t.json.notice).toContain("Account choice: this plan covers 1 Google Ads account at a time and this login has 2.");
         expect(t.json).toMatchObject({ status: "account_choice_needed", accounts_included: 1 });
+        expect(t.json.preview_with_account_overview).toBeUndefined();
         expect(t.json.accounts.map((a: any) => [a.customer_id, a.spent_last_30_days]).sort()).toEqual([["1112223333", true], ["2223334444", false]]);
         expect(t.json.note).toContain("may be dormant");
         expect(t.json.to_go_ahead).toContain("call switch_account with that customer_id");
@@ -1584,7 +1613,7 @@ describe("OAuth + MCP end to end", () => {
       expect(UserSession.prototype.tool.call({ chatgpt: true } as UserSession, "switch_account")).toBe("choose_account");
       // Logged as ok with no account, and not as a switch notice, so no switch_wanted email.
       expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").get(uid)).toEqual({ n: 0 });
-      expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND id > ? AND error LIKE 'Account choice:%' AND ok = 1").get(uid, since)).toEqual({ n: 2 });
+      expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND id > ? AND error LIKE 'Account choice:%' AND ok = 1").get(uid, since)).toEqual({ n: 3 });
       expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = ? AND id > ? AND error LIKE 'Account switch:%'").get(uid, since)).toEqual({ n: 0 });
       // The demo never counts, so it stays open while choosing.
       expect((await call(fresh, "account_overview", { customer_id: "0000000001", days: 30 })).text).not.toContain("Account choice:");
@@ -1594,7 +1623,7 @@ describe("OAuth + MCP end to end", () => {
       const now = await call(fresh, "account_overview", { customer_id: "111-222-3333", days: 30 });
       expect(now.text).not.toContain("Account choice:");
       expect(now.text).not.toContain("Account switch:");
-      // There is no switch: another account now is refused.
+      // There is no switch: another account now is refused (its one preview already spent above).
       expect((await call(fresh, "account_overview", { customer_id: "222-333-4444", days: 30 })).text).toContain("Plan limit:");
       // Once one is in use the plan is full, and list_accounts says the others are locked, with no switch to offer.
       const after = (await call(fresh, "list_accounts")).json;
@@ -1602,6 +1631,7 @@ describe("OAuth + MCP end to end", () => {
       expect(after.plan.switching).toContain("None:");
     } finally {
       ads.search = realSearch;
+      db.prepare("DELETE FROM account_previews WHERE user_id = ?").run(uid);
       db.prepare("DELETE FROM tool_calls WHERE user_id = ? AND customer_id IS NOT NULL").run(uid);
       const put = db.prepare("INSERT OR REPLACE INTO tool_calls (id, at, user_id, client_id, tool, customer_id, ok, error, ms, bytes) VALUES (@id, @at, @user_id, @client_id, @tool, @customer_id, @ok, @error, @ms, @bytes)");
       for (const r of saved) put.run(r);
@@ -2208,6 +2238,24 @@ describe("OAuth + MCP end to end", () => {
     const bu = (await call(token, "undo_changes", { proposal_id: b.json.proposal_id })).json;
     expect(bu.summary).toContain('Remove campaign "Sewer – Search"');
     expect((await call(token, "apply_changes", { proposal_id: bu.proposal_id })).json.status).toBe("applied");
+
+    // Attorney-advertising wording (Forum & Lex, 2026-11-17): flagged beside the summary when the text reads as a law firm's,
+    // never in the stored summary (apply's drift check compares it), and nothing for a plumber's "expert".
+    const law = await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "add_responsive_search_ad", ad_group_id: "3002",
+      ad: { headlines: ["Injury Attorneys", "Top-Rated Lawyers", "Free Consultation"], descriptions: ["Expert legal help.", "Call today."], final_url: "https://northwindplumbing.example/" } }] });
+    expect(law.isError, law.text).toBe(false);
+    expect(law.json.wording_review.items.map((x: any) => x.flagged)).toEqual(["Top-Rated", "Expert"]);
+    expect(law.json.wording_review.note).toContain("not legal advice");
+    expect(law.json.summary).not.toContain("Top-Rated\" is");
+    expect((await call(token, "discard_proposal", { proposal_id: law.json.proposal_id })).isError).toBe(false);
+    const plumber = await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "add_responsive_search_ad", ad_group_id: "3002",
+      ad: { headlines: ["Expert Plumbers", "Best Prices", "Same-Day Service"], descriptions: ["Call now.", "Upfront prices."], final_url: "https://northwindplumbing.example/" } }] });
+    expect(plumber.json.wording_review).toBeUndefined();
+    expect((await call(token, "discard_proposal", { proposal_id: plumber.json.proposal_id })).isError).toBe(false);
+    // Local Services ads: the demo has none, and says so rather than failing.
+    const lsa = (await call(token, "local_services_report", { customer_id: "0000000001" })).json;
+    expect(lsa.none).toContain("No Local Services campaign");
+    expect(lsa.note).toContain("Read-only");
 
     const ideas = (await call(token, "keyword_ideas", { customer_id: "0000000001", keywords: ["water heater"] })).json;
     expect(ideas.note).toContain("Sample data");
