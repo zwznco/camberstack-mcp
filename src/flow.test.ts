@@ -840,6 +840,13 @@ describe("OAuth + MCP end to end", () => {
       expect(accounts.find((a) => a.customerId === "2223334444")).toMatchObject({ loginCustomerId: "9990001111" });
       expect(db.prepare("SELECT DISTINCT ads_accounts a, ads_managers m FROM users WHERE enc_refresh IS NOT NULL AND ads_accounts_at IS NOT NULL").all())
         .toEqual([{ a: 1, m: 2 }]);
+      // A manager id names the clients to use instead; a sub-manager (its clients are recorded under the root) names every client.
+      const root = await call(token, "run_gaql", { customer_id: "9990001111", query: "SELECT campaign.name FROM campaign" });
+      expect(root.isError).toBe(true);
+      expect(root.text).toContain("Clients under it: Beta (2223334444)");
+      const sub = await call(token, "keyword_ideas", { customer_id: "9990002222", keywords: ["shoes"] });
+      expect(sub.isError).toBe(true);
+      expect(sub.text).toContain("Client accounts this login can open: Beta (2223334444)");
     } finally {
       ads.listAccessibleCustomers = realList;
       ads.search = realSearch;

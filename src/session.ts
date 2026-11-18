@@ -788,7 +788,18 @@ export class UserSession {
         + "(Admin, then Access and security), or disconnect and connect again with the Google login that has it. "
         + `list_accounts lists the accounts ${this.user.email} can open.`);
     }
-    if (a.manager) throw new Error(`${a.name} (${cid}) is a manager account; pick one of the client accounts under it.`);
+    // A bare "pick a client" left a Codex model nowhere to go: it dropped keyword_ideas rather than guess an id
+    // (39e41733, 2026-11-18). Name them, as the not-found cases above do. accounts() records each client's root manager,
+    // so clients of a sub-manager fall back to every client this login can open.
+    if (a.manager) {
+      const all = (await this.accounts()).filter((x) => !x.manager && !isDemo(x.customerId));
+      const under = all.filter((x) => x.loginCustomerId === cid);
+      const pick = (under.length ? under : all).slice(0, 10);
+      const names = pick.map((x) => `${x.name} (${x.customerId})`).join(", ");
+      throw new Error(`${a.name} (${cid}) is a manager account, which holds no campaigns or keyword data of its own; call this again with a client account. `
+        + (pick.length ? `${under.length ? "Clients under it" : "Client accounts this login can open"}: ${names}${(under.length || all.length) > pick.length ? ", …" : ""}. `
+          + "Ask the user which one if it isn't clear from the conversation." : "This login can't open any client account under it."));
+    }
     // The account they actually work on sets their time zone (lifecycle emails go out in their morning).
     if (a.timeZone) this.deps.db.prepare("UPDATE users SET time_zone = ? WHERE id = ? AND time_zone IS NOT ?").run(a.timeZone, this.user.id, a.timeZone);
     return a;
