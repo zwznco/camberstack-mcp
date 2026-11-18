@@ -144,3 +144,24 @@ describe("a test that runs past the deadline", () => {
     expect(err).toContain("https://pagespeed.web.dev/report?url=https%3A%2F%2Fslow.test%2Fa%20b");
   });
 });
+
+describe("a page Lighthouse can't paint (NO_FCP, prod 2026-11-18)", () => {
+  const noFcp = (async () => new Response(JSON.stringify({ error: { message: "Lighthouse returned error: NO_FCP. The page did not paint any content. Please ensure you keep the browser window in the foreground during the load and try again. (NO_FCP)" } }), { status: 400 })) as unknown as typeof fetch;
+  it("says what it means and what to do, not Lighthouse's browser-window advice", async () => {
+    const err = await new PageSpeedClient("k", noFcp).check(["https://blank.test/ac/"], { strategy: "mobile", fixes: 5 }).catch((e: Error) => e.message);
+    expect(err).toContain("nothing appeared on screen");
+    expect(err).toContain("strategy desktop");
+    expect(err).toContain("Don't repeat the same test");
+    expect(err).not.toContain("foreground");
+  });
+  it("names every page when none could be checked", async () => {
+    const err = await new PageSpeedClient("k", noFcp).check(["https://blank.test/a", "https://blank.test/b"], { strategy: "mobile", fixes: 5 }).catch((e: Error) => e.message);
+    expect(err).toMatch(/^No page could be checked\. .*blank\.test\/a.*blank\.test\/b/);
+  });
+  it("says why a run that painted has no score", () => {
+    const r = summarize("https://p.test/", "desktop", { lighthouseResult: { categories: { performance: { score: null, auditRefs: [] } },
+      audits: { "first-contentful-paint": { numericValue: 827 }, "cumulative-layout-shift": { numericValue: 0 } } } }, 5);
+    expect(r.lab!.performance_score).toBeNull();
+    expect(r.lab!.no_score).toContain("lcp_ms");
+  });
+});

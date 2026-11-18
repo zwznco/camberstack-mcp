@@ -341,22 +341,24 @@ ${card("Top tools", table(["tool", ["calls", "r"], ["errors", "r"]], r.tools.sli
 /** The account a preview looked at, from tool_calls.flags (tools.ts flagsOf). */
 const previewOf = (flags: string | null | undefined) => flags?.split(",").find((f) => f.startsWith("preview:"))?.slice(8) ?? null;
 
-/** What each flag means, for the Checks card. */
+/** What each check found, for the Checks card. */
 const CHECK_LABELS: Record<string, string> = {
-  conversions_stopped: "conversions stopped", primary_conversions_quiet_for_30_days: "primary conversions quiet 30d",
-  short_calls_not_counted: "short calls not counted", keyword_urls_override_ads: "keyword URL overrides ad",
-  bid_strategy_changes_last_30_days: "bid strategy changed", attorney_advertising_wording: "legal wording (live ads)",
-  wording_review: "legal wording (proposal)", ads_with_policy_problems: "ads with policy problems",
-  google_recommendations: "Google recommendations", lsa_data: "Local Services: has data", lsa_empty: "Local Services: none",
+  conversions_stopped: "Conversions stopped", primary_conversions_quiet_for_30_days: "Primary conversions quiet 30 days",
+  short_calls_not_counted: "Short calls not counted", keyword_urls_override_ads: "Keyword URL overrides the ad's",
+  bid_strategy_changes_last_30_days: "Bid strategy changed", attorney_advertising_wording: "Legal wording in live ads",
+  wording_review: "Legal wording in a proposal", ads_with_policy_problems: "Ads with policy problems",
+  google_recommendations: "Google recommendations",
 };
 
-/** account_overview's checks, proposals' wording flag and the Local Services report (checks.ts checksReport), since 0.44.1. */
+/** Ready-made checks (checks.ts checksReport): who each one fired for, and who acted on it within the hour. */
 function checksCard(v: View): string {
   const c = v.report.checks;
-  return card("Checks raised", table(["check", ["calls", "r"], ["users", "r"]], c.flags.map((f) => [
-    CHECK_LABELS[f.flag] ? `${esc(CHECK_LABELS[f.flag]!)} <span class="dim"><code>${esc(f.flag)}</code></span>` : `<code>${esc(f.flag)}</code>`, num(f.calls), num(f.users)]),
-    "Nothing raised in this window."),
-    `<small title="From tool_calls.flags, logged since 0.44.1 (2026-11-17). A check that never shows up here never fired.">${lastW(v.days)} · of ${num(c.overviews.calls)} overviews by ${num(c.overviews.users)} users</small>`);
+  const share = (n: number) => (c.overview_users ? ` <span class="dim">${Math.round((100 * n) / c.overview_users)}%</span>` : "");
+  return card("Checks", table(["found", ["users", "r"], ["acted ≤1h", "r"]], c.flags.map((f) => [
+    esc(CHECK_LABELS[f.flag] ?? f.flag), `${num(f.users)}${share(f.users)}`, f.acted == null ? `<span class="dim">—</span>` : num(f.acted)]),
+    "No check fired in this window."),
+    `<small title="users = whose own-account overview raised it; % of the ${num(c.overview_users)} users with an overview since the checks went live; acted = proposed a change on that account within the hour">${
+      lastW(v.days)} · of ${num(c.overview_users)} overview users</small>`);
 }
 
 /** Read-only looks at accounts the plan doesn't cover (account_previews): what the user did next. */

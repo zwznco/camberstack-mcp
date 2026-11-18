@@ -2430,7 +2430,8 @@ describe("OAuth + MCP end to end", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain("Top tools");
-    expect(html).toMatch(/Checks raised[\s\S]*conversions stopped/);
+    expect(html).toMatch(/Checks<[\s\S]*Conversions stopped/);
+    expect(html).not.toContain("<code>conversions_stopped</code>");  // the label alone, not the flag name beside it
     expect(html).toMatch(/Account previews[\s\S]*plan full \(locked\)/);
     expect(html).toContain("Use by service");
     expect(html).toMatch(/Use by service[\s\S]*Tag Manager/);

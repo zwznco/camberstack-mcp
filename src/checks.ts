@@ -200,22 +200,30 @@ export function adCopyOf(change: unknown): string[] {
 
 
 /**
- * What the checks raised in the window (tool_calls.flags, logged since 0.44.1): per flag, the calls and users it came up
- * for, beside how many real overviews ran, so a check that never fires shows as a row that never appears.
+ * Whether each ready-made check earns its place (tool_calls.flags, logged since 0.44.1): of the users whose own-account
+ * overviews ran since the checks did, how many it fired for, and how many of those proposed a change on that account within
+ * the hour after. wording_review is raised on a proposal itself, so it has no "acted". lsa_* only say a Local Services report
+ * ran, which the tools table already counts.
  */
 export function checksReport(q: Q, since: number) {
-  const overviews = q<{ calls: number; users: number }>(`SELECT count(*) calls, count(DISTINCT c.user_id) users FROM tool_calls c
-      JOIN {U} u ON u.id = c.user_id WHERE c.tool = 'account_overview' AND c.ok = 1 AND c.error IS NULL AND c.at >= ?
-      AND coalesce(c.customer_id, '') != '${DEMO_CID}'`, since)[0] ?? { calls: 0, users: 0 };
-  const rows = q<{ user_id: string; tool: string; flags: string }>(`SELECT c.user_id, c.tool, c.flags FROM tool_calls c JOIN {U} u ON u.id = c.user_id
-      WHERE c.at >= ? AND c.ok = 1 AND c.flags IS NOT NULL`, since);
-  const by = new Map<string, { calls: number; users: Set<string> }>();
+  const from = Math.max(since, q<{ at: number | null }>("SELECT min(at) at FROM tool_calls WHERE flags IS NOT NULL")[0]?.at ?? since);
+  const overviewUsers = q<{ n: number }>(`SELECT count(DISTINCT c.user_id) n FROM tool_calls c JOIN {U} u ON u.id = c.user_id
+      WHERE c.tool = 'account_overview' AND c.ok = 1 AND c.error IS NULL AND c.at >= ? AND coalesce(c.customer_id, '') != '${DEMO_CID}'`, from)[0]?.n ?? 0;
+  const rows = q<{ user_id: string; flags: string; acted: number }>(`SELECT c.user_id, c.flags,
+        EXISTS (SELECT 1 FROM proposals p WHERE p.user_id = c.user_id AND p.customer_id = c.customer_id AND p.created_at BETWEEN c.at AND c.at + 3600) acted
+      FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.at >= ? AND c.ok = 1 AND c.flags IS NOT NULL`, from);
+  const by = new Map<string, { users: Set<string>; acted: Set<string> }>();
   for (const r of rows) for (const f of r.flags.split(",")) {
-    if (!f || f.startsWith("preview:")) continue;
-    const e = by.get(f) ?? by.set(f, { calls: 0, users: new Set() }).get(f)!;
-    e.calls++; e.users.add(r.user_id);
+    if (!f || f.startsWith("preview:") || f.startsWith("lsa_")) continue;
+    const e = by.get(f) ?? by.set(f, { users: new Set(), acted: new Set() }).get(f)!;
+    e.users.add(r.user_id);
+    if (r.acted && f !== "wording_review") e.acted.add(r.user_id);
   }
-  return { overviews, flags: [...by].map(([flag, e]) => ({ flag, calls: e.calls, users: e.users.size })).sort((a, b) => b.users - a.users || b.calls - a.calls) };
+  return {
+    since: from, overview_users: overviewUsers,
+    flags: [...by].map(([flag, e]) => ({ flag, users: e.users.size, acted: flag === "wording_review" ? null : e.acted.size }))
+      .sort((x, y) => y.users - x.users || (y.acted ?? 0) - (x.acted ?? 0)),
+  };
 }
 
 /** Previews in the window (account_previews), by kind, and what the user did after: took that account, clicked upgrade, paid. */

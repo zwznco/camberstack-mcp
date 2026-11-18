@@ -344,19 +344,21 @@ describe("checks and previews (0.44.1)", () => {
     call.run(now() - 400, "b", "account_overview", null, "preview:333,keyword_urls_override_ads");
     call.run(now() - 300, "b", "account_overview", "333", null);  // b took the previewed account
     call.run(now() - 200, "a", "propose_changes", "111", "wording_review");
+    db.prepare("INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at) VALUES ('p1', 'a', '111', '[]', 's', 'proposed', ?)").run(now() - 200);
+    call.run(now() - 150, "a", "local_services_report", "111", "lsa_empty");  // tool usage, not a check
     call.run(now() - 100, "a", "account_overview", "0000000001", null);  // the demo isn't an overview of their own
     const prev = db.prepare("INSERT INTO account_previews (user_id, customer_id, at, kind) VALUES (?, ?, ?, ?)");
     prev.run("b", "333", now() - 400, "choosing");
     prev.run("a", "444", now() - 450, "locked");
     db.prepare("INSERT INTO plan_events (user_id, kind, at) VALUES ('a', 'upgrade_click', ?)").run(now() - 50);
     const r = buildReport(db, { days: 7, exclude: [] });
-    expect(r.checks.overviews).toEqual({ calls: 4, users: 2 });
+    expect(r.checks.overview_users).toBe(2);
     expect(r.checks.flags).toEqual([
-      { flag: "conversions_stopped", calls: 2, users: 2 },
-      { flag: "bid_strategy_changes_last_30_days", calls: 1, users: 1 },
-      { flag: "more_ads_with_policy_problems", calls: 1, users: 1 },
-      { flag: "keyword_urls_override_ads", calls: 1, users: 1 },
-      { flag: "wording_review", calls: 1, users: 1 },
+      { flag: "conversions_stopped", users: 2, acted: 1 },        // a proposed on 111 within the hour
+      { flag: "bid_strategy_changes_last_30_days", users: 1, acted: 1 },
+      { flag: "more_ads_with_policy_problems", users: 1, acted: 0 },
+      { flag: "keyword_urls_override_ads", users: 1, acted: 0 },
+      { flag: "wording_review", users: 1, acted: null },          // raised on the proposal itself
     ]);
     expect(r.previews).toEqual([
       { kind: "choosing", previews: 1, users: 1, took: 1, clicked: 0, paid: 0 },

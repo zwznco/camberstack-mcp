@@ -51,7 +51,7 @@ export interface PageSpeed {
     metrics: Record<string, { value: number; rating: Rating }>;
   } | null;
   /** One Lighthouse run from Google's servers on a throttled connection: varies run to run, best for finding causes. */
-  lab: { performance_score: number | null; metrics: Record<string, number> } | null;
+  lab: { performance_score: number | null; metrics: Record<string, number>; no_score?: string } | null;
   /** Lighthouse's failed checks that would save time, biggest saving first. */
   fixes: { id: string; title: string; detail?: string; saves?: string }[];
   error?: string;
@@ -103,7 +103,10 @@ export function summarize(url: string, strategy: Strategy, r: any, maxFixes: num
       if (typeof v === "number") metrics[name] = name === "cls" ? Math.round(v * 1000) / 1000 : Math.round(v);
     }
     const score = L.categories?.performance?.score;
-    lab = { performance_score: typeof score === "number" ? Math.round(score * 100) : null, metrics };
+    const missing = Object.values(LAB).filter((m) => !(m in metrics));
+    lab = { performance_score: typeof score === "number" ? Math.round(score * 100) : null, metrics,
+      // A page that paints but never settles on a largest element (prod, 2026-11-18) gets metrics without a score.
+      ...(typeof score !== "number" ? { no_score: `Lighthouse gives no score when it can't measure every metric; it couldn't measure ${missing.join(", ") || "one of them"}. The metrics shown are still real.` } : {}) };
     for (const ref of L.categories?.performance?.auditRefs ?? []) {
       const a = L.audits[ref.id];
       if (!a || ref.group === "metrics" || ref.group === "hidden" || a.score === null || a.score >= 0.9) continue;
@@ -145,7 +148,7 @@ export class PageSpeedClient {
     if (o.userId) this.spend(o.userId, urls.filter((u) => !isDemoUrl(u)).length);
     const pages = await Promise.all(urls.map((u) => this.one(u, o).catch((e: Error) =>
       ({ url: u, strategy: o.strategy, field: null, lab: null, fixes: [], error: e.message } satisfies PageSpeed))));
-    if (pages.every((p) => p.error)) throw new Error(pages.length === 1 ? pages[0]!.error! : `No page could be checked: ${pages[0]!.error}`);
+    if (pages.every((p) => p.error)) throw new Error(pages.length === 1 ? pages[0]!.error! : `No page could be checked. ${pages.map((p) => p.error).join(" ")}`);
     const demo = urls.some((u) => isDemoUrl(u));
     return {
       pages,
@@ -177,6 +180,15 @@ export class PageSpeedClient {
       try { msg = JSON.parse(text).error?.message ?? msg; } catch { /* not JSON */ }
       // A page Google couldn't load (DNS, 4xx/5xx, timeout) comes back as a 400/500 with Lighthouse's reason.
       if (res.status === 429) throw new Error("PageSpeed Insights is over its quota right now; try again in a minute.");
+      // Lighthouse's own NO_FCP text says to keep the browser window in the foreground, which means nothing here, and a model
+      // retried the same page at once and got Google's cached failure back (prod, 2026-11-18).
+      if (/\(NO_FCP\)/.test(msg)) {
+        throw new Error(`Google's ${o.strategy} test of ${url} loaded the page, but nothing appeared on screen before it gave up (Lighthouse NO_FCP), so there are no numbers. `
+          + (o.strategy === "mobile"
+            ? "The mobile test plays a mid-range phone on a slow network; a page that shows nothing there is usually waiting on large scripts or styles, or hides its content until scripts run. Real mobile visitors may stare at a blank page for a while. Test it with strategy desktop for numbers. "
+            : "The page may hide its content until scripts run, or block automated browsers. ")
+          + "Don't repeat the same test: Google returns the same result for a while.");
+      }
       throw new Error(`PageSpeed Insights couldn't test ${url}: ${msg}`);
     }
     return summarize(url, o.strategy, JSON.parse(text), o.fixes);

@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.44.5", date: "2026-11-18",
+    summary: "Page speed tests explain a page that shows nothing in Google's mobile test, and a result with no score.",
+    items: [
+      "**Blank pages:** when Google's mobile test sees nothing appear on screen, `landing_page_speed` says what that means for real visitors and suggests the desktop test, instead of passing on Lighthouse's advice about browser windows.",
+      "**Every page named:** when none of several pages could be tested, each one's reason is listed.",
+      "**No score:** a test that ran but has no score says which measurement was missing; the other numbers still stand.",
+    ],
+  },
+  {
     version: "0.44.4", date: "2026-11-18",
     summary: "When Google won't let a campaign bid on a conversion goal, the proposal now says why, in Google's words.",
     items: [
