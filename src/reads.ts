@@ -112,6 +112,21 @@ export async function campaignDetails(read: Read, campaignId: string, days: numb
     share ??= r.metrics;  // not segmented by date: one row for the whole window
   }
 
+  // The keywords in the negative lists it uses: a model read them with run_gaql after seeing only the lists' names
+  // (108dbbb8, 7 shared_criterion queries 2026-11-12..18). Shared across lists, capped with the campaign's own.
+  const listIds = (shared ?? []).map((r) => String(r.sharedSet.id)).filter((x) => /^\d+$/.test(x));
+  const listKeywords = new Map<string, { text: string; match_type: string }[]>();
+  if (listIds.length) {
+    const rows = await read(`SELECT shared_set.id, shared_criterion.keyword.text, shared_criterion.keyword.match_type FROM shared_criterion
+        WHERE shared_set.id IN (${listIds.join(", ")}) AND shared_criterion.type = 'KEYWORD' LIMIT 10000`).catch(() => null);
+    for (const r of rows ?? []) {
+      const k = String(r.sharedSet?.id);
+      const xs = listKeywords.get(k) ?? [];
+      xs.push({ text: r.sharedCriterion?.keyword?.text, match_type: r.sharedCriterion?.keyword?.matchType });
+      listKeywords.set(k, xs);
+    }
+  }
+  let listRoom = NEGATIVES_SHOWN;
   const crit = (criteria ?? []).map((r) => r.campaignCriterion);
   const geoNames = await constantNames(read, "geo_target_constant", crit.filter((x) => x.location?.geoTargetConstant).map((x) => x.location.geoTargetConstant));
   const langNames = await constantNames(read, "language_constant", crit.filter((x) => x.language?.languageConstant).map((x) => x.language.languageConstant));
@@ -197,7 +212,13 @@ export async function campaignDetails(read: Read, campaignId: string, days: numb
     negative_keywords: {
       count: negatives.length, ...(negatives.length > NEGATIVES_SHOWN ? { shown: NEGATIVES_SHOWN } : {}),
       keywords: negatives.slice(0, NEGATIVES_SHOWN),
-      shared_lists: (shared ?? []).map((r) => ({ id: String(r.sharedSet.id), name: r.sharedSet.name, type: r.sharedSet.type, keywords: Number(r.sharedSet.memberCount ?? 0) })),
+      shared_lists: (shared ?? []).map((r) => {
+        const all = listKeywords.get(String(r.sharedSet.id));
+        const show = all ? all.slice(0, Math.max(0, listRoom)) : undefined;
+        if (show) listRoom -= show.length;
+        return { id: String(r.sharedSet.id), name: r.sharedSet.name, type: r.sharedSet.type, count: Number(r.sharedSet.memberCount ?? all?.length ?? 0),
+          ...(show ? { keywords: show, ...(all!.length > show.length ? { shown: show.length } : {}) } : {}) };
+      }),
     },
     assets: assetRows,
     conversion_goals: (goals ?? []).map((r) => ({
@@ -208,7 +229,7 @@ export async function campaignDetails(read: Read, campaignId: string, days: numb
       ...(r.adGroup.cpcBidMicros && Number(r.adGroup.cpcBidMicros) > 10_000 ? { max_cpc: micros(r.adGroup.cpcBidMicros) } : {}),
       ...done(byGroup.get(String(r.adGroup.id)) ?? zero()),
     })).sort((a, b) => b.cost - a.cost),
-    note: "Assets listed are the campaign's own; account-level assets also show with its ads. Impression shares are percents for the window.",
+    note: `Shared negative lists show up to ${NEGATIVES_SHOWN} keywords in all. Assets listed are the campaign's own; account-level assets also show with its ads. Impression shares are percents for the window.`,
   };
 }
 

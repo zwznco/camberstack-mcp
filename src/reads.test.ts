@@ -47,3 +47,23 @@ describe("read tools on the demo account", () => {
     expect(r.keywords[0]!.cost).toBeGreaterThanOrEqual(r.keywords.at(-1)!.cost);
   });
 });
+
+describe("campaign_details on a campaign with shared negative lists", () => {
+  it("lists each list's keywords, capped across lists", async () => {
+    const stub = async (q: string) => {
+      if (/FROM campaign_shared_set/.test(q)) return [{ sharedSet: { id: "71", name: "Jobs", type: "NEGATIVE_KEYWORDS", memberCount: "2" } },
+        { sharedSet: { id: "72", name: "Big", type: "NEGATIVE_KEYWORDS", memberCount: "250" } }];
+      if (/FROM shared_criterion/.test(q)) {
+        expect(q).toMatch(/shared_set\.id IN \(71, 72\)/);
+        return [{ sharedSet: { id: "71" }, sharedCriterion: { keyword: { text: "jobs", matchType: "BROAD" } } },
+          { sharedSet: { id: "71" }, sharedCriterion: { keyword: { text: "salary", matchType: "PHRASE" } } },
+          ...Array.from({ length: 250 }, (_, i) => ({ sharedSet: { id: "72" }, sharedCriterion: { keyword: { text: `k${i}`, matchType: "EXACT" } } }))];
+      }
+      return read(q);
+    };
+    const lists = (await campaignDetails(stub, "2001", 30)).negative_keywords.shared_lists as any[];
+    expect(lists[0]).toMatchObject({ name: "Jobs", count: 2, keywords: [{ text: "jobs", match_type: "BROAD" }, { text: "salary", match_type: "PHRASE" }] });
+    expect(lists[1]).toMatchObject({ name: "Big", count: 250, shown: 198 });
+    expect(lists[1].keywords).toHaveLength(198);
+  });
+});

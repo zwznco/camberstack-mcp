@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.45.1", date: "2026-11-18",
+    summary: "Campaign details list the keywords in the shared negative lists a campaign uses.",
+    items: [
+      "**Shared negative lists:** `campaign_details` now shows each list's keywords and match types, not just its name and size (up to 200 keywords across lists).",
+    ],
+  },
+  {
     version: "0.45.0", date: "2026-11-18",
     summary: "Five new read tools answer the questions people most often asked for a custom query: a campaign's setup, conversion tracking, search terms, ads and keywords.",
     items: [
