@@ -140,6 +140,18 @@ describe("resolveLocations", () => {
     expect(f.queries.at(-2)).toContain("geo_target_constant.name = 'O\\'Fallon'");
   });
 
+  it("takes \"worldwide\" and its synonyms alone as every location, without a lookup (prod #30593)", async () => {
+    const f = fakeSearch();
+    for (const w of ["Worldwide", " global ", "ALL", "all countries"]) expect(await resolveLocations([w], f.search)).toEqual([]);
+    expect(f.queries).toEqual([]);
+  });
+
+  it("refuses worldwide combined with other locations", async () => {
+    const err = await resolveLocations(["Austria", "Worldwide"], fakeSearch().search).catch((e: Error) => e.message);
+    expect(err).toContain(`"Worldwide" counts every location, so it can't be combined with other locations.`);
+    expect(err).toContain("Nothing was looked up in Keyword Planner.");
+  });
+
   it("prefers the country for a bare name that is also a place", async () => {
     expect(await resolveLocations(["Georgia"], fakeSearch().search)).toEqual(["2268"]);
   });
@@ -184,6 +196,13 @@ describe("describeTarget", () => {
     expect(d.locations).toEqual([{ id: "2826", name: "2826" }]);
     expect(d.language).toBe("all languages");
     expect(d.note).toBe("Searches in every language are counted. Pass language_id to count one language only.");
+  });
+  it("names a worldwide market and counts it as given, not the campaigns' or the default", () => {
+    const t = chooseTarget({ location_ids: [] }, { locations: ["2040"], languages: ["1001"] });
+    expect(t).toEqual({ location_ids: [], language_id: null, locations_from: "given", language_from: "all", locations_left_out: 0 });
+    const d = describeTarget(t, new Map(), null);
+    expect(d.locations).toBe("worldwide");
+    expect(d.note).toBe("Searches in every location are counted (worldwide). Searches in every language are counted. Pass language_id to count one language only.");
   });
   it("says how many locations were left out", () => {
     const many = Array.from({ length: 12 }, (_, i) => String(1000 + i));

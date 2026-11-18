@@ -1080,7 +1080,7 @@ export class UserSession {
     ]);
     // Several locations count as one market; by_location also asks each one alone, after the total, one at a time.
     const split = o.by_location && t.location_ids.length > 1
-      ? await this.splitByLocation(a, t, keywords, o.months, new Map(target.locations.map((l: { id: string; name?: string }) => [l.id, l.name ?? l.id])))
+      ? await this.splitByLocation(a, t, keywords, o.months, new Map(t.location_ids.map((id, i) => [id, (target.locations as { name: string }[])[i]?.name ?? id])))
       : null;
     const rows = (res.results ?? []).map((r) => ({
       ...keywordRow(r.text, r.keywordMetrics, have),
@@ -1168,7 +1168,7 @@ export class UserSession {
   private async describePlanTarget(a: Account, t: PlanTarget) {
     const q: Search = (query) => this.ads.search(a.customerId, query, a.loginCustomerId);
     const [geo, lang] = await Promise.all([
-      q(`SELECT geo_target_constant.id, geo_target_constant.canonical_name, geo_target_constant.status FROM geo_target_constant WHERE geo_target_constant.id IN (${t.location_ids.join(", ")})`)
+      !t.location_ids.length ? new Map<string, string>() : q(`SELECT geo_target_constant.id, geo_target_constant.canonical_name, geo_target_constant.status FROM geo_target_constant WHERE geo_target_constant.id IN (${t.location_ids.join(", ")})`)
         .then((rows) => new Map(rows.map((r: any) => [String(r.geoTargetConstant?.id), String(r.geoTargetConstant?.canonicalName)])))
         .catch(() => new Map<string, string>()),
       t.language_id ? q(`SELECT language_constant.id, language_constant.name FROM language_constant WHERE language_constant.id = ${t.language_id}`)
@@ -2185,7 +2185,7 @@ function compactRows(rows: KeywordRow[]) {
 /** Keyword Planner's targeting fields; no language means every language. */
 const plannerTarget = (t: PlanTarget) => ({
   ...(t.language_id ? { language: `languageConstants/${t.language_id}` } : {}),
-  geoTargetConstants: t.location_ids.map((id) => `geoTargetConstants/${id}`),
+  ...(t.location_ids.length ? { geoTargetConstants: t.location_ids.map((id) => `geoTargetConstants/${id}`) } : {}),  // none: worldwide
   keywordPlanNetwork: "GOOGLE_SEARCH",
 });
 

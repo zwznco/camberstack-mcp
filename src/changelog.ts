@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.44.6", date: "2026-11-18",
+    summary: "Keyword research can count searches worldwide.",
+    items: [
+      "**Worldwide:** `keyword_ideas` and `keyword_metrics` take `\"worldwide\"` (or \"global\", \"all countries\") as the location, and count searches in every country. Leaving the location out still counts where your campaigns run.",
+    ],
+  },
+  {
     version: "0.44.5", date: "2026-11-18",
     summary: "Page speed tests explain a page that shows nothing in Google's mobile test, and a result with no score.",
     items: [

@@ -20,6 +20,7 @@ const MAX_PLAN_LOCATIONS = 10;
 
 export type From = "given" | "campaigns" | "default";
 export interface PlanTarget {
+  /** Empty: worldwide (Keyword Planner counts every location when none is sent). */
   location_ids: string[];
   /** null: every language (Keyword Planner's own default when none is sent). */
   language_id: string | null;
@@ -74,7 +75,7 @@ export function campaignMarket(rows: any[]): { locations: string[]; languages: s
  * account's own (an English-language account researching Austria shouldn't count only English searches).
  */
 export function chooseTarget(given: { location_ids?: string[]; language_id?: string }, market: { locations: string[]; languages: string[] } | null): PlanTarget {
-  if (given.location_ids?.length) {
+  if (given.location_ids) {  // [] is worldwide, asked for by name
     return { location_ids: given.location_ids, language_id: given.language_id ?? null, locations_from: "given",
       language_from: given.language_id ? "given" : "all", locations_left_out: 0 };
   }
@@ -92,6 +93,11 @@ export function chooseTarget(given: { location_ids?: string[]; language_id?: str
 }
 
 const titleCase = (s: string) => s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
+/**
+ * Words for every location. Keyword Planner counts worldwide when no geo target is sent, but leaving location_ids out
+ * means the campaigns' market, so a model asking for worldwide passed "Worldwide" and was refused (prod #30593, 2026-11-18).
+ */
+const WORLDWIDE = new Set(["worldwide", "world", "global", "globally", "everywhere", "all", "all locations", "all countries"]);
 /** Names people use that aren't Google's country code. */
 const CODE_ALIASES: Record<string, string> = { UK: "GB" };
 
@@ -102,6 +108,14 @@ const CODE_ALIASES: Record<string, string> = { UK: "GB" };
  * candidates' ids. Every problem is reported at once.
  */
 export async function resolveLocations(inputs: string[], search: Search): Promise<string[]> {
+  const world = inputs.filter((i) => WORLDWIDE.has(i.trim().toLowerCase()));
+  if (world.length) {
+    if (world.length < inputs.length) {
+      throw new Error(`"${world[0].trim()}" counts every location, so it can't be combined with other locations. Pass it alone for `
+        + "worldwide numbers, or leave it out to count only the places named. Nothing was looked up in Keyword Planner.");
+    }
+    return [];
+  }
   let countries: { id: string; name: string; code: string }[] | undefined;
   const countryList = async () => (countries ??= (await search(COUNTRIES_QUERY)).map((r) => ({
     id: String(r.geoTargetConstant.id), name: String(r.geoTargetConstant.name), code: String(r.geoTargetConstant.countryCode ?? "") })));
@@ -136,7 +150,7 @@ export async function resolveLocations(inputs: string[], search: Search): Promis
   if (problems.length) {
     throw new Error(`Couldn't tell which location: ${problems.join(". ")}. `
       + "location_ids takes a Google geo target id, a country name or two-letter code (\"Austria\", \"AT\"), or a place name, "
-      + "narrowed after a comma when needed (\"Springfield, Illinois\"). Nothing was looked up in Keyword Planner.");
+      + "narrowed after a comma when needed (\"Springfield, Illinois\"), or \"worldwide\" alone. Nothing was looked up in Keyword Planner.");
   }
   return [...new Set(out)];
 }
@@ -168,6 +182,7 @@ export async function resolveLanguage(input: string, search: Search): Promise<st
 export function describeTarget(t: PlanTarget, geoNames: Map<string, string>, languageName: string | null) {
   const places = t.location_ids.map((id) => geoNames.get(id) ?? id);
   const notes: string[] = [];
+  if (!t.location_ids.length) notes.push("Searches in every location are counted (worldwide).");
   if (t.locations_from === "campaigns") {
     notes.push(`Locations are the ones this account's campaigns target${t.locations_left_out
       ? ` (${t.locations_left_out + t.location_ids.length} in all; Keyword Planner takes 10, so these are the ones most campaigns target)` : ""}.`);
@@ -181,7 +196,7 @@ export function describeTarget(t: PlanTarget, geoNames: Map<string, string>, lan
       : "The campaigns don't target a language, so searches in every language are counted.");
   }
   return {
-    locations: t.location_ids.map((id, i) => ({ id, name: places[i] })),
+    locations: t.location_ids.length ? t.location_ids.map((id, i) => ({ id, name: places[i] })) : "worldwide",
     language: t.language_id ? { id: t.language_id, name: languageName ?? t.language_id } : "all languages",
     locations_from: t.locations_from,
     language_from: t.language_from,

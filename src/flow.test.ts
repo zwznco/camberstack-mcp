@@ -211,9 +211,9 @@ class FakeAds {
   planner429For: string | null = null;
   async keywordPlan(_cid: string, method: string, req: any) {
     this.plannerCalls.push({ method, req });
-    if (this.planner429For && req.geoTargetConstants.length === 1 && req.geoTargetConstants[0] === `geoTargetConstants/${this.planner429For}`)
+    if (this.planner429For && req.geoTargetConstants?.length === 1 && req.geoTargetConstants[0] === `geoTargetConstants/${this.planner429For}`)
       throw new AdsApiError(429, JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Too many requests. Retry in 41 seconds." } }));
-    if (req.geoTargetConstants.some((g: string) => !/\/(2840|2826|2040)$/.test(g)))
+    if ((req.geoTargetConstants ?? []).some((g: string) => !/\/(2840|2826|2040)$/.test(g)))
       throw new AdsApiError(400, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { fieldError: "INVALID_VALUE" },
         message: "The input has an invalid value.", location: { fieldPathElements: [{ fieldName: "geo_target_constants" }] } }] }] } }));
     if (method === "generateKeywordIdeas") {
@@ -1702,6 +1702,12 @@ describe("OAuth + MCP end to end", () => {
     expect(m.json.target).toMatchObject({ locations: [{ id: "2826", name: "United Kingdom" }], language: "all languages", locations_from: "given", language_from: "all" });
     expect(m.json.keywords[0]).toMatchObject({ keyword: "invoice software", avg_monthly_searches: 12100, monthly: { "2026-08": 11000, "2026-09": 13000 } });
     expect(m.json.no_data).toEqual(["zzz"]);
+
+    // "Worldwide": no geo target sent, which Keyword Planner counts as every location (prod #30593).
+    const w = await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoice software"], location_ids: ["Worldwide"], language_id: "1000" });
+    expect(ads.plannerCalls.at(-1)!.req.geoTargetConstants).toBeUndefined();
+    expect(ads.plannerCalls.at(-1)!.req.language).toBe("languageConstants/1000");
+    expect(w.json.target).toMatchObject({ locations: "worldwide", locations_from: "given", language_from: "given" });
 
     // months: a range ending last month, for year-over-year.
     await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoice software"], months: 24 });
