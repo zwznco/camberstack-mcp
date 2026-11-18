@@ -367,7 +367,7 @@ ${pairList([
   ["Mark or unmark an event as a key event", "Restores the previous setting"],
   ["Link or unlink a Google Ads account", "Restores the previous link"],
 ], "Undo")}
-<p class="muted small">Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property. <a href="/google-analytics-mcp">More on the Google Analytics tools</a>.</p>
+<p class="muted small">Google Ads, <a href="/google-search-console-mcp">Search Console</a>, Google Analytics, <a href="/google-merchant-center-mcp">Merchant Center</a> and <a href="/google-tag-manager-mcp">Tag Manager</a> are each optional: untick any of them, and when you later ask about it Camberstack gives you a one-click link that adds it. The <a href="#demo">demo</a> includes a sample GA4 property. <a href="/google-analytics-mcp">More on the Google Analytics tools</a>.</p>
 </div>
 </div></section>
 
