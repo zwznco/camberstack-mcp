@@ -8,9 +8,9 @@ import { BIDDING, BY } from "./results.js";
 import { DEMO_CID } from "./demo.js";
 
 /** How many examples each check names; the rest are counted. */
-export const CHECK_EXAMPLES = 10;
+const CHECK_EXAMPLES = 10;
 /** A conversion action that had at least STOPPED_MIN conversions in the last 90 days and none in the last STOPPED_DAYS has stopped. */
-export const STOPPED_DAYS = 14, STOPPED_MIN = 3;
+const STOPPED_DAYS = 14, STOPPED_MIN = 3;
 
 // ---------------------------------------------------------------- queries
 

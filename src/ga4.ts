@@ -189,14 +189,15 @@ export function routedAnalytics(google: Analytics, demo: Analytics): Analytics {
 const DAY = 86_400_000;
 const ymd = (t: number) => new Date(t).toISOString().slice(0, 10);
 
-/** `days` up to yesterday (GA4's today is still filling in), or an exact start/end. */
+/**
+ * `days` up to yesterday (GA4's today is still filling in), with start_date and/or end_date overriding either end; a lone
+ * end_date counts `days` back from it.
+ */
 function gaWindow(o: { days: number; start_date?: string; end_date?: string }): { startDate: string; endDate: string } {
-  if (o.start_date || o.end_date) {
-    if (!o.start_date || !o.end_date) throw new Error("Give both start_date and end_date, or neither.");
-    if (o.start_date > o.end_date) throw new Error("start_date is after end_date.");
-    return { startDate: o.start_date, endDate: o.end_date };
-  }
-  return { startDate: ymd(Date.now() - o.days * DAY), endDate: ymd(Date.now() - DAY) };
+  const endDate = o.end_date ?? ymd(Date.now() - DAY);
+  const startDate = o.start_date ?? ymd(Date.parse(endDate) - (o.days - 1) * DAY);
+  if (startDate > endDate) throw new Error("start_date is after end_date.");
+  return { startDate, endDate };
 }
 
 /** Properties this login can read; the demo property only when there are none (or Analytics isn't granted). */

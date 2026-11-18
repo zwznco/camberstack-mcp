@@ -18,7 +18,7 @@ import { appPage, esc, infoPage } from "./pages.js";
 export const FEEDBACK_KINDS = { bug: "Something's broken", idea: "An idea or request", other: "Something else" } as const;
 type Kind = keyof typeof FEEDBACK_KINDS;
 export type FeedbackKind = Kind;
-export const FEEDBACK_MAX = 5000;
+const FEEDBACK_MAX = 5000;
 /** Per sender, per day. Generous for a person, a wall for a script with one Google account. */
 const DAILY_LIMIT = 5;
 

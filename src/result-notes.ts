@@ -53,7 +53,7 @@ export function markNoted(db: DB, userId: string, rows: { proposal_id: string; c
 }
 
 /** The note itself, grouped by account: what list_accounts and account_overview add to their result. */
-export function noteFor(ready: ReadyProposal[], tool: (name: string) => string = (n) => n) {
+function noteFor(ready: ReadyProposal[], tool: (name: string) => string = (n) => n) {
   const by = new Map<string, ReadyProposal[]>();
   for (const r of ready) by.set(r.customer_id, [...(by.get(r.customer_id) ?? []), r]);
   return {

@@ -22,7 +22,7 @@ const parameterName = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/, "letters,
 const dimensionScope = z.enum(["EVENT", "USER", "ITEM"]);
 type DimensionScope = z.infer<typeof dimensionScope>;
 /** How the Data API names a custom dimension in reports (and the prefix fieldHint looks for). */
-export const REPORT_PREFIX: Record<DimensionScope, string> = { EVENT: "customEvent", USER: "customUser", ITEM: "customItem" };
+const REPORT_PREFIX: Record<DimensionScope, string> = { EVENT: "customEvent", USER: "customUser", ITEM: "customItem" };
 const SCOPE_LABEL: Record<DimensionScope, string> = { EVENT: "an event-scoped", USER: "a user-scoped", ITEM: "an item-scoped" };
 /** Admin API v1beta CustomMetric.measurementUnit, less UNSPECIFIED. */
 const metricUnit = z.enum(["STANDARD", "CURRENCY", "FEET", "METERS", "KILOMETERS", "MILES", "MILLISECONDS", "SECONDS", "MINUTES", "HOURS"]);

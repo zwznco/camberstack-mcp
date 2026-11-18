@@ -28,6 +28,15 @@ export interface RetentionDeps {
 
 const idle = "coalesce(last_seen_at, created_at) < ?";
 
+/**
+ * Every table with a user_id column except users and feedback (kept, unlinked): read from the schema, so a new table is
+ * covered without a list to forget (a hand-kept one missed four tables, 2026-11-18).
+ */
+function userTables(db: DB): string[] {
+  return (db.prepare(`SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
+      WHERE m.type = 'table' AND c.name = 'user_id' AND m.name NOT IN ('users', 'feedback')`).all() as { name: string }[]).map((r) => r.name);
+}
+
 export async function retain(d: RetentionDeps, t = now()): Promise<{ grants: number; accounts: number }> {
   const revoke = d.revoke ?? revokeGoogleToken;
   const stale = d.db.prepare(`SELECT id, enc_refresh FROM users WHERE enc_refresh IS NOT NULL AND ${idle}`)
@@ -49,9 +58,8 @@ export async function retain(d: RetentionDeps, t = now()): Promise<{ grants: num
     const mine = d.db.prepare(`SELECT DISTINCT substr(customer_id, 4) account FROM tool_calls WHERE user_id = ? AND customer_id LIKE 'mc:%'
       AND customer_id NOT IN (SELECT customer_id FROM tool_calls WHERE user_id != ? AND customer_id IS NOT NULL)`).all(id, id) as { account: string }[];
     for (const account of [...mine.map((m) => m.account), `demo:${id}`]) d.db.prepare("DELETE FROM merchant_overrides WHERE account_id = ?").run(account);
-    for (const table of ["tokens", "auth_codes", "proposals", "tool_calls", "client_tools", "email_log", "ad_conversions", "ad_paid", "plan_events", "demo_state", "demo_ga_state", "demo_sc_state", "account_previews"]) {
-      d.db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(id);
-    }
+    for (const table of userTables(d.db)) d.db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(id);
+    d.db.prepare("DELETE FROM error_alerts WHERE substr(k, 1, ?) = ?").run(id.length + 1, `${id}|`);
     d.db.prepare("DELETE FROM web_sessions WHERE subject = ?").run(id);
     d.db.prepare("UPDATE feedback SET user_id = NULL WHERE user_id = ?").run(id);
     d.db.prepare("DELETE FROM users WHERE id = ?").run(id);

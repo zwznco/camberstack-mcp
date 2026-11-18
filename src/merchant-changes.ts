@@ -19,7 +19,7 @@
 import { z } from "zod";
 import { PRODUCTS_SOURCE_NAME, SOURCE_NAME, type Merchant, type Overrides, type ProductKey } from "./merchant.js";
 
-export const MC_PREFIX = "mc:";
+const MC_PREFIX = "mc:";
 export const mcTarget = (accountId: string) => `${MC_PREFIX}${accountId}`;
 export const isMcTarget = (target: string) => target.startsWith(MC_PREFIX);
 

@@ -42,6 +42,9 @@ describe("retention", () => {
     add("paying", ACCOUNT_DAYS + 1, { plan: "pro", stripe_sub: "sub_1" });
     add("staff", ACCOUNT_DAYS + 1, { email: "Owner@Example.com" });
     db.prepare("INSERT INTO feedback (at, email, user_id, kind, message) VALUES (?, 'gone@example.com', 'gone', 'other', 'hi')").run(t);
+    db.prepare("INSERT INTO survey_answers (survey, user_id, choice, lang, at) VALUES ('s', 'gone', 'enough', 'en', ?)").run(t);
+    db.prepare("INSERT INTO pagespeed_usage (user_id, day, pages) VALUES ('gone', '2026-01-01', 1)").run();
+    db.prepare("INSERT INTO error_alerts (k, last_id, at) VALUES ('gone|ads|x', 1, ?), ('gone2|ads|x', 1, ?)").run(t, t);
 
     const revoked: string[] = [];
     const r = await retain({ db, encryptionKey: key, internalEmails: new Set(["owner@example.com"]), revoke: async (tok) => { revoked.push(tok); } }, t);
@@ -51,7 +54,11 @@ describe("retention", () => {
     expect(users).toEqual({ active: 1, idle: 0, paying: 0, staff: 0 });
     expect(revoked.sort()).toEqual(["rt-gone", "rt-idle", "rt-paying", "rt-staff"]);
     expect(r).toEqual({ grants: 4, accounts: 1 });
-    expect(db.prepare("SELECT count(*) n FROM tool_calls WHERE user_id = 'gone'").get()).toEqual({ n: 0 });
+    // Every table keyed to the user, including ones added after this test was written.
+    const left = (db.prepare(`SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c WHERE m.type = 'table' AND c.name = 'user_id'`).all() as { name: string }[])
+      .filter(({ name }) => (db.prepare(`SELECT count(*) n FROM ${name} WHERE user_id = 'gone'`).get() as { n: number }).n > 0);
+    expect(left).toEqual([]);
+    expect((db.prepare("SELECT k FROM error_alerts").all() as { k: string }[]).map((r) => r.k)).toEqual(["gone2|ads|x"]);
     expect(db.prepare("SELECT user_id FROM feedback").get()).toEqual({ user_id: null });
     // Internal only while listed: off the list, the idle staff account goes too (paying never does).
     expect(await retain({ db, encryptionKey: key, internalEmails: new Set(), revoke: async () => {} }, t)).toEqual({ grants: 0, accounts: 1 });

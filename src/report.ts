@@ -8,6 +8,8 @@ import { checksReport, previewsReport } from "./checks.js";
 import type { DB } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
+import { GTM_TARGET } from "./gtm-changes.js";
+import { SC_TARGET } from "./search-console-changes.js";
 import { now } from "./db.js";
 import { capCounted } from "./session.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES } from "./google.js";
@@ -32,7 +34,7 @@ export interface ReportOptions {
 }
 
 /** A tool_calls row on a real Google Ads account: not the demo, not the Google Analytics or Merchant Center markers. */
-const ON_ADS = `c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}') AND c.customer_id NOT LIKE 'mc:%'`;
+const ON_ADS = `c.customer_id NOT IN ('${DEMO_CID}', '${GA_TARGET}', '${SC_TARGET}', '${GTM_TARGET}') AND c.customer_id NOT LIKE 'mc:%'`;
 /**
  * A call that ran on the user's own Google data, not a demo: `service` names it for every service since 2026-10-28; before
  * that only a real Ads customer_id shows it (Search Console and Analytics calls then carried none). `c` is the alias.
@@ -280,7 +282,7 @@ export const RETENTION_WEEKS = 8;
 export const SWITCH_DAYS = 14;
 
 /** A return: active again after at least this many UTC days (1 is the next day, which is ongoing use, not a return). */
-export const RETURN_MIN_DAYS = 2;
+const RETURN_MIN_DAYS = 2;
 
 /**
  * The churn watcher, with no fixed window: nobody knows yet how often a normal user comes back. Active days are UTC days

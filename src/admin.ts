@@ -12,6 +12,8 @@ import { buildReport, capUsage, type CapRow, MONTHLY, permissionLabels, RETENTIO
 import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
+import { GTM_TARGET } from "./gtm-changes.js";
+import { SC_TARGET } from "./search-console-changes.js";
 import { esc } from "./pages.js";
 import { changeCap, changeCapFrom, planLabel } from "./plans.js";
 import { SERVER_VERSION } from "./tools.js";
@@ -500,7 +502,7 @@ function userPage(x: UserDetail, v: View): string {
 ${stat(`Calls · ${w}`, num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
 ${stat(`Errors · ${w}`, x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
 ${stat("Proposals · all time", num(x.proposals.length), `${x.proposals.filter((p) => p.status === "applied").length} applied`)}
-${stat("Ads accounts used", num(x.accounts.filter((a) => a.ok_calls > 0 && a.customer_id !== DEMO_CID && a.customer_id !== GA_TARGET && !a.customer_id.startsWith("mc:")).length),
+${stat("Ads accounts used", num(x.accounts.filter((a) => a.ok_calls > 0 && a.customer_id !== DEMO_CID && a.customer_id !== GA_TARGET && a.customer_id !== SC_TARGET && a.customer_id !== GTM_TARGET && !a.customer_id.startsWith("mc:")).length),
     u.ads_accounts === null ? `${w} · visible not recorded yet`
       : `${w} · of ${u.ads_accounts} visible${u.ads_managers ? ` + ${u.ads_managers} manager${u.ads_managers > 1 ? "s" : ""}` : ""} (${ago(u.ads_accounts_at!)})`)}
 </div>

@@ -102,21 +102,23 @@ function localHour(at: Date, tz: string | null | undefined): number {
   const fmt = (zone: string) => Number(new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hourCycle: "h23" }).format(at));
   try { return fmt(tz || FALLBACK_TZ); } catch { return fmt(FALLBACK_TZ); }
 }
-type Kind = "first_steps" | "limit_reached" | "paid_limit" | "switch_wanted" | "change_limit" | "check_in" | "welcome" | "pro_welcome";
+type Kind = "first_steps" | "limit_reached" | "paid_limit" | "change_limit" | "check_in" | "welcome" | "pro_welcome";
 /** welcome shipped at this time (2026-10-14); everyone who signed up before it never gets one. */
 const WELCOME_SINCE = 1792001873;
 /** A welcome that hasn't gone out a day after signup (mail down that long) is dropped, not sent late. */
 const WELCOME_WITHIN = DAY;
-/** Tools that mean someone has asked Camberstack something real (not just listed accounts or sites). */
-const USED_TOOLS = "('account_overview','local_services_report','run_gaql','keyword_ideas','keyword_metrics','propose_changes','paid_organic_overlap',"
-  + "'search_console_summary','search_console_performance','search_console_trend','search_console_opportunities',"
-  + "'search_console_inspect_urls','search_console_sitemaps','analytics_report','analytics_landing_pages','propose_analytics_changes','propose_search_console_changes',"
-  + "'merchant_product_issues','merchant_report','merchant_ad_spend','propose_merchant_changes')";
+/**
+ * Tools that don't mean someone has asked Camberstack something real: listing accounts, sites or properties, and account
+ * housekeeping. Every other tool does. A list of the ones that count fell behind new tools (Tag Manager, analytics_setup,
+ * landing_page_speed and ChatGPT's per-operation propose tools weren't on it, 2026-11-18).
+ */
+const NOT_USE = "('list_accounts','switch_account','choose_account','search_console_sites','analytics_properties','tag_manager_containers',"
+  + "'merchant_accounts','billing','send_feedback','disconnect','change_history','discard_proposal')";
 
 type Due = { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string; plan?: string; afterAccountEmail?: boolean; noAds?: boolean };
 
 /** At most one email per user, by PRIORITY, and none too soon after the user's last email (see the header). */
-export function spaced(due: Due[], lastEmail: Map<string, number>, lastSales: Map<string, number>, t: number): Due[] {
+function spaced(due: Due[], lastEmail: Map<string, number>, lastSales: Map<string, number>, t: number): Due[] {
   const out = new Map<string, Due>();
   for (const u of [...due].sort((a, b) => PRIORITY[a.kind]! - PRIORITY[b.kind]!)) {
     if (out.has(u.id)) continue;
@@ -147,7 +149,7 @@ export class Lifecycle {
     const first = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.created_at,
       (u.ads_accounts = 0 AND coalesce(u.ads_managers, 0) = 0) no_ads FROM users u WHERE ${eligible}
       AND u.created_at BETWEEN ? AND ? AND ${notSent("first_steps")}
-      AND NOT EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.error IS NULL AND c.tool IN ${USED_TOOLS}
+      AND NOT EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.error IS NULL AND c.tool NOT IN ${NOT_USE}
         AND NOT (c.tool = 'run_gaql' AND c.customer_id IS NULL))`)  // a run_gaql field lookup reads no account; error set = a notice or grant link, not use
       .all(t - (15 + GAP_DAYS) * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; created_at: number; no_ads: number | null }[];
     // Refused a second account by the plan gate (session.ts checkAccount), the last refusal 6 hours to 30 days ago. A refusal

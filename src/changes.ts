@@ -20,6 +20,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { unsupported } from "./alerts.js";
+import { gaqlStr } from "./gaql.js";
 import { fetchImage } from "./fetch-safe.js";
 import { AdsApiError, micros, toMicros, type AdsClient } from "./google.js";
 
@@ -498,7 +499,7 @@ const NO_END_DATE_TIME = "2037-12-30 23:59:59";
 
 /** A campaign's end date as YYYY-MM-DD, or "none". */
 function endDateOf(endDateTime: string | undefined): string {
-  return !endDateTime || endDateTime.startsWith("2037-12-30") ? "none" : endDateTime.slice(0, 10);
+  return !endDateTime || endDateTime.startsWith(NO_END_DATE_TIME.slice(0, 10)) ? "none" : endDateTime.slice(0, 10);
 }
 
 /**
@@ -1876,9 +1877,6 @@ const SHARED_FIELDS: Record<string, { key: string } & Partial<Record<SharedSetti
   MAXIMIZE_CONVERSIONS: { key: "maximizeConversions", target_cpa: { camel: "targetCpaMicros", snake: "target_cpa_micros" }, max_cpc_ceiling: { camel: "cpcBidCeilingMicros", snake: "cpc_bid_ceiling_micros" } },
   MAXIMIZE_CONVERSION_VALUE: { key: "maximizeConversionValue", target_roas: { camel: "targetRoas", snake: "target_roas" }, max_cpc_ceiling: { camel: "cpcBidCeilingMicros", snake: "cpc_bid_ceiling_micros" } },
 };
-
-/** GAQL string literal body: escape backslashes and single quotes. */
-function gaqlStr(v: string): string { return v.replace(/[\\']/g, "\\$&"); }
 
 /**
  * Temporary resource names for one googleAds:mutate: negative ids that later operations in the same

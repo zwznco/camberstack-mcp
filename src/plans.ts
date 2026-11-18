@@ -62,8 +62,6 @@ export const servicesAnd = () => joinLabels(listedServices().map((s) => SERVICE_
 const joinLabels = (xs: string[], word: string) => `${xs.slice(0, -1).join(", ")} ${word} ${xs.at(-1)}`;
 /** "November 16". */
 export const dateLabel = (t: number) => new Date(t * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
-/** Every service together: "Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together". */
-export const allServices = () => `${joinLabels(listedServices().map((s) => SERVICE_LABELS[s]), "and")} together`;
 
 /** "1 Google Ads account" / "5 Google Ads accounts". */
 export const accountsLabel = (n: number, pool: Pool = "ads") => `${n} ${pool === "mc" ? "Merchant Center" : "Google Ads"} account${n === 1 ? "" : "s"}`;

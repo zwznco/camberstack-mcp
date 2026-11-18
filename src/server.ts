@@ -88,7 +88,6 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
 
   const provider = new CamberstackProvider(db, {
     baseUrl: cfg.baseUrl, google: cfg.google, encryptionKey: cfg.encryptionKey, fetch: overrides.fetch, allowedEmails: cfg.allowedEmails,
-    // Google verified the Analytics scopes 2026-10-17, so sign-in asks for them next to Ads + Search Console.
   });
   const analytics = new Analytics({ matomoUrl: cfg.matomo?.url ?? "", siteId: cfg.matomo?.siteId ?? "",
     token: cfg.matomo?.token ?? "", site: cfg.baseUrl, fetch: overrides.analyticsFetch });
@@ -296,9 +295,9 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     res.status(204).end();
   });
 
-  // Stamped before bearer + body parsing, so a slow request's log line splits auth/upload time (pre) from handling.
   const noteToolList = db.prepare(`INSERT INTO client_tools (user_id, client_id, version, fetched_at) VALUES (?, ?, ?, ?)
     ON CONFLICT (user_id, client_id) DO UPDATE SET version = excluded.version, fetched_at = excluded.fetched_at`);
+  // Stamped before bearer + body parsing, so a slow request's log line splits auth/upload time (pre) from handling.
   const stampStart = (_req: express.Request, res: express.Response, next: express.NextFunction) => { res.locals.t0 = Date.now(); next(); };
   app.post("/mcp", stampStart, bearer, express.json({ limit: "1mb" }), async (req, res) => {
     const t0 = res.locals.t0 as number;
@@ -348,9 +347,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.delete("/mcp", noSessions);
 
   // Each page rendered once at boot (FREE_CHANGE_CAP is read then too).
-  const render = (): Record<string, string> => {
-    const tools = toolCatalog();
-    return {
+  const tools = toolCatalog();
+  const pages: Record<string, string> = {
     "/": homePage(cfg.baseUrl),
     "/google-ads-claude": claudeGuidePage(cfg.baseUrl),
     "/google-ads-chatgpt": chatgptGuidePage(cfg.baseUrl),
@@ -370,14 +368,11 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     // Not in the sitemap: the homepage #pricing is the page for search; this one is what ChatGPT connections link to.
     "/plans": plansPage(cfg.baseUrl),
     "/llms.txt": llmsTxt(cfg.baseUrl, tools),
-    };
   };
-  const pages = render();
-  const live = () => pages;
   const page = (path: string) => (req: express.Request, res: express.Response) => {
     res.setHeader("Cache-Control", "public, max-age=300");
     adConversions.captureClick(req, res);  // keeps an ad click id; makes the response private if it does
-    res.type("html").send(live()[path]!);
+    res.type("html").send(pages[path]!);
   };
   for (const path of Object.keys(pages)) if (path !== "/llms.txt" && path !== "/plans") app.get(path, page(path));
   for (const alias of ["/contact", "/contact-us", "/about-us"]) app.get(alias, (_q, r) => r.redirect(301, "/about"));
@@ -389,7 +384,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   const inKey = indexNowKey(cfg.encryptionKey);
   app.get(`/${inKey}.txt`, (_q, r) => { r.type("text/plain").send(inKey); });
   app.get("/robots.txt", (_q, r) => { r.type("text/plain").send(cfg.noindex ? "User-agent: *\nDisallow: /\n" : robotsTxt(cfg.baseUrl)); });
-  app.get("/llms.txt", (_q, r) => { r.type("text/plain").send(live()["/llms.txt"]!); });
+  app.get("/llms.txt", (_q, r) => { r.type("text/plain").send(pages["/llms.txt"]!); });
   app.get("/sitemap.xml", (_q, r) => { r.type("application/xml").send(sitemapXml(cfg.baseUrl, lastmod)); });
   // Brand assets: the SVG is the source; the PNGs are rendered from it (brand/).
   const brand = (file: string, type: string) => (_q: express.Request, r: express.Response) => {

@@ -420,3 +420,5 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length]!;
 }
 
+/** GAQL string literal body: escape backslashes and single quotes. */
+export function gaqlStr(v: string): string { return v.replace(/[\\']/g, "\\$&"); }

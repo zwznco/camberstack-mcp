@@ -21,7 +21,7 @@ import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
 import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, merchantCenterPage, plansPage, searchConsolePage } from "./pages.js";
-import { allServices, parseCapFrom, parseChangeCap, servicesOr, setChangeCap } from "./plans.js";
+import { parseCapFrom, parseChangeCap, servicesAnd, servicesOr, setChangeCap } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
 const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
@@ -1319,6 +1319,9 @@ describe("OAuth + MCP end to end", () => {
 
     const h = (await call(token, "change_history", { customer_id: "ga4" })).json;
     expect(h[0].customer_id).toBe("ga4");
+    // History for a non-Ads target never takes a Google Ads account for the plan.
+    for (const t of ["search_console", "gtm"]) await call(token, "change_history", { customer_id: t });
+    expect(JSON.stringify((await call(token, "billing")).json.accounts_in_use)).not.toMatch(/ga4|search_console|gtm/);
   });
 
   it("gives ChatGPT one propose tool per operation, with the same proposals, apply and undo", async () => {
@@ -1585,10 +1588,10 @@ describe("OAuth + MCP end to end", () => {
       const list = (await call(fresh, "list_accounts")).json;
       expect(list.plan).toMatchObject({ plan: "free", accounts_included: 1, active_accounts: [] });
       expect(list.plan.choosing).toContain("ask the user which to work on");
-      // Which accounts are live, so the user doesn't spend Free's one account on a dormant one; only the count is stored.
+      // Which accounts are live, so the user doesn't spend Free's one account on a dormant one.
       expect(list.accounts.filter((a: any) => !a.manager).map((a: any) => [a.customerId, a.spentLast30Days]))
         .toEqual(expect.arrayContaining([["1112223333", true], ["2223334444", false]]));
-      expect(db.prepare("SELECT ads_accounts, ads_active FROM users WHERE id = ?").get(uid)).toEqual({ ads_accounts: 2, ads_active: 1 });
+      expect(db.prepare("SELECT ads_accounts FROM users WHERE id = ?").get(uid)).toEqual({ ads_accounts: 2 });
       // An AI that goes ahead anyway, even on several at once, is stopped: none of them takes the plan, and nothing is spent.
       // The stop offers account_overview's preview of each, and says the dashes weren't the problem.
       db.prepare("DELETE FROM account_previews WHERE user_id = ?").run(uid);  // earlier tests' looks
@@ -1717,6 +1720,13 @@ describe("OAuth + MCP end to end", () => {
       "United States": { searches: 12100, competition_index: null, bid_low: null, bid_high: null },
       "United Kingdom": { searches: 12100, competition_index: null, bid_low: null, bid_high: null } });
     expect(split.json.by_location_note).toBeUndefined();
+    // With months, each location is counted over the same range as the total.
+    n = ads.plannerCalls.length;
+    await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoicing software"], location_ids: ["2840", "2826"], by_location: true, months: 24 });
+    const ranges = ads.plannerCalls.slice(n).map((c) => JSON.stringify(c.req.historicalMetricsOptions));
+    expect(ranges).toHaveLength(3);
+    expect(new Set(ranges).size).toBe(1);
+    expect(ranges[0]).toContain("yearMonthRange");
     // A 429 partway keeps what was counted and names the rest, instead of failing the whole answer.
     ads.planner429For = "2826";
     const half = await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoice software"], location_ids: ["2840", "2826"], by_location: true });
@@ -1841,10 +1851,12 @@ describe("OAuth + MCP end to end", () => {
     const sum = (await call(token, "search_console_summary", { site_url: "sc-domain:acme.test", start_date: "2026-09-15", end_date: "2026-09-28" })).json;
     expect(sum.previous.window).toEqual({ start: "2026-09-01", end: "2026-09-14" });
 
-    for (const bad of [{ start_date: "2026-09-01" }, { start_date: "2026-09-10", end_date: "2026-09-01" }, { start_date: "2024-01-01", end_date: "2026-01-01" }]) {
-      const r = await call(token, "search_console_performance", { site_url: "sc-domain:acme.test", ...bad });
-      expect(r.isError).toBe(true);
-    }
+    // One date alone fills the other end from days; a span past Google's 16 months starts 480 days before its end.
+    const sc_ = (a: object) => call(token, "search_console_performance", { site_url: "sc-domain:acme.test", ...a });
+    expect((await sc_({ end_date: "2026-09-14", days: 14 })).json.window).toEqual({ start: "2026-09-01", end: "2026-09-14" });
+    expect((await sc_({ start_date: "2026-09-01" })).json.window).toEqual({ start: "2026-09-01", end: new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10) });
+    expect((await sc_({ start_date: "2024-01-01", end_date: "2026-01-01" })).json.window).toEqual({ start: "2024-09-09", end: "2026-01-01" });
+    expect((await sc_({ start_date: "2026-09-10", end_date: "2026-09-01" })).isError).toBe(true);
   });
 
   it("compares two windows query by query and page by page, paging past 25,000 rows", async () => {
@@ -3767,7 +3779,7 @@ describe("OAuth + MCP end to end", () => {
 
   it("names Merchant Center in the plan copy", () => {
     expect(servicesOr()).toBe("Google Ads, Search Console, Google Analytics, Merchant Center or Tag Manager");
-    expect(allServices()).toBe("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager together");
+    expect(servicesAnd()).toBe("Google Ads, Search Console, Google Analytics, Merchant Center and Tag Manager");
   });
 
 });

@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotConnectedError, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, changeCapFrom, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SwitchNotice, accountsLabel, allServices, isPaid, poolOf, planLabel, type Plan, type Pool } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, changeCapFrom, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SwitchNotice, accountsLabel, isPaid, poolOf, planLabel, type Plan, type Pool } from "./plans.js";
 import { AnalyticsClient, DEMO_PROPERTY, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -85,7 +85,7 @@ const inFlight = new Map<string, Map<string, number>>();
  * A proposal on sample data only: the demo Ads account or store, or Analytics, Search Console or Tag Manager changes that all
  * name the demo property, site or container. The change cap doesn't count these (creating a property names none: real).
  */
-export function isDemoProposal(customerId: string, changesJson: string): boolean {
+function isDemoProposal(customerId: string, changesJson: string): boolean {
   if (customerId === DEMO_CID || customerId === `mc:${DEMO_MERCHANT}`) return true;
   if (customerId !== GA_TARGET && customerId !== SC_TARGET && customerId !== GTM_TARGET) return false;
   let changes: Record<string, unknown>[];
@@ -96,7 +96,7 @@ export function isDemoProposal(customerId: string, changesJson: string): boolean
 }
 
 /** An undo the cap leaves free: one that reverses an ordinary proposal. An undo of an undo replays the original change, so it counts. */
-export function isFreeUndo(db: DB, undoOf: string | null | undefined): boolean {
+function isFreeUndo(db: DB, undoOf: string | null | undefined): boolean {
   if (!undoOf) return false;
   return !(db.prepare("SELECT undo_of FROM proposals WHERE id = ?").get(undoOf) as { undo_of: string | null } | undefined)?.undo_of;
 }
@@ -182,15 +182,11 @@ export interface SessionDeps {
   grantLink?: (kind: GrantKind, userId: string) => string | null;
 }
 
-/** Defined in google.ts with the other error classes, so sentry.ts needn't import session.ts: that made merchant.ts → sentry → session → merchant-changes → merchant a cycle, and `npm start` (stdio, Glama's build) crashed on PRODUCTS_SOURCE_NAME before initialization (0.35.10). */
-export { NotConnectedError } from "./google.js";
-
 /** The Google Ads calls the tools make; the demo account answers the same ones. */
 type Ads = Pick<AdsClient, "listAccessibleCustomers" | "search" | "mutate" | "keywordPlan" | "searchFields">;
 
-/** Sends the demo account's calls to the demo and everything else to Google. */
 /** Edits between two ids: insert, delete, change a digit, or swap two neighbouring digits, each counting 1. */
-export function digitEdits(a: string, b: string): number {
+function digitEdits(a: string, b: string): number {
   const d = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
   for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
     d[i]![j] = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
@@ -199,6 +195,7 @@ export function digitEdits(a: string, b: string): number {
   return d[a.length]![b.length]!;
 }
 
+/** Sends the demo account's calls to the demo and everything else to Google. */
 function routed(google: Ads, demo: DemoAds): Ads {
   return {
     listAccessibleCustomers: () => google.listAccessibleCustomers(),
@@ -238,7 +235,7 @@ type AnyResolved = ResolvedChange | GaResolved | McResolved | ScResolved | GtmRe
 /** `note`: something the user must do next, e.g. a new GA4 property's tag. */
 type Outcome = { describe: string; ok: boolean; error?: string; note?: string; inverse?: AnyChange };
 /** What the plan gate returns: call it when the tool's call ends. `preview` = a read-only look that took no account. */
-export type Release = (() => void) & { preview?: string };
+type Release = (() => void) & { preview?: string };
 type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[]; wording_review?: { items: unknown[]; note: string } };
 type AlreadyInPlace = { status: "already in place"; changes: 0; skipped: string[]; note: string };
 /** What the AI (and the account page) sees of an applied proposal's outcomes. */
@@ -376,9 +373,9 @@ export class UserSession {
 
     // max(id): a same-second tie goes to the later call, so switch_account's account is the active one.
     return this.deps.db.prepare(`SELECT customer_id c, max(at) last FROM tool_calls
-        WHERE user_id = ? AND ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?, ?) AND (customer_id LIKE 'mc:%') = ? AND at >= ?
+        WHERE user_id = ? AND ok = 1 AND customer_id IS NOT NULL AND customer_id NOT IN (?, ?, ?, ?, ?) AND (customer_id LIKE 'mc:%') = ? AND at >= ?
         GROUP BY customer_id ORDER BY last DESC, max(id) DESC, c`)
-      .all(this.user.id, DEMO_CID, GA_TARGET, `mc:${DEMO_MERCHANT}`, pool === "mc" ? 1 : 0,
+      .all(this.user.id, DEMO_CID, GA_TARGET, SC_TARGET, GTM_TARGET, `mc:${DEMO_MERCHANT}`, pool === "mc" ? 1 : 0,
         Math.max(now() - ACCOUNT_WINDOW_DAYS * 86400, this.user.plan_reset_at ?? 0)) as { c: string; last: number }[];
   }
 
@@ -716,11 +713,10 @@ export class UserSession {
    * Whether each ad account spent anything in the last 30 days, so the user picks a live account rather than a dormant
    * one by name (on Free that pick holds for 30 days). Only when the user is listing or choosing accounts, one small
    * query per account (up to ACTIVITY_MAX), never more than ACTIVITY_WAIT_MS. An account Google doesn't answer for is
-   * left out, never guessed. Stores only the count (users.ads_active; the admin's plan opportunities read it until 2026-11-09, nothing does now).
+   * left out, never guessed. Nothing is stored (users.ads_active was last written 0.44.2; nothing read it after 2026-11-09).
    */
   async spendActivity(list: Account[]): Promise<Map<string, boolean>> {
-    const all = list.filter((a) => !a.manager && !isDemo(a.customerId));
-    const ads = all.slice(0, ACTIVITY_MAX);
+    const ads = list.filter((a) => !a.manager && !isDemo(a.customerId)).slice(0, ACTIVITY_MAX);
     const key = (c: string) => `${this.user.id}|${c}`;
     const fresh = (c: string) => { const h = activityCache.get(key(c)); return h && Date.now() - h.at < ACTIVITY_TTL_MS ? h : undefined; };
     const checks = mapLimited(ads.filter((a) => !fresh(a.customerId)), (a) => this.ads.search(a.customerId,
@@ -731,11 +727,6 @@ export class UserSession {
     clearTimeout(timer);
     const done = new Map<string, boolean>();
     for (const a of ads) { const h = fresh(a.customerId); if (h) done.set(a.customerId, h.spent); }
-    // The count only when every account answered: a partial one would read as fewer live accounts than there are.
-    if (all.length && done.size === all.length) {
-      this.deps.db.prepare("UPDATE users SET ads_active = ?, ads_active_at = ? WHERE id = ?")
-        .run([...done.values()].filter(Boolean).length, now(), this.user.id);
-    }
     return done;
   }
 
@@ -826,7 +817,7 @@ export class UserSession {
     const cost = campaigns.reduce((s, c) => s + c.cost, 0);
     const conv = campaigns.reduce((s, c) => s + c.conversions, 0);
     return {
-      account: { customer_id: a.customerId, name: a.name, currency: a.currency },
+      account: accountHead(a),
       ...demoNote(a.customerId),
       window: `last ${days} days`,
       totals: { cost: round(cost), conversions: round(conv), cost_per_conversion: conv > 0 ? round(cost / conv) : null },
@@ -879,7 +870,7 @@ export class UserSession {
     const verification = checkRows.map((r) => ({ type: r.localServicesVerificationArtifact?.artifactType,
       status: r.localServicesVerificationArtifact?.status, created: String(r.localServicesVerificationArtifact?.creationDateTime ?? "").slice(0, 10) }));
     return {
-      account: { customer_id: a.customerId, name: a.name, currency: a.currency },
+      account: accountHead(a),
       ...demoNote(a.customerId),
       window: `last ${days} days`,
       ...(campaigns.length || leadRows.length || verification.length ? { campaigns, leads, ...(verification.length ? { verification } : {}) }
@@ -1065,7 +1056,7 @@ export class UserSession {
       .filter((k) => k.avg_monthly_searches !== null && k.avg_monthly_searches >= o.min_searches)
       .sort((x, y) => y.avg_monthly_searches! - x.avg_monthly_searches!);
     const head = {
-      account: { customer_id: a.customerId, name: a.name, currency: a.currency },
+      account: accountHead(a),
       ...demoNote(a.customerId),
       target,
     };
@@ -1087,7 +1078,7 @@ export class UserSession {
     ]);
     // Several locations count as one market; by_location also asks each one alone, after the total, one at a time.
     const split = o.by_location && t.location_ids.length > 1
-      ? await this.splitByLocation(a, t, keywords, new Map(target.locations.map((l: { id: string; name?: string }) => [l.id, l.name ?? l.id])))
+      ? await this.splitByLocation(a, t, keywords, o.months, new Map(target.locations.map((l: { id: string; name?: string }) => [l.id, l.name ?? l.id])))
       : null;
     const rows = (res.results ?? []).map((r) => ({
       ...keywordRow(r.text, r.keywordMetrics, have),
@@ -1098,7 +1089,7 @@ export class UserSession {
     // Google omits keywords it has no data for; say so rather than dropping them silently.
     const covered = new Set(rows.flatMap((r) => [r.keyword, ...(r.close_variants ?? [])].map((k: string) => k.toLowerCase())));
     const head = {
-      account: { customer_id: a.customerId, name: a.name, currency: a.currency },
+      account: accountHead(a),
       ...demoNote(a.customerId),
       target,
       ...(split?.note ? { by_location_note: split.note } : {}),
@@ -1129,14 +1120,14 @@ export class UserSession {
    * Each location of the target on its own: one historical-metrics call per location, in turn, since Keyword Planner
    * rate-limits bursts (prod 429s). A 429 midway keeps the locations already counted and names the rest.
    */
-  private async splitByLocation(a: Account, t: PlanTarget, keywords: string[], names: Map<string, string>) {
+  private async splitByLocation(a: Account, t: PlanTarget, keywords: string[], months: number | undefined, names: Map<string, string>) {
     type Cell = { searches: number | null; competition_index: number | null; bid_low: number | null; bid_high: number | null };
     const per = new Map<string, Record<string, Cell>>();
     for (const [i, id] of t.location_ids.entries()) {
       const name = names.get(id) ?? id;
       let res: { results?: any[] };
       try {
-        res = await this.keywordPlan(a, "generateKeywordHistoricalMetrics", { ...t, location_ids: [id] }, { includeAdultKeywords: false, keywords });
+        res = await this.keywordPlan(a, "generateKeywordHistoricalMetrics", { ...t, location_ids: [id] }, { includeAdultKeywords: false, keywords, ...historyRange(months) });
       } catch (e) {
         if (!(e instanceof AdsApiError && e.status === 429)) throw e;
         const left = t.location_ids.slice(i).map((x) => names.get(x) ?? x);
@@ -1490,7 +1481,7 @@ export class UserSession {
     }).sort((x, y) => y.impressions - x.impressions);
 
     return {
-      account: { customer_id: a.customerId, name: a.name, currency: a.currency },
+      account: accountHead(a),
       site, ...demoNote(a.customerId), ...siteNote(site), window: w,
       paid_and_ranking: paidAndRanking.slice(0, o.limit),
       paid_and_ranking_total: { queries: paidAndRanking.length, ad_cost: round(paidAndRanking.reduce((s, x) => s + x.ad_cost, 0)) },
@@ -1605,8 +1596,7 @@ export class UserSession {
     if (p.status !== "proposed") throw new Error(`Proposal ${proposalId} is already ${p.status}.`);
     // At the cap: someone who just paid from the stop's link and closed the tab before /upgraded must not stay stopped
     // until the hourly sweep. Ask Stripe first, as the account gate does. checkChangeCap still runs right before the claim.
-    const cap = changeCap();
-    if (cap && !this.isPro && this.changesApplied().length >= cap && await this.deps.refreshPlan?.(this.user.id)) this.reloadPlan();
+    await this.refreshIfAtCap();
     this.checkChangeCap(p);
     const changes = JSON.parse(p.changes) as AnyChange[];
     // Claim it before any write: a client retrying after a timeout would otherwise apply it twice. applied_at
@@ -1734,8 +1724,7 @@ export class UserSession {
     const id = `p_${randomUUID().slice(0, 8)}`;
     const merged = { ...first, id, changes: JSON.stringify(changes), summary, created_at: now(), applied_at: null } as ProposalRow;
     // At the cap nothing should move: the originals stay open, as a single apply leaves its proposal open.
-    const cap = changeCap();
-    if (cap && !this.isPro && this.changesApplied().length >= cap && await this.deps.refreshPlan?.(this.user.id)) this.reloadPlan();
+    await this.refreshIfAtCap();
     try { this.checkChangeCap(merged); } catch (e) {
       if (e instanceof SwitchNotice) {
         const { proposal_id: _, ...detail } = e.detail;
@@ -1761,8 +1750,8 @@ export class UserSession {
    * billing). Nothing for paid plans, undos, the demo or a publish on its own, which the cap doesn't count.
    */
   private capWarning(p: ProposalRow): { change_limit?: { changes_applied: number; changes_included: number; changes_left: number; next_change_opens: string; note: string } } {
-    const cap = changeCap();
-    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes) || isPublishOnly(p.changes)) return {};
+    const cap = this.capFor(p);
+    if (!cap) return {};
     const used = this.changesApplied();
     if (used.length < Math.ceil(cap * 0.7)) return {};
     const left = Math.max(0, cap - used.length);
@@ -1771,6 +1760,19 @@ export class UserSession {
     return { change_limit: { changes_applied: used.length, changes_included: cap, changes_left: left, next_change_opens: opens,
       note: `${plan} includes ${cap} applied changes every ${ACCOUNT_WINDOW_DAYS} days; ${left ? `${left} left` : "none left"}, the next opens on ${opens}. `
         + `Tell the user${this.chatgpt ? "." : `, and that ${this.plusOffered ? "Plus or Pro" : "Pro"} has unlimited changes (billing has the link).`}` } };
+  }
+
+  /** The change cap that applies to this proposal: 0 on a paid plan, for a free undo, the demo or a publish on its own. */
+  private capFor(p: ProposalRow): number {
+    const cap = changeCap();
+    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes) || isPublishOnly(p.changes)) return 0;
+    return cap;
+  }
+
+  /** At the cap, ask Stripe whether the user just paid and reload the plan if so. */
+  private async refreshIfAtCap(): Promise<void> {
+    const cap = changeCap();
+    if (cap && !this.isPro && this.changesApplied().length >= cap && await this.deps.refreshPlan?.(this.user.id)) this.reloadPlan();
   }
 
   /** What the change cap counts for this user now (capCounted). */
@@ -1785,8 +1787,8 @@ export class UserSession {
    * claim, so with in-flight claims counted (capCounted) parallel applies can't all pass on the same count.
    */
   private checkChangeCap(p: ProposalRow): void {
-    const cap = changeCap();
-    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes) || isPublishOnly(p.changes)) return;
+    const cap = this.capFor(p);
+    if (!cap) return;
     // A retry while this same proposal's claim is still being written: its claim is already counted, so stopping it would
     // say "nothing was applied" while it applies. The claim below answers "already being applied" instead.
     if (p.applied_at && p.applied_at >= now() - STALE_CLAIM) return;
@@ -1863,12 +1865,6 @@ export class UserSession {
   }
 
   /**
-   * Google refuses every change to an account with an undeclared campaign, and the hint alone left the AI to look them up.
-   * When the lookup came back empty it had nothing to propose and stopped, twice for one user (prod, 2026-10-22). So
-   * look them up here and name them, or say plainly that none show through the API and the user must answer in Google
-   * Ads, and report that case: the account state that triggers it isn't known yet.
-   */
-  /**
    * OPERATION_NOT_PERMITTED_FOR_CONTEXT means the campaign's type doesn't allow this change, but Google doesn't say which type.
    * Name each targeted campaign's type, so the AI tells the user instead of retrying, and the next alert shows the cause
    * (a user's add_negative_keywords got this twice, 2026-11-13/14, with no way to tell which campaign).
@@ -1887,6 +1883,12 @@ export class UserSession {
     throw e;
   }
 
+  /**
+   * Google refuses every change to an account with an undeclared campaign, and the hint alone left the AI to look them up.
+   * When the lookup came back empty it had nothing to propose and stopped, twice for one user (prod, 2026-10-22). So
+   * look them up here and name them, or say plainly that none show through the API and the user must answer in Google
+   * Ads, and report that case: the account state that triggers it isn't known yet.
+   */
   private async explainEuBlock(e: unknown, customerId: string, login: string | null): Promise<never> {
     const code = e instanceof AdsApiError ? /EU_POLITICAL_ADVERTISING_DECLARATION_REQUIRED|MISSING_EU_POLITICAL_ADVERTISING_SELF_DECLARATION/.exec(e.body)?.[0] : undefined;
     if (!(e instanceof AdsApiError) || !code) throw e;
@@ -1914,7 +1916,7 @@ export class UserSession {
     throw e;
   }
 
-  /** Read what a change would do against the live account (Google Ads, Merchant Center) or property (Google Analytics, Search Console). */
+  /** Read what a change would do against the live account (Google Ads, Merchant Center), property (Google Analytics, Search Console) or container (Tag Manager). */
   private resolve(target: string, login: string | null, c: AnyChange, pending: ReturnType<typeof pendingOf>, gtm: TagManager = this.gtm): Promise<AnyResolved> {
     // Only reads, so a brief Google outage is retried once.
     return retryTransient<AnyResolved>(() => (target === GA_TARGET ? resolveGaChange(this.ga, c as GaChange)
@@ -2038,7 +2040,7 @@ export class UserSession {
         const before = sum(r.before, hit), after = demo ? zero() : sum(r.after, hit);
         const terms = new Map<string, number>();
         for (const x of r.before.filter(hit)) terms.set(x.searchTermView.searchTerm, (terms.get(x.searchTermView.searchTerm) ?? 0) + micros(x.metrics?.costMicros));
-        const top = [...terms].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([search_term, cost]) => ({ search_term, cost: Math.round(cost * 100) / 100 }));
+        const top = [...terms].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([search_term, cost]) => ({ search_term, cost: round(cost) }));
         const campaigns = t.campaigns ?? (t.adGroup ? [...new Set(r.before.concat(r.after).map((x) => String(x.campaign?.id)).filter((x) => x !== "undefined"))] : []);
         return { before, after, campaigns, extra: top.length ? { top_blocked_searches_before: top } : {} };
       }
@@ -2152,10 +2154,11 @@ const COMPACT_OVER = 100;
  * Keyword Planner returns the last 12 months unless asked for a range; it keeps 4 years. `months` ends at last month
  * (Google returns only the months it has, so a month it hasn't finished counting is just left out).
  */
-function historyRange(months?: number, now = new Date()) {
+function historyRange(months?: number) {
   if (!months) return {};
+  const today = new Date();
   const ym = (back: number) => {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1));
+    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
     return { year: d.getUTCFullYear(), month: MONTHS[d.getUTCMonth()] };
   };
   return { historicalMetricsOptions: { yearMonthRange: { start: ym(months), end: ym(1) } } };
@@ -2213,7 +2216,7 @@ function searchConsoleWindow(days: number, fresh = false): { start: string; end:
 }
 
 export interface ScWindowOpts { days: number; start_date?: string; end_date?: string; fresh?: boolean }
-export interface ScFilterOpts { query_contains?: string; page_contains?: string; query_regex?: string; exclude_query_regex?: string; page_regex?: string }
+interface ScFilterOpts { query_contains?: string; page_contains?: string; query_regex?: string; exclude_query_regex?: string; page_regex?: string }
 const SC_MAX_ROWS = 100_000;
 const FRESH_NOTE = "The window includes the last 2-3 days, which Google is still filling in, so recent days read low.";
 const dataState = (fresh?: boolean): { dataState?: "all" } => (fresh ? { dataState: "all" } : {});
@@ -2221,19 +2224,19 @@ const DAY = 86_400_000;
 const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 /**
- * The window a Search Console tool reads: exact dates when both are given, otherwise the last `days` days ending 3 days ago
- * (or yesterday with fresh data). Google keeps about 16 months.
+ * The window a Search Console tool reads: the last `days` days ending 3 days ago (or yesterday with fresh data), with
+ * start_date and/or end_date overriding either end; a lone end_date counts `days` back from it. Google keeps about 16
+ * months, so a longer span starts 480 days before its end (each result echoes its window). Models asked for "since
+ * launch" or "all time" and got refusals in a row (prod, 2026-11).
  */
 function scWindow(o: ScWindowOpts): { start: string; end: string } {
-  if (o.start_date || o.end_date) {
-    if (!o.start_date || !o.end_date) throw new Error("Pass both start_date and end_date, or neither (then days is used).");
-    const a = Date.parse(o.start_date), b = Date.parse(o.end_date);
-    if (Number.isNaN(a) || Number.isNaN(b)) throw new Error("start_date and end_date must be real dates, YYYY-MM-DD.");
-    if (a > b) throw new Error("start_date is after end_date.");
-    if (b - a > 479 * DAY) throw new Error("A window can span at most 480 days; Search Console keeps about 16 months.");
-    return { start: o.start_date, end: o.end_date };
-  }
-  return searchConsoleWindow(o.days, o.fresh);
+  if (!o.start_date && !o.end_date) return searchConsoleWindow(o.days, o.fresh);
+  const end = o.end_date ?? searchConsoleWindow(1, o.fresh).end;
+  const b = Date.parse(end);
+  const a = o.start_date ? Date.parse(o.start_date) : b - (Math.max(1, Math.floor(o.days)) - 1) * DAY;
+  if (Number.isNaN(a) || Number.isNaN(b)) throw new Error("start_date and end_date must be real dates, YYYY-MM-DD.");
+  if (a > b) throw new Error("start_date is after end_date.");
+  return { start: isoDay(Math.max(a, b - 479 * DAY)), end };
 }
 
 /** The same number of days immediately before a window. */
@@ -2269,7 +2272,7 @@ function diffWindows(cur: SearchAnalyticsRow[], prev: SearchAnalyticsRow[], minI
     if (Math.max(ai, bi) < minImpressions) continue;
     const pos = (r?: SearchAnalyticsRow) => (r && r.impressions ? round1(r.position) : null);
     out.push({
-      key, impressions: ai, prior_impressions: bi, impressions_change: ai - bi, impressions_pct: bi > 0 ? round(((ai - bi) / bi) * 100) : null,
+      key, impressions: ai, prior_impressions: bi, impressions_change: ai - bi, impressions_pct: pct(ai, bi),
       clicks: a?.clicks ?? 0, prior_clicks: b?.clicks ?? 0, position: pos(a), prior_position: pos(b),
       position_change: ai && bi ? round1(a!.position - b!.position) : null,
       ...(bi === 0 ? { state: "new" as const } : ai === 0 ? { state: "lost" as const } : {}),
@@ -2375,6 +2378,8 @@ async function retryTransient<T>(fn: () => Promise<T>, safe: boolean): Promise<T
 
 /** Two decimals, for money and fractional conversions. */
 const round = (n: number) => Math.round(n * 100) / 100;
+/** The account line at the top of a report. */
+const accountHead = (a: Account) => ({ customer_id: a.customerId, name: a.name, currency: a.currency });
 const round1 = (n: number) => Math.round(n * 10) / 10;
 /** Change from b to a in percent; null with no base. */
 const pct = (a: number, b: number) => (b > 0 ? round(((a - b) / b) * 100) : null);

@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.44.3", date: "2026-11-18",
+    summary: "Search Console and Google Analytics reports take a start or end date on its own, and long Search Console ranges no longer fail.",
+    items: [
+      "**One date is enough:** give only a start date and the report runs to the latest day with data; give only an end date and it counts the usual number of days back from it.",
+      "**All-time Search Console questions:** a range longer than the 16 months Google keeps now starts at the oldest day Google has, instead of failing. The result shows the dates it covered.",
+      "**Keyword volumes by location** now cover the same months as the total when you ask for a longer history.",
+    ],
+  },
+  {
     version: "0.44.0", date: "2026-11-17",
     summary: "The account overview now runs ready-made checks for problems that used to take custom queries, and Local Services ads have their own report.",
     items: [

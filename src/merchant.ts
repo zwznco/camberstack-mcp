@@ -256,6 +256,19 @@ export class MerchantClient implements Merchant {
     return { state: ours && take.some((t) => t.supplementalDataSourceName === ours) ? "linked" : "will_link", label };
   }
 
+  private async insertInput(accountId: string, src: string, key: ProductKey, attributes: Overrides): Promise<void> {
+    await this.call(`products/v1/accounts/${accountId}/productInputs:insert?dataSource=${encodeURIComponent(src)}`,
+      { offerId: key.offerId, contentLanguage: key.contentLanguage, feedLabel: key.feedLabel, productAttributes: attributes });
+  }
+
+  private async deleteInput(accountId: string, src: string, key: ProductKey): Promise<void> {
+    try {
+      await this.call(`products/v1/accounts/${accountId}/productInputs/${encodeKey(key)}?dataSource=${encodeURIComponent(src)}`, undefined, "DELETE");
+    } catch (e) {
+      if (!/Merchant API 404/.test((e as Error).message)) throw e;  // already gone: the goal
+    }
+  }
+
   async setOverrides(accountId: string, key: ProductKey, primary: string, overrides: Overrides | null): Promise<void> {
     let src = await this.source(accountId);
     if (overrides) {
@@ -267,14 +280,9 @@ export class MerchantClient implements Merchant {
         await this.call(`datasources/v1/${primary}?updateMask=primaryProductDataSource.defaultRule`,
           { name: primary, primaryProductDataSource: { defaultRule: { takeFromDataSources: [{ supplementalDataSourceName: src }, ...take] } } }, "PATCH");
       }
-      await this.call(`products/v1/accounts/${accountId}/productInputs:insert?dataSource=${encodeURIComponent(src)}`,
-        { offerId: key.offerId, contentLanguage: key.contentLanguage, feedLabel: key.feedLabel, productAttributes: overrides });
+      await this.insertInput(accountId, src, key, overrides);
     } else if (src) {
-      try {
-        await this.call(`products/v1/accounts/${accountId}/productInputs/${encodeKey(key)}?dataSource=${encodeURIComponent(src)}`, undefined, "DELETE");
-      } catch (e) {
-        if (!/Merchant API 404/.test((e as Error).message)) throw e;  // already gone: the goal
-      }
+      await this.deleteInput(accountId, src, key);
     }
     this.store.set(accountId, key, overrides);
   }
@@ -288,14 +296,9 @@ export class MerchantClient implements Merchant {
       // Without destinations Google enables free listings only (seen live, 2026-10-22): ask for Shopping ads too.
       src ??= (await this.call(`datasources/v1/accounts/${accountId}/dataSources`, { displayName: PRODUCTS_SOURCE_NAME, primaryProductDataSource: {
         destinations: [{ destination: "SHOPPING_ADS", state: "ENABLED" }, { destination: "FREE_LISTINGS", state: "ENABLED" }] } })).name as string;
-      await this.call(`products/v1/accounts/${accountId}/productInputs:insert?dataSource=${encodeURIComponent(src)}`,
-        { offerId: key.offerId, contentLanguage: key.contentLanguage, feedLabel: key.feedLabel, productAttributes: attributes });
+      await this.insertInput(accountId, src, key, attributes);
     } else if (src) {
-      try {
-        await this.call(`products/v1/accounts/${accountId}/productInputs/${encodeKey(key)}?dataSource=${encodeURIComponent(src)}`, undefined, "DELETE");
-      } catch (e) {
-        if (!/Merchant API 404/.test((e as Error).message)) throw e;
-      }
+      await this.deleteInput(accountId, src, key);
     }
     this.store.set(ownSpace(accountId), key, attributes);
   }

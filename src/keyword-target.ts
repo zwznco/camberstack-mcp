@@ -7,15 +7,16 @@
  * are outside the US. Now a call that names no locations uses the ones the account's campaigns target, a place can be
  * named instead of looked up, and every result says which market it counted and where that came from.
  */
+import { gaqlStr } from "./gaql.js";
 
 /** Runs a GAQL query against the account. */
 export type Search = (query: string) => Promise<any[]>;
 
 /** Camberstack's market when the account's campaigns target no location (as before 0.36.0). */
-export const DEFAULT_LOCATION = "2840";  // United States
-export const DEFAULT_LANGUAGE = "1000";  // English
+const DEFAULT_LOCATION = "2840";  // United States
+const DEFAULT_LANGUAGE = "1000";  // English
 /** Keyword Planner takes at most 10 geo targets. */
-export const MAX_PLAN_LOCATIONS = 10;
+const MAX_PLAN_LOCATIONS = 10;
 
 export type From = "given" | "campaigns" | "default";
 export interface PlanTarget {
@@ -90,7 +91,6 @@ export function chooseTarget(given: { location_ids?: string[]; language_id?: str
   };
 }
 
-const gaqlStr = (v: string) => v.replace(/[\\']/g, "\\$&");
 const titleCase = (s: string) => s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
 /** Names people use that aren't Google's country code. */
 const CODE_ALIASES: Record<string, string> = { UK: "GB" };

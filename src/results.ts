@@ -21,7 +21,7 @@ type AnyChange = { type: string };
 import { micros } from "./google.js";
 
 export const MIN_DAYS = 7;
-export const MAX_DAYS = 30;
+const MAX_DAYS = 30;
 
 export type Kind = "blocked" | "stopped" | "campaign" | "new";
 export interface Metrics { cost: number; clicks: number; conversions: number }

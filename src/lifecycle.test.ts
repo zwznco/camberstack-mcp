@@ -39,6 +39,8 @@ describe("lifecycle emails", () => {
     user("active", "active@example.com", 3); call("active", "account_overview");
     user("listed", "listed@example.com", 3); call("listed", "list_accounts");  // listing accounts isn't using it
     user("ga4", "ga4@example.com", 3); call("ga4", "analytics_report");        // Analytics alone is using it (2026-10-30)
+    user("gtm", "gtm@example.com", 3); call("gtm", "tag_manager_setup");      // so is Tag Manager alone (2026-11-18)
+    user("chatgpt", "chatgpt@example.com", 3); call("chatgpt", "propose_pause_keyword");  // ChatGPT's per-operation tools
     user("me", "me@example.com", 3);                 // internal
     expect(await lc.run()).toBe(2);
     expect(sent.map((m) => m.to[0]).sort()).toEqual(["listed@example.com", "quiet@example.com"]);

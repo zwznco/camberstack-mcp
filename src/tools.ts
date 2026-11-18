@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import type { ListToolsResult, ToolAnnotations } from "@modelcontextprotocol/server";
+import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MAX_CHANGES, MERCHANT_LINK_CHANGES, PUBLIC_CHANGES, PublicChangeSchema } from "./changes.js";
-import { landingPages, listProperties, report } from "./ga4.js";
+import { DEMO_PROPERTY, landingPages, listProperties, report } from "./ga4.js";
 import { DEMO_MERCHANT, listMerchantAccounts, merchantReport, productIssues } from "./merchant.js";
 import { PUBLIC_MC_CHANGES, PublicMcChangeSchema, mcTarget } from "./merchant-changes.js";
 import { fieldQuery, queryShape } from "./gaql.js";
@@ -11,7 +11,6 @@ import { PUBLIC_SC_CHANGES, SC_TARGET, ScChangeSchema } from "./search-console-c
 import { FEEDBACK_KINDS, type FeedbackKind } from "./feedback.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice, type Service } from "./plans.js";
 import { DEMO_SITE } from "./demo.js";
-import { DEMO_PROPERTY } from "./ga4.js";
 import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
 import { PageSpeedClient, type Strategy } from "./pagespeed.js";
@@ -20,7 +19,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.44.2";
+export const SERVER_VERSION = "0.44.3";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -64,7 +63,6 @@ const GTM_PROPOSES = new Set(PUBLIC_GTM_CHANGES.map((c) => `propose_${c.shape.ty
  * login can reach (list_accounts, search_console_sites, analytics_properties, merchant_accounts) and the demo account, site, property and store
  * use none; nor do apply/undo/history, which act on an existing proposal.
  */
-
 export function servicesOf(name: string, a: unknown): Service[] {
   const x = (a ?? {}) as { customer_id?: unknown; site_url?: unknown; property_id?: unknown; account_id?: unknown; container?: unknown;
     account?: unknown; changes?: { property_id?: unknown; site_url?: unknown; type?: unknown; container?: unknown; account?: unknown }[] };
@@ -97,12 +95,6 @@ const isLookup = (name: string, a: unknown) => {
   return name === "run_gaql" && typeof q === "string" && fieldQuery(q) !== null;
 };
 
-/**
- * Callable but not listed: a tool being retired stays callable for apps that still hold it, since a failed call counts
- * against the directory listings. Empty since gaql_fields was removed (0.29.2: no call in 14 days).
- */
-const UNLISTED = new Set<string>();
-
 const customerId = z.string().describe("Google Ads customer ID, with or without dashes (from list_accounts)");
 const locationIds = z.array(z.string().trim().min(1).max(80)).min(1).max(10).optional()
   .describe("Where to count searches; leave out for where the account's campaigns target. Each a geo target id (2840 United States, "
@@ -117,7 +109,7 @@ const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /** Window options shared by the Search Console tools: a day count, or exact dates; optionally Google's not-yet-final recent days. */
 type ScArgs = { site_url: string } & ScWindowOpts;
 const exactDates = {
-  start_date: ymd.optional().describe("Exact first day, YYYY-MM-DD. Pass with end_date to use exact dates instead of days"),
+  start_date: ymd.optional().describe("Exact first day, YYYY-MM-DD"),
   end_date: ymd.optional().describe("Exact last day, YYYY-MM-DD"),
 };
 const scWindowShape = (defaultDays: number, maxDays: number) => ({
@@ -212,8 +204,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           const done = await session().checkAccount(cid, PICK_TOOLS.has(name), name === "account_overview");
           previewText = done.preview ?? null;
           preview = !!previewText;
-          const prev = release;
-          release = () => { prev(); done(); };
+          release = done;
         }
         const result = await fn(a);
         try { flags = flagsOf(name, result, preview && typeof cid === "string" ? cid.replace(/-/g, "") : null); } catch { /* never breaks a tool */ }
@@ -267,7 +258,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   // annotations.title repeats each tool's title: Claude's connector directory reads the name from there.
   // `as never`: registerTool infers its handler type from a literal inputSchema, which a helper cannot pass through.
   const tool = <A>(name: string, config: { title: string; description: string; inputSchema?: z.ZodRawShape; annotations: ToolAnnotations },
-    fn: (a: A) => Promise<unknown> | unknown) => (UNLISTED.has(name) || catalog.push({ name, ...config }),
+    fn: (a: A) => Promise<unknown> | unknown) => (catalog.push({ name, ...config }),
     server.registerTool(name, {
       ...config,
       inputSchema: config.inputSchema && z.object(config.inputSchema),
@@ -856,16 +847,6 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     inputSchema: { confirm: z.literal(true).describe("Must be true; ask the user first") },
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   }, () => session().disconnect());
-
-  // The SDK lists every enabled tool, and a disabled one also refuses calls: filter the listing instead.
-  const list = (server.server as unknown as { _getRequestHandler(m: string): (req: unknown, ctx: unknown) => Promise<ListToolsResult> })
-    ._getRequestHandler("tools/list");
-  // A private SDK method: fail at startup, not by listing nothing, if an SDK update renames it.
-  if (typeof list !== "function") throw new Error("MCP SDK: no tools/list handler to filter (UNLISTED in tools.ts)");
-  server.server.setRequestHandler("tools/list", async (req, ctx) => {
-    const res = await list(req, ctx);
-    return { ...res, tools: res.tools.filter((t) => !UNLISTED.has(t.name)) };
-  });
 
   return server;
 }

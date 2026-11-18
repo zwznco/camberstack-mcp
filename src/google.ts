@@ -1,5 +1,6 @@
 /**
- * Google OAuth (the user's consent to Google access) and a thin Google Ads REST client.
+ * Google OAuth (the user's consent to Google access), thin Google Ads and Search Console REST clients, and the error
+ * classes the other Google clients share.
  *
  * Scopes requested at sign-in: `adwords` (the Ads API), `webmasters` (Search Console: reads, and approved changes), the Google
  * Analytics pair, `content` (Merchant Center) and the four Tag Manager scopes (all passed by provider.ts), and `openid email` (to know who the user is, so a reconnect finds the same
@@ -18,8 +19,10 @@ export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readon
 export const ANALYTICS_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
 /** Google Merchant Center (Merchant API), used through merchant.ts. Asked at sign-in since 0.28.0 (verified 2026-11-04); before that only by link (grant.ts), which still adds it. */
 export const MERCHANT_SCOPE = "https://www.googleapis.com/auth/content";
-/** Google Tag Manager (gtm.ts): read, edit tags and triggers in a workspace, make versions, publish. Asked at sign-in since 0.30.0 (verified 2026-11-11); by link (grant.ts) for older connections and unticked boxes. */
 /**
+ * Google Tag Manager (gtm.ts): read, edit tags and triggers in a workspace, make versions, publish. Asked at sign-in since
+ * 0.30.0 (verified 2026-11-11); by link (grant.ts) for older connections and unticked boxes.
+ *
  * No tagmanager.readonly: every read method also accepts edit.containers, so asking for both is redundant (and a
  * verification reviewer's first question). Each is the only scope its methods accept: edit.containers for containers.create
  * and workspace edits, edit.containerversions for workspaces.create_version, publish for versions.publish,
@@ -97,16 +100,19 @@ export function googleGrantUrl(creds: GoogleCreds, redirectUri: string, state: s
   })}`;
 }
 
-/** Google's answer when the token lacks the scope a call needs. */
 /** Google's own message from an error body, else the body's start. */
 export function googleMessage(body: string): string {
   try { return JSON.parse(body).error?.message ?? body.slice(0, 300); } catch { return body.slice(0, 300); }
 }
 
+/** Google's answer when the token lacks the scope a call needs. */
 export const scopeMissing = (status: number, body: string) =>
   status === 403 && /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficient authentication scopes/i.test(body);
 
-/** The user's Google connection is gone or unknown: they connect Camberstack again. Not a bug, so never reported (sentry.ts). */
+/**
+ * The user's Google connection is gone or unknown: they connect Camberstack again. Not a bug, so never reported (sentry.ts).
+ * Lives here, not in session.ts, so sentry.ts needn't import session.ts (that import cycle crashed `npm start`, 0.35.10).
+ */
 export class NotConnectedError extends Error {}
 
 /** A tool needs a Google service this connection doesn't have yet; `link` adds it (personal, 7 days). */

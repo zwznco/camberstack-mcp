@@ -162,6 +162,9 @@ describe("demo property", () => {
   it("answers reports by date and channel, and names what it supports when asked for more", async () => {
     const r = await report(demo, DEMO_PROPERTY, { days: 7, start_date: "2026-10-01", end_date: "2026-10-07", dimensions: ["date"], metrics: ["sessions"], limit: 50 });
     expect(r.rows).toHaveLength(7);
+    // A lone end_date counts days back from it.
+    const e = await report(demo, DEMO_PROPERTY, { days: 7, end_date: "2026-10-07", dimensions: ["date"], metrics: ["sessions"], limit: 50 });
+    expect(e.rows).toHaveLength(7);
     await expect(report(demo, DEMO_PROPERTY, { days: 7, dimensions: ["city"], metrics: ["sessions"], limit: 5 })).rejects.toThrow(/supports dimensions/);
     await expect(report(demo, DEMO_PROPERTY, { days: 7, dimensions: [], metrics: ["sessions"], order_by: "keyEvents", limit: 5 }))
       .rejects.toThrow('order_by "keyEvents" isn\'t in this report. Use one of its metrics (sessions), or add it to them.');
