@@ -174,6 +174,12 @@ export class Billing {
 
   private portal?: string;
   /** A portal configuration made through the API is not Stripe's default, so name it explicitly. */
+  /** A Stripe billing portal session for the customer, returning to /account. */
+  private async portalUrl(customer: string): Promise<string> {
+    const s = await this.stripe("billing_portal/sessions", { customer, return_url: `${this.d.baseUrl}/account`, ...(await this.portalConfig()) });
+    return s.url as string;
+  }
+
   private async portalConfig(): Promise<Record<string, string>> {
     if (!this.portal) {
       const list = await this.stripe("billing_portal/configurations?limit=10&active=true");
@@ -201,10 +207,7 @@ export class Billing {
       // Already paying for the other plan: a second subscription would bill twice, so switch in Stripe's billing portal.
       if (isPaid(u.plan) && u.stripe_customer) {
         try {
-          const p = await this.stripe("billing_portal/sessions", {
-            customer: u.stripe_customer, return_url: `${this.d.baseUrl}/account`, ...(await this.portalConfig()),
-          });
-          return res.redirect(303, p.url);
+          return res.redirect(303, await this.portalUrl(u.stripe_customer));
         } catch (e) {
           return send(res, 502, "Billing unavailable", `<p>Stripe's billing page is not available (${esc((e as Error).message)}). Email us to change your plan.</p>`);
         }
@@ -255,10 +258,7 @@ export class Billing {
       if (!u || !this.enabled) return expired(res);
       if (!u.stripe_customer) return send(res, 200, "No subscription", `<p>${esc(u.email)} has no Camberstack subscription.</p>`);
       try {
-        const s = await this.stripe("billing_portal/sessions", {
-          customer: u.stripe_customer, return_url: `${this.d.baseUrl}/account`, ...(await this.portalConfig()),
-        });
-        res.redirect(303, s.url);
+        res.redirect(303, await this.portalUrl(u.stripe_customer));
       } catch (e) {
         send(res, 502, "Billing unavailable", `<p>Stripe's billing page is not available (${esc((e as Error).message)}). Email us to change or cancel your plan.</p>`);
       }

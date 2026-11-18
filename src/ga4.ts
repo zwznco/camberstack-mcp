@@ -6,8 +6,9 @@
  * The demo property (DEMO_PROPERTY) answers the same calls with sample data, like the demo Ads account and site.
  */
 import type { DB } from "./db.js";
-import { now } from "./db.js";
+import { loadDemoState, saveDemoState } from "./db.js";
 import { NotGrantedError, fetchGoogle, googleMessage, scopeMissing } from "./google.js";
+import { allPages, withPage } from "./paging.js";
 
 const ADMIN_API = "https://analyticsadmin.googleapis.com/v1beta";
 const DATA_API = "https://analyticsdata.googleapis.com/v1beta";
@@ -117,18 +118,13 @@ export class AnalyticsClient implements Analytics {
 
   async summaries(): Promise<{ accounts: GaAccount[]; properties: Property[] }> {
     const accounts: GaAccount[] = [], properties: Property[] = [];
-    let page = "";
-    do {
-      const r = await this.call(`${ADMIN_API}/accountSummaries?pageSize=200${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
-      for (const a of r.accountSummaries ?? []) {
-        const account_id = String(a.account).replace("accounts/", "");
-        accounts.push({ account_id, name: a.displayName });
-        for (const p of a.propertySummaries ?? []) {
-          properties.push({ property_id: String(p.property).replace("properties/", ""), name: p.displayName, account: a.displayName, account_id });
-        }
+    for (const a of await allPages((t) => this.call(withPage(`${ADMIN_API}/accountSummaries?pageSize=200`, t)), "accountSummaries")) {
+      const account_id = String(a.account).replace("accounts/", "");
+      accounts.push({ account_id, name: a.displayName });
+      for (const p of a.propertySummaries ?? []) {
+        properties.push({ property_id: String(p.property).replace("properties/", ""), name: p.displayName, account: a.displayName, account_id });
       }
-      page = r.nextPageToken ?? "";
-    } while (page);
+    }
     return { accounts, properties };
   }
 
@@ -329,13 +325,11 @@ export class DemoAnalytics implements Analytics {
 
   private load(): DemoGaState {
     if (!this.db || !this.userId) return (this.mem ??= freshGa());
-    const row = this.db.prepare("SELECT state FROM demo_ga_state WHERE user_id = ?").get(this.userId) as { state: string } | undefined;
-    return row ? JSON.parse(row.state) as DemoGaState : freshGa();
+    return loadDemoState<DemoGaState>(this.db, "demo_ga_state", this.userId) ?? freshGa();
   }
   private save(s: DemoGaState): void {
     if (!this.db || !this.userId) { this.mem = s; return; }
-    this.db.prepare(`INSERT INTO demo_ga_state (user_id, state, updated_at) VALUES (?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`).run(this.userId, JSON.stringify(s), now());
+    saveDemoState(this.db, "demo_ga_state", this.userId, s);
   }
 
   async summaries() { return { accounts: [], properties: [] }; }

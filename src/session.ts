@@ -244,17 +244,19 @@ const publicResults = (outcomes: Outcome[]) => outcomes.map(({ describe, ok, err
 
 /** The most rows run_gaql reads from Google for one query: also Google's own ceiling for change_event, which requires a LIMIT. */
 export const MAX_QUERY_ROWS = 10_000;
+/** A query's own trailing LIMIT (its count captured), before an optional PARAMETERS clause. */
+const LIMIT_TAIL = /\blimit\s+(\d+)(\s+parameters\b[\s\S]*)?$/i;
 /** The query with a LIMIT of at most MAX_QUERY_ROWS. GAQL puts LIMIT last, before an optional PARAMETERS clause, so only a
  *  trailing one counts: "limit" inside a WHERE string literal must not read as the query's own. */
 export function capLimit(query: string): string {
   const q = query.replace(/[\s;]+$/, "");
-  const tail = /\blimit\s+(\d+)(\s+parameters\b[\s\S]*)?$/i.exec(q);
+  const tail = LIMIT_TAIL.exec(q);
   if (tail) return Number(tail[1]) <= MAX_QUERY_ROWS ? q : `${q.slice(0, tail.index)}LIMIT ${MAX_QUERY_ROWS}${tail[2] ?? ""}`;
   const params = /\s+parameters\b[\s\S]*$/i.exec(q);
   return params ? `${q.slice(0, params.index)} LIMIT ${MAX_QUERY_ROWS}${params[0]}` : `${q} LIMIT ${MAX_QUERY_ROWS}`;
 }
 /** Whether the query ends in its own LIMIT (before an optional PARAMETERS clause), as capLimit reads it. */
-export const hasLimit = (query: string) => /\blimit\s+\d+(\s+parameters\b[\s\S]*)?$/i.test(query.replace(/[\s;]+$/, ""));
+export const hasLimit = (query: string) => LIMIT_TAIL.test(query.replace(/[\s;]+$/, ""));
 /** The query without its trailing LIMIT, PARAMETERS kept: undoes capLimit's addition. */
 export const dropLimit = (query: string) => query.replace(/\s*\blimit\s+\d+(?=(\s+parameters\b[\s\S]*)?$)/i, "");
 
@@ -1268,9 +1270,8 @@ export class UserSession {
   /** Search performance (clicks, impressions, CTR, position) grouped by the given dimensions, most clicks first. */
   async searchConsolePerformance(site: string, o: ScWindowOpts & ScFilterOpts & { dimensions: string[]; limit: number }) {
     const w = scWindow(o);
-    const filters = scFilters(o);
     const rows = await this.sc.searchAnalytics(site, { startDate: w.start, endDate: w.end, dimensions: o.dimensions, rowLimit: o.limit,
-      ...dataState(o.fresh), ...(filters.length ? { dimensionFilterGroups: [{ filters }] } : {}) });
+      ...dataState(o.fresh), ...filterGroups(o) });
     return {
       site, ...siteNote(site), window: w,
       rows: rows.map((r) => ({ ...Object.fromEntries(o.dimensions.map((d, i) => [d, r.keys[i]])), ...organicMetrics(r) })),
@@ -1286,7 +1287,7 @@ export class UserSession {
   async searchConsoleTrend(site: string, o: ScWindowOpts & { exclude_query_regex?: string; min_impressions: number; limit: number }) {
     const cur = scWindow(o);
     const prev = priorWindow(cur);
-    const exclude = o.exclude_query_regex ? { dimensionFilterGroups: [{ filters: [{ dimension: "query", operator: "excludingRegex", expression: o.exclude_query_regex }] }] } : {};
+    const exclude = filterGroups({ exclude_query_regex: o.exclude_query_regex });
     const pull = (w: { start: string; end: string }, dim: string) =>
       this.scAllRows(site, { startDate: w.start, endDate: w.end, dimensions: [dim], ...dataState(o.fresh), ...(dim === "query" ? exclude : {}) });
     const [qCur, qPrev, pCur, pPrev, tCur, tPrev] = await Promise.all([
@@ -1327,7 +1328,7 @@ export class UserSession {
   async searchConsoleOpportunities(site: string, o: ScWindowOpts & { exclude_query_regex?: string; limit: number }) {
     const w = scWindow(o);
     const { rows } = await this.scAllRows(site, { startDate: w.start, endDate: w.end, dimensions: ["query"], ...dataState(o.fresh),
-      ...(o.exclude_query_regex ? { dimensionFilterGroups: [{ filters: [{ dimension: "query", operator: "excludingRegex", expression: o.exclude_query_regex }] }] } : {}) });
+      ...filterGroups({ exclude_query_regex: o.exclude_query_regex }) });
     const q = (r: SearchAnalyticsRow) => ({ query: r.keys[0], ...organicMetrics(r) });
     const striking = rows.filter((r) => r.position >= 4 && r.position <= 20 && r.impressions >= 15).map((r) => {
       const target = Math.max(3, Math.floor(r.position) - 3);
@@ -1662,8 +1663,15 @@ export class UserSession {
         ...this.capWarning(p) };
     }
 
-    // A write failed despite validating (the account changed in between, or Google hiccuped): roll back the
-    // writes before it, newest first. One that can't be rolled back stays applied, and undo_changes can still try.
+    return this.rollBack(p, outcomes, checked.slice(failed.at + 1).map((x) => (x as { r: AnyResolved }).r.describe), save);
+  }
+
+  /**
+   * A write failed despite validating (the account changed in between, or Google hiccuped): roll back the writes before
+   * it, newest first. One that can't be rolled back stays applied, and undo_changes can still try. `unwritten` are the
+   * changes after the failed one.
+   */
+  private async rollBack(p: ProposalRow, outcomes: Outcome[], unwritten: string[], save: (status: "applied" | "failed", o: Outcome[]) => void) {
     for (const o of outcomes.slice(0, -1).reverse()) {
       if (!o.inverse) { if (!o.describe.endsWith("(already in place)")) o.error = "applied, and can't be rolled back"; continue; }
       try {
@@ -1674,9 +1682,7 @@ export class UserSession {
         o.error = `applied, and rolling it back failed: ${(e as Error).message}`;
       }
     }
-    for (const x of checked.slice(failed.at + 1)) {
-      outcomes.push({ describe: (x as { r: AnyResolved }).r.describe, ok: false, error: "not applied: an earlier change failed" });
-    }
+    for (const describe of unwritten) outcomes.push({ describe, ok: false, error: "not applied: an earlier change failed" });
     const stuck = outcomes.some((o) => o.ok && o.inverse);
     save(outcomes.some((o) => o.ok && !o.describe.endsWith("(already in place)")) ? "applied" : "failed", outcomes);
     return {
@@ -2026,63 +2032,8 @@ export class UserSession {
       if (ready.length < limit) ready.push({ p, w, t });
     }
 
-    const read = (q: string) => this.ads.search(a.customerId, q, a.loginCustomerId);
-    const sum = (rs: any[], keep: (r: any) => boolean = () => true) => rs.filter(keep).reduce((m, r) => add(m, r), zero());
-    const measure = async (t: Target, w: Windows) => {
-      const both = async (q: (range: string) => string) => {
-        const before = await read(q(between(w.before)));
-        return { before, after: demo ? before : await read(q(between(w.after))) };
-      };
-      if (t.kind === "blocked") {
-        const scope = t.campaigns ? ` AND campaign.id IN (${t.campaigns.join(", ")})` : t.adGroup ? ` AND ad_group.id = ${t.adGroup}` : "";
-        const r = await both((d) => `SELECT campaign.id, search_term_view.search_term, metrics.cost_micros, metrics.clicks, metrics.conversions FROM search_term_view WHERE ${d}${scope}`);
-        const hit = (x: any) => t.negatives.some((n) => blocks(String(x.searchTermView?.searchTerm ?? ""), n));
-        const before = sum(r.before, hit), after = demo ? zero() : sum(r.after, hit);
-        const terms = new Map<string, number>();
-        for (const x of r.before.filter(hit)) terms.set(x.searchTermView.searchTerm, (terms.get(x.searchTermView.searchTerm) ?? 0) + micros(x.metrics?.costMicros));
-        const top = [...terms].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([search_term, cost]) => ({ search_term, cost: round(cost) }));
-        const campaigns = t.campaigns ?? (t.adGroup ? [...new Set(r.before.concat(r.after).map((x) => String(x.campaign?.id)).filter((x) => x !== "undefined"))] : []);
-        return { before, after, campaigns, extra: top.length ? { top_blocked_searches_before: top } : {} };
-      }
-      if (t.kind === "stopped") {
-        const fields = "campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions";
-        const q = t.level === "keyword" ? (d: string) => `SELECT ${fields} FROM keyword_view WHERE ${d} AND ad_group.id = ${t.adGroup} AND ad_group_criterion.criterion_id = ${t.id}`
-          : t.level === "ad_group" ? (d: string) => `SELECT ${fields} FROM ad_group WHERE ${d} AND ad_group.id = ${t.id}`
-          : t.level === "ad" ? (d: string) => `SELECT ${fields} FROM ad_group_ad WHERE ${d} AND ad_group.id = ${t.adGroup} AND ad_group_ad.ad.id = ${t.id}`
-          : (d: string) => `SELECT ${fields} FROM campaign WHERE ${d} AND campaign.id = ${t.id}`;
-        const r = await both(q);
-        const before = sum(r.before), after = demo ? zero() : sum(r.after);
-        const camp = r.before[0]?.campaign?.id ?? r.after[0]?.campaign?.id;
-        if (t.level === "campaign" || !camp) return { before, after, campaigns: t.level === "campaign" ? [t.id] : [] };
-        const c = await both((d) => `SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${d} AND campaign.id = ${camp}`);
-        const cb = sum(c.before), ca = demo ? cb : sum(c.after);
-        return { before, after, campaigns: [String(camp)], context: { before: minus(cb, before), after: minus(ca, after) } };
-      }
-      if (t.kind === "campaign") {
-        const r = await both((d) => `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${d} AND campaign.id = ${t.campaign}`);
-        return { before: sum(r.before), after: sum(r.after), campaigns: [t.campaign], extra: r.before[0]?.campaign?.name ? { campaign: r.before[0].campaign.name } : {} };
-      }
-      // New: only the after window means anything. Keywords are "<ad group>~<criterion>" pairs.
-      const ids = t.ids.map((x) => x.split("~"));
-      const q = t.level === "campaign" ? `SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${between(w.after)} AND campaign.id IN (${t.ids.join(", ")})`
-        : t.level === "ad_group" ? `SELECT campaign.id, ad_group.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM ad_group WHERE ${between(w.after)} AND ad_group.id IN (${t.ids.join(", ")})`
-        : `SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM keyword_view WHERE ${between(w.after)} AND ad_group_criterion.criterion_id IN (${ids.map((x) => x[1]).join(", ")})`;
-      const pairs = new Set(t.ids);
-      const rs = (await read(q)).filter((r) => t.level !== "keyword" || pairs.has(`${r.adGroup?.id}~${r.adGroupCriterion?.criterionId}`));
-      return { before: undefined, after: sum(rs), campaigns: t.level === "campaign" ? t.ids : [...new Set(rs.map((r) => String(r.campaign?.id)))] };
-    };
-
-    // Google's change log for each result's after window: other changes to the same campaigns (results.ts overlaps).
-    const changeLog = async (w: Windows) => {
-      if (demo) return { rows: [] as any[], window: null as [string, string] | null, note: undefined as string | undefined };
-      const cw = changeLogWindow(w.after, today);
-      if (!cw) return { rows: [], window: null, note: "Google's change log only reaches back 30 days, so other changes in this after window can't be checked." };
-      const rows = await read(changeLogQuery(cw)).catch(() => null);
-      if (!rows) return { rows: [], window: null, note: "Couldn't read Google's change log, so other changes in the after window weren't checked." };
-      return { rows, window: cw, note: cw[0] > w.after[0] ? `Other changes checked from ${cw[0]}: Google's change log only reaches back 30 days.` : undefined };
-    };
-
-    const results = await mapLimited(ready, async ({ p, w, t }) => { const log = await changeLog(w); return {
+    const ctx: ResultsCtx = { read: (q: string) => this.ads.search(a.customerId, q, a.loginCustomerId), demo, today };
+    const results = await mapLimited(ready, async ({ p, w, t }) => { const log = await this.changeLogFor(ctx, w); return {
       proposal_id: p.id,
       applied_at: new Date((p.applied_at ?? 0) * 1000).toISOString(),
       days_compared: w.days,
@@ -2090,7 +2041,7 @@ export class UserSession {
       after_window: `${w.after[0]} to ${w.after[1]}`,
       changes: await Promise.all(t.measured.map(async (m) => {
         try {
-          const r = await measure(m, w) as { before?: Metrics; after: Metrics; campaigns: string[]; context?: { before: Metrics; after: Metrics }; extra?: object };
+          const r = await this.measureChange(ctx, m, w) as { before?: Metrics; after: Metrics; campaigns: string[]; context?: { before: Metrics; after: Metrics }; extra?: object };
           const o = log.window && r.campaigns.length ? overlaps(log.rows, new Set(r.campaigns), log.window) : { notable: [], other: 0 };
           return {
             change: m.describe, measure: m.kind, ...(r.extra ?? {}),
@@ -2122,6 +2073,61 @@ export class UserSession {
         : {}),
       caveats: CAVEATS,
     };
+  }
+
+  /** One measured change's before and after (results.ts targets), read from Google for the windows `w`. */
+  private async measureChange(ctx: ResultsCtx, t: Target, w: Windows) {
+    const both = async (q: (range: string) => string) => {
+      const before = await ctx.read(q(between(w.before)));
+      return { before, after: ctx.demo ? before : await ctx.read(q(between(w.after))) };
+    };
+    if (t.kind === "blocked") {
+      const scope = t.campaigns ? ` AND campaign.id IN (${t.campaigns.join(", ")})` : t.adGroup ? ` AND ad_group.id = ${t.adGroup}` : "";
+      const r = await both((d) => `SELECT campaign.id, search_term_view.search_term, metrics.cost_micros, metrics.clicks, metrics.conversions FROM search_term_view WHERE ${d}${scope}`);
+      const hit = (x: any) => t.negatives.some((n) => blocks(String(x.searchTermView?.searchTerm ?? ""), n));
+      const before = sumRows(r.before, hit), after = ctx.demo ? zero() : sumRows(r.after, hit);
+      const terms = new Map<string, number>();
+      for (const x of r.before.filter(hit)) terms.set(x.searchTermView.searchTerm, (terms.get(x.searchTermView.searchTerm) ?? 0) + micros(x.metrics?.costMicros));
+      const top = [...terms].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([search_term, cost]) => ({ search_term, cost: round(cost) }));
+      const campaigns = t.campaigns ?? (t.adGroup ? [...new Set(r.before.concat(r.after).map((x) => String(x.campaign?.id)).filter((x) => x !== "undefined"))] : []);
+      return { before, after, campaigns, extra: top.length ? { top_blocked_searches_before: top } : {} };
+    }
+    if (t.kind === "stopped") {
+      const fields = "campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions";
+      const q = t.level === "keyword" ? (d: string) => `SELECT ${fields} FROM keyword_view WHERE ${d} AND ad_group.id = ${t.adGroup} AND ad_group_criterion.criterion_id = ${t.id}`
+        : t.level === "ad_group" ? (d: string) => `SELECT ${fields} FROM ad_group WHERE ${d} AND ad_group.id = ${t.id}`
+        : t.level === "ad" ? (d: string) => `SELECT ${fields} FROM ad_group_ad WHERE ${d} AND ad_group.id = ${t.adGroup} AND ad_group_ad.ad.id = ${t.id}`
+        : (d: string) => `SELECT ${fields} FROM campaign WHERE ${d} AND campaign.id = ${t.id}`;
+      const r = await both(q);
+      const before = sumRows(r.before), after = ctx.demo ? zero() : sumRows(r.after);
+      const camp = r.before[0]?.campaign?.id ?? r.after[0]?.campaign?.id;
+      if (t.level === "campaign" || !camp) return { before, after, campaigns: t.level === "campaign" ? [t.id] : [] };
+      const c = await both((d) => `SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${d} AND campaign.id = ${camp}`);
+      const cb = sumRows(c.before), ca = ctx.demo ? cb : sumRows(c.after);
+      return { before, after, campaigns: [String(camp)], context: { before: minus(cb, before), after: minus(ca, after) } };
+    }
+    if (t.kind === "campaign") {
+      const r = await both((d) => `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${d} AND campaign.id = ${t.campaign}`);
+      return { before: sumRows(r.before), after: sumRows(r.after), campaigns: [t.campaign], extra: r.before[0]?.campaign?.name ? { campaign: r.before[0].campaign.name } : {} };
+    }
+    // New: only the after window means anything. Keywords are "<ad group>~<criterion>" pairs.
+    const ids = t.ids.map((x) => x.split("~"));
+    const q = t.level === "campaign" ? `SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM campaign WHERE ${between(w.after)} AND campaign.id IN (${t.ids.join(", ")})`
+      : t.level === "ad_group" ? `SELECT campaign.id, ad_group.id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM ad_group WHERE ${between(w.after)} AND ad_group.id IN (${t.ids.join(", ")})`
+      : `SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, metrics.cost_micros, metrics.clicks, metrics.conversions FROM keyword_view WHERE ${between(w.after)} AND ad_group_criterion.criterion_id IN (${ids.map((x) => x[1]).join(", ")})`;
+    const pairs = new Set(t.ids);
+    const rs = (await ctx.read(q)).filter((r) => t.level !== "keyword" || pairs.has(`${r.adGroup?.id}~${r.adGroupCriterion?.criterionId}`));
+    return { before: undefined, after: sumRows(rs), campaigns: t.level === "campaign" ? t.ids : [...new Set(rs.map((r) => String(r.campaign?.id)))] };
+  }
+
+  /** Google's change log for a result's after window: other changes to the same campaigns (results.ts overlaps). */
+  private async changeLogFor(ctx: ResultsCtx, w: Windows) {
+    if (ctx.demo) return { rows: [] as any[], window: null as [string, string] | null, note: undefined as string | undefined };
+    const cw = changeLogWindow(w.after, ctx.today);
+    if (!cw) return { rows: [], window: null, note: "Google's change log only reaches back 30 days, so other changes in this after window can't be checked." };
+    const rows = await ctx.read(changeLogQuery(cw)).catch(() => null);
+    if (!rows) return { rows: [], window: null, note: "Couldn't read Google's change log, so other changes in the after window weren't checked." };
+    return { rows, window: cw, note: cw[0] > w.after[0] ? `Other changes checked from ${cw[0]}: Google's change log only reaches back 30 days.` : undefined };
   }
 
   private forgetGoogle(): void {
@@ -2257,6 +2263,12 @@ function scFilters(o: ScFilterOpts) {
   ];
 }
 
+/** scFilters as the request's dimensionFilterGroups, or nothing when there are none. */
+function filterGroups(o: ScFilterOpts) {
+  const filters = scFilters(o);
+  return filters.length ? { dimensionFilterGroups: [{ filters }] } : {};
+}
+
 interface TrendRow {
   key: string; impressions: number; prior_impressions: number; impressions_change: number; impressions_pct: number | null;
   clicks: number; prior_clicks: number; position: number | null; prior_position: number | null; position_change: number | null;
@@ -2378,6 +2390,10 @@ async function retryTransient<T>(fn: () => Promise<T>, safe: boolean): Promise<T
 
 /** Two decimals, for money and fractional conversions. */
 const round = (n: number) => Math.round(n * 100) / 100;
+/** What change_results reads with: the account's Google Ads search, whether it's the demo, and today in its time zone. */
+type ResultsCtx = { read: (q: string) => Promise<any[]>; demo: boolean; today: string };
+/** Cost, clicks and conversions summed over the rows `keep` accepts. */
+const sumRows = (rs: any[], keep: (r: any) => boolean = () => true) => rs.filter(keep).reduce((m, r) => add(m, r), zero());
 /** The account line at the top of a report. */
 const accountHead = (a: Account) => ({ customer_id: a.customerId, name: a.name, currency: a.currency });
 const round1 = (n: number) => Math.round(n * 10) / 10;

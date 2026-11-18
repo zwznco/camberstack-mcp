@@ -347,6 +347,20 @@ export function openDb(dataDir: string): DB {
 
 export const now = () => Math.floor(Date.now() / 1000);
 
+/** A query runner over the report's tables (report.ts buildReport's `q`): the rows of `sql` with `p` bound. */
+export type Q = <T>(sql: string, ...p: unknown[]) => T[];
+
+/** Each user's copy of a demo account, site, property or container: what their changes altered, as JSON. */
+export type DemoTable = "demo_state" | "demo_ga_state" | "demo_sc_state" | "demo_gtm_state";
+export function loadDemoState<T>(db: DB, table: DemoTable, userId: string): T | undefined {
+  const row = db.prepare(`SELECT state FROM ${table} WHERE user_id = ?`).get(userId) as { state: string } | undefined;
+  return row ? JSON.parse(row.state) as T : undefined;
+}
+export function saveDemoState(db: DB, table: DemoTable, userId: string, state: unknown): void {
+  db.prepare(`INSERT INTO ${table} (user_id, state, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`).run(userId, JSON.stringify(state), now());
+}
+
 export interface UserRow {
   id: string;
   google_sub: string;

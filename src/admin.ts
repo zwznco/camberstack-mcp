@@ -76,20 +76,23 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
     "/": overviewPage, "/users": usersPage, "/activity": activityPage, "/revenue": revenuePage,
     "/feedback": (v) => feedbackPage(recentFeedback(d.db), v), "/cap": capPage,
   };
-  for (const [path, render] of Object.entries(pages)) {
+  /** A signed-in GET page: anyone else goes to /login. */
+  const get = (path: string, h: (req: Request, res: express.Response, who: string) => void) =>
     site.get(path, (req, res) => {
       const who = email(req);
       if (!who) { res.redirect(302, "/login"); return; }
+      h(req, res, who);
+    });
+  for (const [path, render] of Object.entries(pages)) {
+    get(path, (req, res, who) => {
       const v = view(req);
       if (req.query.format === "json") { res.json(v.report); return; }
       res.type("html").send(shell(path, who, v, render(v)));
     });
   }
-  site.get("/users/:id", (req, res) => {
-    const who = email(req);
-    if (!who) { res.redirect(302, "/login"); return; }
+  get("/users/:id", (req, res, who) => {
     const v = view(req);
-    const u = userDetail(d.db, req.params.id, windowStart(v.days));
+    const u = userDetail(d.db, String(req.params.id), windowStart(v.days));
     if (!u) { res.status(404).send("No such user."); return; }
     if (req.query.format === "json") { res.json(u); return; }
     const heading = `<a class="muted" href="/users${qs(v)}">Users</a> <span class="dim">/</span> ${esc(u.user.email)} ${planBadge(u.user.plan, Boolean(u.user.stripe_sub))}${
@@ -112,15 +115,11 @@ export function mountAdmin(app: Express, d: AdminDeps): SignIn | null {
     res.redirect(303, startLoginAs(d.db, d.baseUrl, id, who));
   });
   const ann = d.announcements;
-  site.get("/announcements", (req, res) => {
-    const who = email(req);
-    if (!who) { res.redirect(302, "/login"); return; }
+  get("/announcements", (req, res, who) => {
     res.type("html").send(shell("/announcements", who, view(req), announcementsPage(ann)));
   });
-  site.get("/announcements/:id", (req, res) => {
-    const who = email(req);
-    if (!who) { res.redirect(302, "/login"); return; }
-    const p = ann.preset(req.params.id);
+  get("/announcements/:id", (req, res, who) => {
+    const p = ann.preset(String(req.params.id));
     if (!p) { res.status(404).send("No such announcement."); return; }
     const heading = `<a class="muted" href="/announcements">Announcements</a> <span class="dim">/</span> ${esc(p.subject)}`;
     res.type("html").send(shell("/announcements", who, view(req), announcementPage(ann, p, who, String(req.query.note ?? "")), heading));
@@ -388,11 +387,19 @@ function callsChart(v: View): string {
   const bars = slots(v, r.hourly, r.daily, { calls: 0, users: 0, errors: 0 });
   const per = v.days === 1 ? "hour" : "day", max = Math.max(1, ...bars.map((b) => b.calls));
   const body = r.daily.length
-    ? `<div class="chart">${bars.map((b) => `<div class="${b.future ? "future" : ""}" style="height:${b.future ? 100 : Math.max(1, Math.round((100 * b.calls) / max))}%" title="${b.label}${
-        v.days === 1 ? " UTC" : ""}: ${b.calls} calls · ${b.users} users · ${b.errors} errors">${b.errors ? `<i style="height:${Math.round((100 * b.errors) / b.calls)}%"></i>` : ""}</div>`).join("")}</div>
-<div class="axis"><span>${bars[0]!.label}</span><span>peak ${max}/${per} · <b class="bad">■</b> errors</span><span>${bars.at(-1)!.label}${v.days === 1 ? " UTC" : ""}</span></div>`
+    ? barChart(v, bars, (b) => b.calls, (b) => `${b.calls} calls · ${b.users} users · ${b.errors} errors`, `peak ${max}/${per} · <b class="bad">■</b> errors`,
+      (b) => (b.errors ? `<i style="height:${Math.round((100 * b.errors) / b.calls)}%"></i>` : ""))
     : `<p class="empty">No calls in this window.</p>`;
   return card(`Calls per ${per}`, body, `<small>${lastW(v.days)} · UTC</small>`);
+}
+
+/** Bars scaled to the tallest (future hours drawn full and faded), with first/last labels and `legend` between them. */
+function barChart<B extends { label: string; future?: boolean }>(v: View, bars: B[], value: (b: B) => number, title: (b: B) => string,
+  legend: string, inner: (b: B) => string = () => ""): string {
+  const max = Math.max(1, ...bars.map(value)), utc = v.days === 1 ? " UTC" : "";
+  return `<div class="chart">${bars.map((b) => `<div class="${b.future ? "future" : ""}" style="height:${b.future ? 100 : Math.max(1, Math.round((100 * value(b)) / max))}%" title="${b.label}${
+    utc}: ${title(b)}">${inner(b)}</div>`).join("")}</div>
+<div class="axis"><span>${bars[0]!.label}</span><span>${legend}</span><span>${bars.at(-1)!.label}${utc}</span></div>`;
 }
 
 /** One bar per UTC day of the window, zeros included, or for today one per UTC hour (hours still to come marked future). */
@@ -414,9 +421,7 @@ function signupsChart(v: View): string {
   const bars = slots(v, r.signupsHourly, r.signupsDaily, { n: 0 });
   const per = v.days === 1 ? "hour" : "day", max = Math.max(1, ...bars.map((b) => b.n)), total = bars.reduce((a, b) => a + b.n, 0);
   const body = total
-    ? `<div class="chart">${bars.map((b) => `<div class="${b.future ? "future" : ""}" style="height:${b.future ? 100 : Math.max(1, Math.round((100 * b.n) / max))}%" title="${b.label}${
-        v.days === 1 ? " UTC" : ""}: ${b.n} signups"></div>`).join("")}</div>
-<div class="axis"><span>${bars[0]!.label}</span><span>${total} total · peak ${max}/${per}</span><span>${bars.at(-1)!.label}${v.days === 1 ? " UTC" : ""}</span></div>`
+    ? barChart(v, bars, (b) => b.n, (b) => `${b.n} signups`, `${total} total · peak ${max}/${per}`)
     : `<p class="empty">No signups in this window.</p>`;
   return card(`Signups per ${per}`, body, `<small>${lastW(v.days)} · UTC</small>`);
 }

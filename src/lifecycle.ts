@@ -158,20 +158,25 @@ export class Lifecycle {
     // morning, not days later. The 6 hours keep it from landing minutes after a refusal inside the
     // send window. `error` is the latest refusal's (SQLite takes bare columns from the max() row). A reset by hand cancels
     // the refusals before it: this email would say the account is still locked (sent minutes after one, 2026-10-16).
-    const limit = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, max(c.at) last, c.error
-      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
-        AND coalesce(c.customer_id, '') NOT LIKE 'mc:%' AND c.error NOT LIKE '%Merchant Center account%'
-      WHERE ${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("change_limit")}
+    /**
+     * Each user's latest stop whose message starts with `prefix`, 6 hours to 31 days ago and since any reset of their plan.
+     * `cols` adds user columns, `on` narrows the stops, `where` the users. `error` is the latest stop's (SQLite takes bare
+     * columns from the max() row).
+     */
+    const lastStops = <R>(prefix: string, o: { cols?: string; on?: string; where: string }) => this.d.db.prepare(`SELECT u.id, u.email, u.time_zone${o.cols ?? ""}, max(c.at) last, c.error
+      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)${o.on ?? ""}
+      WHERE ${o.where}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
-      .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; last: number; error: string }[];
+      .all(`${prefix}%`, t - 31 * DAY, t - 6 * 3600) as ({ id: string; email: string; time_zone: string | null; last: number; error: string } & R)[];
+    const notMerchant = `
+        AND coalesce(c.customer_id, '') NOT LIKE 'mc:%' AND c.error NOT LIKE '%Merchant Center account%'`;
+    const limit = lastStops<object>(PLAN_LIMIT_PREFIX, { on: notMerchant,
+      where: `${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("change_limit")}` });
     // Stopped by the change cap (session.ts checkChangeCap), the last stop 6 hours to 30 days ago. Always on request: the
     // user approved the change that was stopped. `error` is the latest stop's, which names the date the next change opens.
     // Not held back by an earlier upgrade email (limit_reached etc.): only by its own.
-    const changes = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.plan_reset_at, max(c.at) last, c.error
-      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
-      WHERE ${eligible} AND ${notSent("change_limit")}
-      GROUP BY u.id HAVING last BETWEEN ? AND ?`)
-      .all(`${CHANGE_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; plan_reset_at: number | null; last: number; error: string }[];
+    const changes = lastStops<{ plan_reset_at: number | null }>(CHANGE_LIMIT_PREFIX, { cols: ", u.plan_reset_at",
+      where: `${eligible} AND ${notSent("change_limit")}` });
     // Only while they're still at the cap, with the date the next change opens as of now: the stop can be up to a month
     // old, its window may have rolled, and the cap may be off. Not at it: nothing now; a later stop sends it then.
     const cap = changeCap();
@@ -182,14 +187,11 @@ export class Lifecycle {
     });
     // A paying Plus or Pro user refused another Ads account on that plan (the refusal names it: "; Pro covers 5 at a time"),
     // so a refusal from before they upgraded doesn't count. Comps have no stripe_sub; Agency has no plan above it.
-    const paid = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.plan, max(c.at) last, c.error
-      FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)
-        AND instr(c.error, '; ' || CASE u.plan WHEN 'pro' THEN 'Pro' ELSE 'Plus' END || ' covers ') > 0
-        AND coalesce(c.customer_id, '') NOT LIKE 'mc:%' AND c.error NOT LIKE '%Merchant Center account%'
-      WHERE u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan IN ('plus', 'pro') AND coalesce(u.stripe_sub, '') != ''
-        AND ${notSent("paid_limit")}
-      GROUP BY u.id HAVING last BETWEEN ? AND ?`)
-      .all(`${PLAN_LIMIT_PREFIX}%`, t - 31 * DAY, t - 6 * 3600) as { id: string; email: string; time_zone: string | null; plan: string; last: number; error: string }[];
+    const paid = lastStops<{ plan: string }>(PLAN_LIMIT_PREFIX, { cols: ", u.plan",
+      on: `
+        AND instr(c.error, '; ' || CASE u.plan WHEN 'pro' THEN 'Pro' ELSE 'Plus' END || ' covers ') > 0${notMerchant}`,
+      where: `u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan IN ('plus', 'pro') AND coalesce(u.stripe_sub, '') != ''
+        AND ${notSent("paid_limit")}` });
     // First applied change to a real account (not the demo, not an undo) 2–14 days ago; any plan, connected or not.
     const checkIn = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, min(p.applied_at) first FROM users u
       JOIN proposals p ON p.user_id = u.id AND p.status = 'applied' AND p.undo_of IS NULL AND p.customer_id <> ? AND p.customer_id <> 'mc:${DEMO_MERCHANT}'
@@ -398,9 +400,12 @@ Camberstack`,
   };
 }
 
+/** "November 13" for a YYYY-MM-DD the tool named, read in UTC so it's the same day; nothing without one. */
+const whenLabel = (opens?: string) => opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
+
 function limitReached(base: string, upgrade: string | null, opens?: string) {
   // "November 13": the date the refusal named, in words. UTC so it's the same day the tool said.
-  const when = opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
+  const when = whenLabel(opens);
   const stopped = `Camberstack stopped when you tried it on another Google Ads account. The Free plan covers one account at a time, `
     + `and another opens once your current one has gone ${ACCOUNT_WINDOW_DAYS} days unused${when ? `: on ${when}, if you don't use it before then` : ""}.`;
   const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, `
@@ -411,7 +416,7 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
 
 /** A paying Plus or Pro user was refused another account: when one opens, and the plan above with its link (Stripe's billing portal switches the subscription). */
 function paidLimit(base: string, plan: "plus" | "pro", link: string | null, opens?: string) {
-  const when = opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
+  const when = whenLabel(opens);
   const [name, covers] = plan === "pro" ? ["Pro", PRO_ACCOUNTS] : ["Plus", 1];
   const [next, nextCovers, price] = plan === "pro" ? ["Agency", AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL] : ["Pro", PRO_ACCOUNTS, PRO_PRICE_LABEL];
   const stopped = `Camberstack stopped when you tried it on another Google Ads account. Your ${name} plan covers ${covers === 1 ? "one account" : `${covers} accounts`} at a time, `
@@ -423,7 +428,7 @@ function paidLimit(base: string, plan: "plus" | "pro", link: string | null, open
 
 /** The change cap stopped an apply: when the next one opens (the date the stop named), and Plus's unlimited changes. `afterAccountEmail`: limit_reached (or switch_wanted) went earlier. */
 function changeLimit(base: string, plus: string | null, upgrade: string | null, opens?: string, afterAccountEmail = false) {
-  const when = opens && dateLabel(Date.parse(`${opens}T12:00:00Z`) / 1000);
+  const when = whenLabel(opens);
   // After the account-limit email, say this is a different limit: two upgrade emails otherwise read as the same one sent twice.
   const stopped = `${afterAccountEmail ? "This is a different limit from the one-account one I wrote about before. " : ""}Camberstack stopped a change you approved: the Free plan includes ${freeChanges()}, and you've used them`
     + `${when ? `. The next one opens on ${when}` : ""}. The proposal is still open, so nothing is lost.`;

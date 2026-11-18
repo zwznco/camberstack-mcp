@@ -309,6 +309,16 @@ describe("set_conversion_goal", () => {
     expect(r.operations.map((o: any) => [o.update.resourceName.split("/").pop(), o.update.biddable])).toEqual([["10~PURCHASE~WEBSITE", false], ["10~CONTACT~WEBSITE", true]]);
     expect(r.describe).toContain("⚠ Google won't let the API turn on the CONTACT goal from GOOGLE_HOSTED, so it stays off");
   });
+  it("treats a refusal Google names (v26) the same, quoting its reason; other failures still fail", async () => {
+    const named = (status: number) => ({ ...account([]), async mutate(_c: string, _s: string, ops: any[]) {
+      if (!ops[0].update.resourceName.includes("GOOGLE_HOSTED")) return { results: [] };
+      throw new AdsApiError(status, JSON.stringify({ error: { details: [{ errors: [{ errorCode: { conversionGoalCampaignConfigError: "GOAL_NOT_SUPPORTED" },
+        message: "This goal can't be biddable on this campaign." }] }] } }));
+    } });
+    const r = await resolveChange(named(400), "1", null, { type: "set_conversion_goal", campaign_id: "10", category: "CONTACT" });
+    expect(r.describe).toMatch(/from GOOGLE_HOSTED \(Google: .*can't be biddable.*\), so it stays off/);
+    await expect(resolveChange(named(429), "1", null, { type: "set_conversion_goal", campaign_id: "10", category: "CONTACT" })).rejects.toThrow();
+  });
 });
 
 describe("productGroupName", () => {

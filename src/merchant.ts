@@ -15,6 +15,7 @@ import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { MerchantApiError, NotGrantedError, fetchGoogle, googleMessage, scopeMissing } from "./google.js";
 import { reportError } from "./sentry.js";
+import { allPages, withPage } from "./paging.js";
 
 const API = "https://merchantapi.googleapis.com";
 export const DEMO_MERCHANT = "000000001";
@@ -149,14 +150,8 @@ export class MerchantClient implements Merchant {
   }
 
   async accounts(): Promise<MerchantAccount[]> {
-    const out: MerchantAccount[] = [];
-    let page = "";
-    do {
-      const r = await this.call(`accounts/v1/accounts?pageSize=500${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
-      for (const a of r.accounts ?? []) out.push({ account_id: String(a.accountId), name: a.accountName, ...(a.testAccount ? { test_account: true } : {}) });
-      page = r.nextPageToken ?? "";
-    } while (page);
-    return out;
+    return (await allPages((t) => this.call(withPage("accounts/v1/accounts?pageSize=500", t)), "accounts"))
+      .map((a) => ({ account_id: String(a.accountId), name: a.accountName, ...(a.testAccount ? { test_account: true } : {}) }));
   }
 
   /**
@@ -188,14 +183,7 @@ export class MerchantClient implements Merchant {
   }
 
   private async listedIssues(accountId: string): Promise<any[]> {
-    const out: any[] = [];
-    let page = "";
-    do {
-      const r = await this.call(`accounts/v1/accounts/${accountId}/issues?pageSize=100${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
-      out.push(...(r.accountIssues ?? []));
-      page = r.nextPageToken ?? "";
-    } while (page);
-    return out;
+    return allPages((t) => this.call(withPage(`accounts/v1/accounts/${accountId}/issues?pageSize=100`, t)), "accountIssues");
   }
 
   async search(accountId: string, query: string, maxRows: number): Promise<SearchResult> {
@@ -231,16 +219,11 @@ export class MerchantClient implements Merchant {
 
   /** Camberstack's supplemental source (or, with primary, its own products' source) in the account, if it has one. */
   private async source(accountId: string, primary = false): Promise<string | null> {
-    let page = "";
-    do {
-      const r = await this.call(`datasources/v1/accounts/${accountId}/dataSources?pageSize=1000${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
-      const s = (r.dataSources ?? []).find((d: any) => (primary
-        ? d.displayName === PRODUCTS_SOURCE_NAME && d.primaryProductDataSource
-        : d.displayName === SOURCE_NAME && d.supplementalProductDataSource));
-      if (s) return s.name as string;
-      page = r.nextPageToken ?? "";
-    } while (page);
-    return null;
+    const all = await allPages((t) => this.call(withPage(`datasources/v1/accounts/${accountId}/dataSources?pageSize=1000`, t)), "dataSources");
+    const s = all.find((d) => (primary
+      ? d.displayName === PRODUCTS_SOURCE_NAME && d.primaryProductDataSource
+      : d.displayName === SOURCE_NAME && d.supplementalProductDataSource));
+    return s ? s.name as string : null;
   }
 
   async linkState(accountId: string, primary: string): Promise<LinkState> {

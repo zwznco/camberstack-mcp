@@ -19,7 +19,7 @@ import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-cha
 import { NotGrantedError, grantName } from "./google.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.44.3";
+export const SERVER_VERSION = "0.44.4";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -669,59 +669,33 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
   const proposeNote = "Changes nothing: checks the change against the live account, stores it as a proposal and returns a plain-English summary. "
     + "Show the summary, and any ⚠ line in it, to the user and call apply_changes only after they approve.";
   const proposes = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
+  type Args = Record<string, unknown>;
+  /** One propose_<op> tool per change type; `target` picks the proposal's target and the change's fields from the call's arguments. */
+  const proposeTools = (changes: readonly { shape: z.ZodRawShape & { type: z.ZodLiteral<string> }; description?: string }[], service: string,
+    target: (a: Args) => [string, Args], extra: z.ZodRawShape = {}, title = (op: string) => op.replace(/_/g, " ")) => {
+    for (const c of changes) {
+      const { type, ...shape } = c.shape;
+      const op = type.value;
+      tool(`propose_${op}`, {
+        title: `Propose: ${title(op)}`,
+        description: `${c.description}. ${service}${proposeNote}`,
+        inputSchema: { ...extra, ...shape },
+        annotations: proposes,
+      }, (a: Args) => { const [t, rest] = target(a); return session().propose(t, [{ type: op, ...rest }]); });
+    }
+  };
   if (o.chatgpt) {
-    for (const c of [...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES]) {
-      const { type, ...shape } = c.shape;
-      const op = type.value;
-      tool(`propose_${op}`, {
-        title: `Propose: ${op.replace(/_/g, " ")}`,
-        description: `${c.description}. ${proposeNote}`,
-        inputSchema: { customer_id: customerId, ...shape },
-        annotations: proposes,
-      }, ({ customer_id, ...rest }: { customer_id: string } & Record<string, unknown>) => session().propose(customer_id, [{ type: op, ...rest }]));
-    }
-    for (const c of PUBLIC_GA_CHANGES) {
-      // A top-level customer_id would be logged as Google Ads use (wrap), so the Ads account a link names is ads_customer_id here.
-      const { type, customer_id: ads, ...shape } = c.shape as typeof c.shape & { customer_id?: z.ZodString };
-      const op = type.value;
-      tool(`propose_${op}`, {
-        title: `Propose: ${op.replace(/_/g, " ").replace("ga4", "GA4")}`,
-        description: `${c.description}. ${proposeNote}`,
-        inputSchema: { ...shape, ...(ads ? { ads_customer_id: ads } : {}) },
-        annotations: proposes,
-      }, ({ ads_customer_id, ...rest }: { ads_customer_id?: string } & Record<string, unknown>) =>
-        session().propose(GA_TARGET, [{ type: op, ...rest, ...(ads_customer_id ? { customer_id: ads_customer_id } : {}) }]));
-    }
-    for (const c of PUBLIC_SC_CHANGES) {
-      const { type, ...shape } = c.shape;
-      const op = type.value;
-      tool(`propose_${op}`, {
-        title: `Propose: ${op.replace(/_/g, " ")}`,
-        description: `${c.description}. Search Console. ${proposeNote}`,
-        inputSchema: shape,
-        annotations: proposes,
-      }, (rest: Record<string, unknown>) => session().propose(SC_TARGET, [{ type: op, ...rest }]));
-    }
-    for (const c of PUBLIC_MC_CHANGES) {
-      const { type, ...shape } = c.shape;
-      const op = type.value;
-      tool(`propose_${op}`, {
-        title: `Propose: ${op.replace(/_/g, " ")}`,
-        description: `${c.description}. Merchant Center. ${proposeNote}`,
-        inputSchema: { account_id: merchantId, ...shape },
-        annotations: proposes,
-      }, ({ account_id, ...rest }: { account_id: string } & Record<string, unknown>) => session().propose(mcTarget(account_id), [{ type: op, ...rest }]));
-    }
-    for (const c of PUBLIC_GTM_CHANGES) {
-      const { type, ...shape } = c.shape;
-      const op = type.value;
-      tool(`propose_${op}`, {
-        title: `Propose: ${op.replace(/_/g, " ")}`,
-        description: `${c.description}. Tag Manager. ${proposeNote}`,
-        inputSchema: shape,
-        annotations: proposes,
-      }, (rest: Record<string, unknown>) => session().propose(GTM_TARGET, [{ type: op, ...rest }]));
-    }
+    proposeTools([...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES], "", ({ customer_id, ...rest }) => [customer_id as string, rest], { customer_id: customerId });
+    // A top-level customer_id would be logged as Google Ads use (wrap), so the Ads account a link names is ads_customer_id here.
+    const gaChanges = PUBLIC_GA_CHANGES.map((c) => {
+      const { customer_id: ads, ...shape } = c.shape as typeof c.shape & { customer_id?: z.ZodString };
+      return { description: c.description, shape: { ...shape, ...(ads ? { ads_customer_id: ads } : {}) } };
+    });
+    proposeTools(gaChanges, "", ({ ads_customer_id, ...rest }) => [GA_TARGET, { ...rest, ...(ads_customer_id ? { customer_id: ads_customer_id } : {}) }],
+      {}, (op) => op.replace(/_/g, " ").replace("ga4", "GA4"));
+    proposeTools(PUBLIC_SC_CHANGES, "Search Console. ", (rest) => [SC_TARGET, rest]);
+    proposeTools(PUBLIC_MC_CHANGES, "Merchant Center. ", ({ account_id, ...rest }) => [mcTarget(account_id as string), rest], { account_id: merchantId });
+    proposeTools(PUBLIC_GTM_CHANGES, "Tag Manager. ", (rest) => [GTM_TARGET, rest]);
     tool("propose_undo", {
       title: "Propose reversing an applied proposal",
       description: "Builds a new proposal that would reverse an applied one (removes the negatives it added, restores statuses and budgets). "

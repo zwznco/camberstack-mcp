@@ -13,7 +13,7 @@
  */
 import { demoShopping } from "./merchant.js";
 import type { DB } from "./db.js";
-import { now } from "./db.js";
+import { loadDemoState, saveDemoState } from "./db.js";
 import type { SearchAnalyticsRequest, Sitemap, UrlInspection } from "./google.js";
 
 export const DEMO_CID = "0000000001";
@@ -141,17 +141,16 @@ export class DemoAds {
   constructor(private db: DB, private userId: string) {}
 
   private load(): State {
-    const row = this.db.prepare("SELECT state FROM demo_state WHERE user_id = ?").get(this.userId) as { state: string } | undefined;
-    if (!row) return fresh();
+    const s = loadDemoState<State>(this.db, "demo_state", this.userId);
+    if (!s) return fresh();
     // Before 2026-10-13 a bid or URL-suffix change saved its entity's status as undefined, which JSON drops;
     // fill any missing status back in from the base data.
-    const s = JSON.parse(row.state) as State, f = fresh();
+    const f = fresh();
     for (const k of ["campaignStatus", "adGroupStatus", "keywordStatus"] as const) s[k] = { ...f[k], ...s[k] };
     return s;
   }
   private save(s: State): void {
-    this.db.prepare(`INSERT INTO demo_state (user_id, state, updated_at) VALUES (?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`).run(this.userId, JSON.stringify(s), now());
+    saveDemoState(this.db, "demo_state", this.userId, s);
   }
 
   /** Every row of a resource, built from the base data plus this user's changes, scaled to `days`. */
@@ -470,13 +469,11 @@ export class DemoSearchConsole {
 
   private load(): string[] {
     if (!this.db || !this.userId) return (this.mem ??= [SITE_HOME + "/sitemap.xml"]);
-    const row = this.db.prepare("SELECT state FROM demo_sc_state WHERE user_id = ?").get(this.userId) as { state: string } | undefined;
-    return row ? JSON.parse(row.state) as string[] : [SITE_HOME + "/sitemap.xml"];
+    return loadDemoState<string[]>(this.db, "demo_sc_state", this.userId) ?? [SITE_HOME + "/sitemap.xml"];
   }
   private save(s: string[]): void {
     if (!this.db || !this.userId) { this.mem = s; return; }
-    this.db.prepare(`INSERT INTO demo_sc_state (user_id, state, updated_at) VALUES (?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`).run(this.userId, JSON.stringify(s), now());
+    saveDemoState(this.db, "demo_sc_state", this.userId, s);
   }
 
   async sites() { return [{ siteUrl: DEMO_SITE, permissionLevel: "siteOwner" }]; }

@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.44.4", date: "2026-11-18",
+    summary: "When Google won't let a campaign bid on a conversion goal, the proposal now says why, in Google's words.",
+    items: [
+      "**Conversion goals:** `set_conversion_goal` leaves a goal Google refuses to turn on as it is, whatever error Google gives, and quotes Google's reason in the ⚠ line when it names one. The rest of the proposal goes ahead as before.",
+    ],
+  },
+  {
     version: "0.44.3", date: "2026-11-18",
     summary: "Search Console and Google Analytics reports take a start or end date on its own, and long Search Console ranges no longer fail.",
     items: [

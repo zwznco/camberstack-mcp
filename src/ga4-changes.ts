@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import type { Analytics } from "./ga4.js";
+import { allPages, withPage } from "./paging.js";
 
 /** proposals.customer_id for Google Analytics proposals. */
 export const GA_TARGET = "ga4";
@@ -335,14 +336,7 @@ interface CustomDimension { name: string; parameterName: string; displayName: st
 interface CustomMetric { name: string; parameterName: string; displayName: string; measurementUnit: string; restrictedMetricType?: string[] }
 /** A property's active custom definitions of one kind (archived ones aren't listed), every page. */
 async function definitions<T>(ga: Analytics, propertyId: string, kind: "customDimensions" | "customMetrics"): Promise<T[]> {
-  const out: T[] = [];
-  let page = "";
-  do {
-    const r = await ga.admin("GET", `properties/${propertyId}/${kind}?pageSize=200${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
-    out.push(...(r[kind] ?? []));
-    page = r.nextPageToken ?? "";
-  } while (page);
-  return out;
+  return allPages<T>((t) => ga.admin("GET", withPage(`properties/${propertyId}/${kind}?pageSize=200`, t)), kind);
 }
 const customDimensions = (ga: Analytics, id: string) => definitions<CustomDimension>(ga, id, "customDimensions");
 const customMetrics = (ga: Analytics, id: string) => definitions<CustomMetric>(ga, id, "customMetrics");

@@ -8,8 +8,9 @@
  * ticked) fails on the call that needs the missing one, which answers with that link. The demo container (DEMO_CONTAINER) answers with sample data.
  */
 import type { DB } from "./db.js";
-import { now } from "./db.js";
+import { loadDemoState, saveDemoState } from "./db.js";
 import { NotGrantedError, fetchGoogle, googleMessage, scopeMissing } from "./google.js";
+import { allPages, withPage } from "./paging.js";
 
 const API = "https://tagmanager.googleapis.com/tagmanager/v2";
 export const DEMO_GTM_ACCOUNT = "accounts/000000001";
@@ -73,14 +74,7 @@ export function sharedReads(tm: TagManager): TagManager {
 
 /** Every page of a list call: GTM pages with nextPageToken. */
 export async function listAll(tm: TagManager, path: string, key: string): Promise<any[]> {
-  const out: any[] = [];
-  let token: string | undefined;
-  do {
-    const r = await tm.call("GET", token ? `${path}${path.includes("?") ? "&" : "?"}pageToken=${encodeURIComponent(token)}` : path);
-    out.push(...(r[key] ?? []));
-    token = r.nextPageToken;
-  } while (token);
-  return out;
+  return allPages((t) => tm.call("GET", withPage(path, t)), key);
 }
 
 /**
@@ -255,13 +249,11 @@ export class DemoTagManager implements TagManager {
 
   private load(): DemoGtmState {
     if (!this.db || !this.userId) return (this.mem ??= freshGtm());
-    const row = this.db.prepare("SELECT state FROM demo_gtm_state WHERE user_id = ?").get(this.userId) as { state: string } | undefined;
-    return row ? JSON.parse(row.state) as DemoGtmState : freshGtm();
+    return loadDemoState<DemoGtmState>(this.db, "demo_gtm_state", this.userId) ?? freshGtm();
   }
   private save(s: DemoGtmState): void {
     if (!this.db || !this.userId) { this.mem = s; return; }
-    this.db.prepare(`INSERT INTO demo_gtm_state (user_id, state, updated_at) VALUES (?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`).run(this.userId, JSON.stringify(s), now());
+    saveDemoState(this.db, "demo_gtm_state", this.userId, s);
   }
 
   async call(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: any): Promise<any> {

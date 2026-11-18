@@ -5,7 +5,7 @@
  */
 import { notesFunnel } from "./result-notes.js";
 import { checksReport, previewsReport } from "./checks.js";
-import type { DB } from "./db.js";
+import type { DB, Q } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { GTM_TARGET } from "./gtm-changes.js";
@@ -14,6 +14,11 @@ import { now } from "./db.js";
 import { capCounted } from "./session.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES } from "./google.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, changeCapFrom, PRO_PRICE_LABEL, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
+
+/** SQL: the client `cl` (a clients row) is ChatGPT's, by its redirect URIs. */
+const CHATGPT_CLIENT = "EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%')";
+/** SQL: the AI app a tool call `c` came from, by its client's registered name. */
+const client = "coalesce(json_extract(cl.info, '$.client_name'), c.client_id, 'unknown')";
 
 /**
  * A paying customer: a paid plan with a live Stripe subscription. Complimentary plans (PRO_EMAILS, grandfathered Plus with no
@@ -98,7 +103,7 @@ export function capUsage(db: DB, exclude: string[], t = Math.floor(Date.now() / 
   const stops = db.prepare(`SELECT count(*) n, max(at) last FROM tool_calls WHERE user_id = ? AND error LIKE '${CHANGE_LIMIT_PREFIX}%' AND at >= ?`);
   const mailed = db.prepare(`SELECT sent_at FROM email_log WHERE user_id = ? AND kind = 'change_limit'`);
   const gpt = db.prepare(`SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = ?
-      AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%') LIMIT 1`);
+      AND ${CHATGPT_CLIENT} LIMIT 1`);
   const rows: CapRow[] = [];
   for (const u of users) {
     const counted = capCounted(db, u.id, u.plan_reset_at, t);
@@ -133,7 +138,6 @@ export function buildReport(db: DB, o: ReportOptions) {
     disconnected: n("SELECT count(*) n FROM {U} u WHERE created_at >= ? AND enc_refresh IS NULL", from),
   });
 
-  const client = "coalesce(json_extract(cl.info, '$.client_name'), c.client_id, 'unknown')";
   return {
     days: o.days,
     excluded: ex.length,
@@ -292,7 +296,7 @@ const RETURN_MIN_DAYS = 2;
  * they set the norm (`p50`, `p90`). A user is overdue once silent longer than both p90 and their own longest return, so
  * someone who always comes back fortnightly isn't flagged at day 8. Coming back clears them.
  */
-function churn(q: <T>(sql: string, ...p: unknown[]) => T[]) {
+function churn(q: Q) {
   const today = Math.floor(now() / 86400);
   const days = q<{ id: string; d: number }>(
     `SELECT c.user_id id, cast(c.at / 86400 AS int) d FROM tool_calls c JOIN {U} u ON u.id = c.user_id
@@ -337,7 +341,7 @@ function churn(q: <T>(sql: string, ...p: unknown[]) => T[]) {
  * `applied` stops at the last week its earliest signup has begun, and only the first `done` have ended for its latest one.
  * Past `done` a cell is still filling in, not a drop.
  */
-function retention(q: <T>(sql: string, ...p: unknown[]) => T[]) {
+function retention(q: Q) {
   const t = now();
   // Day 0 of the epoch was a Thursday, so a day's Monday is (day + 3) % 7 days back.
   const monday = (col: string) => `(${col} - ${col} % 86400 - ((${col} / 86400 + 3) % 7) * 86400)`;
@@ -368,13 +372,13 @@ function retention(q: <T>(sql: string, ...p: unknown[]) => T[]) {
  * link (any source), and paid. `offered` and `offered_paid` are the test's bar: stopped and reached the offer, and of those,
  * paid. `applied` is its guardrail. Complimentary plans are left out: they can't be stopped. Empty until the cap stops someone.
  */
-function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
+function paywall(q: Q, from?: number) {
   const first = q<{ at: number | null }>(
     `SELECT min(at) at FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.error LIKE '${CHANGE_LIMIT_PREFIX}%'`)[0]?.at;
   if (!first) return { since: null, rows: [] };
   const on = from || first;
   const chatgpt = `EXISTS (SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = u.id
-    AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%'))`;
+    AND ${CHATGPT_CLIENT})`;
   const ev = (kind: string) => `EXISTS (SELECT 1 FROM plan_events e WHERE e.user_id = u.id AND e.kind = '${kind}' AND e.at >= ${on})`;
   const stopped = `EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.at >= ${on} AND c.error LIKE '${CHANGE_LIMIT_PREFIX}%')`;
   const emailed = `EXISTS (SELECT 1 FROM email_log m WHERE m.user_id = u.id AND m.kind = 'change_limit')`;
@@ -391,7 +395,7 @@ function paywall(q: <T>(sql: string, ...p: unknown[]) => T[], from?: number) {
   return { since: on, rows };
 }
 
-function serviceUse(q: <T>(sql: string, ...p: unknown[]) => T[], since: number) {
+function serviceUse(q: Q, since: number) {
   const has = (svc: string) => `(',' || c.service || ',') LIKE '%,${svc},%'`;
   const cols = listedServices().map((svc, i) => `sum(c.at >= ? AND ${has(svc)}) calls${i},
       count(DISTINCT CASE WHEN c.at >= ? AND ${has(svc)} THEN c.user_id END) users${i},
@@ -433,7 +437,6 @@ export function userDetail(db: DB, id: string, since = 0) {
   if (!user) return null;
   const all = <T>(sql: string) => db.prepare(sql).all(id) as T[];
   const calls = <T>(sql: string) => db.prepare(sql).all(id, since) as T[];
-  const client = "coalesce(json_extract(cl.info, '$.client_name'), c.client_id, 'unknown')";
   return {
     user,
     totals: db.prepare("SELECT count(*) calls, coalesce(sum(ok = 0), 0) errors, cast(coalesce(avg(ms), 0) AS int) avg_ms FROM tool_calls WHERE user_id = ? AND at >= ?").get(id, since) as
@@ -457,7 +460,7 @@ export function userDetail(db: DB, id: string, since = 0) {
     appToolLists: db.prepare(`SELECT ${client.replaceAll("c.client_id", "ct.client_id")} client, ct.version, ct.fetched_at
        FROM client_tools ct JOIN clients cl ON cl.client_id = ct.client_id
        WHERE ct.client_id IN (SELECT client_id FROM tool_calls WHERE user_id = ? UNION SELECT client_id FROM tokens WHERE user_id = ?)
-         AND EXISTS (SELECT 1 FROM json_each(cl.info, '$.redirect_uris') WHERE value LIKE 'https://chatgpt.com/%')
+         AND ${CHATGPT_CLIENT}
          AND ct.fetched_at = (SELECT max(fetched_at) FROM client_tools WHERE client_id = ct.client_id)
        ORDER BY ct.fetched_at DESC`).all(id, id) as { client: string; version: string; fetched_at: number }[],
     tools: calls<{ tool: string; calls: number; errors: number }>(

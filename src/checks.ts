@@ -6,6 +6,7 @@
  */
 import { BIDDING, BY } from "./results.js";
 import { DEMO_CID } from "./demo.js";
+import type { Q } from "./db.js";
 
 /** How many examples each check names; the rest are counted. */
 const CHECK_EXAMPLES = 10;
@@ -197,7 +198,6 @@ export function adCopyOf(change: unknown): string[] {
 
 // ---------------------------------------------------------------- admin (report.ts, admin.ts)
 
-type Q = <T>(sql: string, ...p: unknown[]) => T[];
 
 /**
  * What the checks raised in the window (tool_calls.flags, logged since 0.44.1): per flag, the calls and users it came up

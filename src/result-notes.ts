@@ -11,7 +11,7 @@
  * (list_accounts, account_overview), or change_results when the user reached it without a note. The admin's Results card
  * (notesFunnel) reads whether a note was followed: change_results on that account within FOLLOW_SECS.
  */
-import type { DB } from "./db.js";
+import type { DB, Q } from "./db.js";
 import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { MIN_DAYS, measurable } from "./results.js";
@@ -78,7 +78,7 @@ export function takeNote(db: DB, userId: string, customerIds: string[] | undefin
  * Whether notes work, for the admin: each note (one tool call raising results on one account), and whether change_results
  * then ran on that account within FOLLOW_SECS. `users` excludes the operator's accounts via the caller's {U}.
  */
-export function notesFunnel(q: <T>(sql: string, ...p: unknown[]) => T[], since: number) {
+export function notesFunnel(q: Q, since: number) {
   return q<{ via: string; notes: number; users: number; changes: number; followed: number }>(
     `SELECT n.via, count(*) notes, count(DISTINCT n.user_id) users, sum(n.k) changes,
        sum(EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = n.user_id AND c.customer_id = n.customer_id AND c.tool = 'change_results'
