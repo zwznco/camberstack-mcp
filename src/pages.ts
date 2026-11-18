@@ -356,7 +356,7 @@ export function homePage(baseUrl: string): string {
 <ul class="also">
 <li>Negative keywords and budgets up to whole new Search, Performance Max, Display and YouTube campaigns</li>
 <li>One URL and a Google sign-in for Claude, ChatGPT, Cursor or any MCP app. Works with manager (MCC) accounts</li>
-<li>Optional <a href="#search-console">Search Console</a>: where you already rank, which searches you may be paying for twice, and sitemaps you approve</li>
+<li>Optional <a href="/google-search-console-mcp">Search Console</a>: where you already rank, which searches you may be paying for twice, and sitemaps you approve</li>
 <li>Optional <a href="/google-analytics-mcp">Google Analytics 4</a>: which landing pages turn ad clicks into conversions</li>
 <li>Optional <a href="/google-merchant-center-mcp">Merchant Center</a>: why products are disapproved or limited, what they were earning in Shopping ads, and fixes you approve</li>
 <li>Optional <a href="/google-tag-manager-mcp">Tag Manager</a>: conversion tracking mistakes in your container, and the tags and publishes you approve to fix them</li>
@@ -368,27 +368,13 @@ export function homePage(baseUrl: string): string {
 <p class="muted">Every change is a proposal you approve, and all but a few have an undo: the ones Google can't reverse warn you first. A new campaign is always created paused, so building it and letting it spend are two separate approvals.</p></div>
 ${pairList(CHANGES, "Undo")}
 <p class="muted small">Besides the warnings above, a proposal also warns before removing a campaign's last location.
-It deletes only what you approve, and it cannot touch billing or edit anything outside Google Ads, the <a href="#analytics">Google Analytics setup changes</a> and the <a href="#search-console">Search Console sitemaps and properties</a> below,
-and the <a href="/google-merchant-center-mcp">Merchant Center</a> and <a href="/google-tag-manager-mcp">Tag Manager</a> changes on their pages.
+It deletes only what you approve, and it cannot touch billing or edit anything outside Google Ads, the <a href="#analytics">Google Analytics setup changes</a> and the <a href="/google-search-console-mcp">Search Console sitemaps and properties</a>,
+the <a href="/google-merchant-center-mcp">Merchant Center</a> and <a href="/google-tag-manager-mcp">Tag Manager</a> changes on their pages.
 Any question beyond these tools is answered with read-only queries. <a href="/tools">Every tool and what it can do</a>;
 the code is <a href="${SOURCE_URL}">open source</a>.</p>
 </div></section>
 
-<section class="sec sec-tint"><div class="wrap duo">
-<div id="search-console"><p class="kicker">Optional</p><h2>Search Console</h2>
-<p>Leave the Search Console box ticked when you connect, and your AI can read your site's Google Search clicks, impressions,
-queries and positions, and line them up against your ads:</p>
-<dl class="defs">
-<dt>Paid and already ranking</dt><dd>Searches you pay for where your site is already in the top few organic results, with the ad spend on each.</dd>
-<dt>Organic gaps</dt><dd>Searches your site shows up for on page 2 or lower, with no ad covering them.</dd>
-<dt>Site totals</dt><dd>Clicks, impressions, CTR and position against the previous period.</dd>
-<dt>Trends</dt><dd>Which searches and pages are rising, falling, new or gone since the period before.</dd>
-<dt>Opportunities</dt><dd>Searches just off page 1, and top results with a click-through rate low enough to point at the title.</dd>
-<dt>Indexing</dt><dd>Whether Google has indexed a page and why not, when it last crawled it, and when it last read your sitemap.</dd>
-<dt>Sitemaps and properties</dt><dd>Submit, resubmit or remove a sitemap, and add or remove a property, once you approve the proposal.</dd>
-</dl>
-<p class="muted small">Nothing changes in Search Console until you approve a proposal. The Search Console tools work without a Google Ads account too: <a href="/google-search-console-mcp">Search Console MCP</a>.</p>
-</div>
+<section class="sec sec-tint"><div class="wrap">
 <div id="analytics"><p class="kicker">Optional</p><h2>Google Analytics 4</h2>
 <p>Leave the Google Analytics box ticked when you connect, and your AI can read your GA4 properties next to your ads:</p>
 <dl class="defs">
