@@ -722,7 +722,8 @@ describe("OAuth + MCP end to end", () => {
     // change_results (2026-11-12): +1.2K. register_custom_dimension + analytics_setup's custom definitions (2026-11-16): +0.9K; register_custom_metric: +1.1K, taking propose_analytics_changes past 6K; set_custom_metric_unit: +0.65K; archive_custom_dimension / _metric public: +1.25K (propose_analytics_changes 9K).
     // +200 (0.40.0): the keyword tools' `months`; +300 (0.41.0): keyword_ideas `site`, keyword_metrics `by_location`. +800 (0.43.0): set_product_group_bid.
     // +1K (0.44.0): local_services_report, and account_overview naming its new checks.
-    expectToolBudget(tools, { total: 126_000, perTool: 6_000, except: { propose_changes: 57_200, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
+    // +5.3K (0.45.0): campaign_details, conversion_tracking, search_terms_report, ads_report, keywords_report (the gap audit's top run_gaql reads).
+    expectToolBudget(tools, { total: 131_400, perTool: 6_000, except: { propose_changes: 57_200, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1340,7 +1341,7 @@ describe("OAuth + MCP end to end", () => {
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
       // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K; propose_archive_custom_dimension / _metric: +2.2K.
-      expectToolBudget(tools, { total: 167_700, perTool: 6_000 });  // +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid, +0.9K (0.44.0) local_services_report + account_overview's checks
+      expectToolBudget(tools, { total: 173_100, perTool: 6_000 });  // +5.3K (0.45.0) the five read tools, +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid, +0.9K (0.44.0) local_services_report + account_overview's checks
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");

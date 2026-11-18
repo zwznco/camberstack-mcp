@@ -17,12 +17,13 @@ import { PageSpeedClient, type Strategy } from "./pagespeed.js";
 import { CONTAINER_PATH, DEMO_GTM_ACCOUNT, listContainers, tagManagerSetup } from "./gtm.js";
 import { GTM_TARGET, PUBLIC_GTM_CHANGES, PublicGtmChangeSchema } from "./gtm-changes.js";
 import { NotGrantedError, grantName } from "./google.js";
+import { adsReport, campaignDetails, conversionTracking, keywordsReport, searchTerms } from "./reads.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.44.6";
+export const SERVER_VERSION = "0.45.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
-Start with list_accounts. Answer the user's questions with account_overview and run_gaql (read-only). To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
+Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
 Never call apply_changes unless the user has explicitly approved that specific proposal in this conversation. Applied proposals can be reversed with undo_changes, except deletions Google can't reverse: their summary says so with a ⚠, so tell the user before they approve.
 Each Google service is added separately: when a result says one isn't part of the connection, give the user its grant_url (one click adds it); never tell them to reconnect.
 For keyword_ideas and keyword_metrics, leave out location_ids to count searches where the account's campaigns target; pass them (a country, a place or an id) to research another market, or "worldwide" for every location. Each result's target says which market was counted.
@@ -46,8 +47,11 @@ For a site's tags and conversion tracking, start with tag_manager_containers, th
  */
 const PICK_TOOLS = new Set(["switch_account", "choose_account"]);
 
+/** The read tools in reads.ts (0.45.0), for what users most often wrote run_gaql for. */
+const READ_TOOLS = ["campaign_details", "conversion_tracking", "search_terms_report", "ads_report", "keywords_report"];
+
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
-const GATED = new Set(["merchant_ad_spend", "account_overview", "local_services_report", "change_results", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account", "choose_account",
+const GATED = new Set(["merchant_ad_spend", "account_overview", "local_services_report", ...READ_TOOLS, "change_results", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account", "choose_account",
   ...[...PUBLIC_CHANGES, ...MERCHANT_LINK_CHANGES].map((c) => `propose_${c.shape.type.value}`)]);
 
 const LINK_CHANGES = new Set(MERCHANT_LINK_CHANGES.map((c) => c.shape.type.value as string));
@@ -333,9 +337,65 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     annotations: read,
   }, ({ customer_id, days }: { customer_id: string; days: number }) => session().localServices(customer_id, days));
 
+  const scopeIds = {
+    campaign_id: z.string().regex(/^\d+$/, "digits only").optional().describe("Only this campaign (campaign_id from account_overview)"),
+    ad_group_id: z.string().regex(/^\d+$/, "digits only").optional().describe("Only this ad group (from campaign_details)"),
+  };
+  tool("campaign_details", {
+    title: "Campaign details",
+    description: "One campaign's setup and results in one call: status and why it isn't serving, budget, bid strategy and targets, networks, "
+      + "start/end, locations by name (with radius and exclusions), languages, ad schedule, location mode, negative keywords and shared negative "
+      + "lists, sitelinks/callouts/call assets, conversion goals it bids on, its ad groups with results, and search impression share lost to budget and rank.",
+    inputSchema: { customer_id: customerId, campaign_id: z.string().regex(/^\d+$/, "digits only").describe("campaign_id from account_overview"), days },
+    annotations: read,
+  }, ({ customer_id, campaign_id, days }: { customer_id: string; campaign_id: string; days: number }) =>
+    session().readOn(customer_id, (r) => campaignDetails(r, campaign_id, days)));
+
+  tool("conversion_tracking", {
+    title: "Conversion tracking",
+    description: "How the account counts conversions: every conversion action (primary or secondary, type, source, counting, value, lookback, "
+      + "attribution, GA4 event) with its conversions in the window and last conversion date, the account's auto-tagging and conversion "
+      + "settings, the goals bidding uses, and a `watch` list (no primary action, primary actions that recorded nothing).",
+    inputSchema: { customer_id: customerId, days },
+    annotations: read,
+  }, ({ customer_id, days }: { customer_id: string; days: number }) =>
+    session().readOn(customer_id, (r, demo) => conversionTracking(r, days, demo)));
+
+  tool("search_terms_report", {
+    title: "Search terms report",
+    description: "What people actually searched before clicking the ads: each term with the keyword it matched, cost, clicks and conversions, "
+      + "sorted by cost, with totals for spend on terms that never converted. Whole account, or one campaign or ad group.",
+    inputSchema: { customer_id: customerId, ...scopeIds, days,
+      limit: z.number().int().min(1).max(500).default(100).describe("Terms to list, by cost") },
+    annotations: read,
+  }, (a: { customer_id: string; campaign_id?: string; ad_group_id?: string; days: number; limit: number }) =>
+    session().readOn(a.customer_id, (r) => searchTerms(r, a)));
+
+  tool("ads_report", {
+    title: "Ads report",
+    description: "The account's ads with their headlines and descriptions (pins and Google's performance labels), final URL, ad strength, "
+      + "approval and policy issues, why one isn't serving, and results in the window. Whole account, or one campaign or ad group.",
+    inputSchema: { customer_id: customerId, ...scopeIds, days,
+      include_paused: z.boolean().default(false).describe("Also list paused ads"),
+      limit: z.number().int().min(1).max(200).default(50).describe("Ads to list, by cost") },
+    annotations: read,
+  }, (a: { customer_id: string; campaign_id?: string; ad_group_id?: string; days: number; include_paused: boolean; limit: number }) =>
+    session().readOn(a.customer_id, (r) => adsReport(r, a)));
+
+  tool("keywords_report", {
+    title: "Keywords report",
+    description: "The account's keywords with match type, status and why one isn't serving, Quality Score and its three parts, bid, "
+      + "and results in the window, plus ad-group negative keywords. Whole account, or one campaign or ad group.",
+    inputSchema: { customer_id: customerId, ...scopeIds, days,
+      include_paused: z.boolean().default(false).describe("Also list paused keywords"),
+      limit: z.number().int().min(1).max(500).default(100).describe("Keywords to list, by cost") },
+    annotations: read,
+  }, (a: { customer_id: string; campaign_id?: string; ad_group_id?: string; days: number; include_paused: boolean; limit: number }) =>
+    session().readOn(a.customer_id, (r) => keywordsReport(r, a)));
+
   tool("run_gaql", {
     title: "Run a read-only GAQL query",
-    description: "Runs any read-only Google Ads Query Language SELECT for questions the other tools don't cover. Returns up to 500 rows. "
+    description: "Runs any read-only Google Ads Query Language SELECT for questions the other tools don't cover (campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report cover the common reads). Returns up to 500 rows. "
       + "Google rejects queries that break these rules: selecting or segmenting by segments.date needs a finite range in WHERE "
       + "(segments.date DURING LAST_30_DAYS, or BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'); click_view needs a single day (segments.date = 'YYYY-MM-DD'); "
       + "every field used in WHERE or ORDER BY must also be in SELECT. "

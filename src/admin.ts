@@ -350,15 +350,14 @@ const CHECK_LABELS: Record<string, string> = {
   google_recommendations: "Google recommendations",
 };
 
-/** Ready-made checks (checks.ts checksReport): who each one fired for, and who acted on it within the hour. */
+/** Ready-made checks (checks.ts checksReport): users each fired for, and how many acted within the hour. */
 function checksCard(v: View): string {
   const c = v.report.checks;
   const share = (n: number) => (c.overview_users ? ` <span class="dim">${Math.round((100 * n) / c.overview_users)}%</span>` : "");
   return card("Checks", table(["found", ["users", "r"], ["acted ≤1h", "r"]], c.flags.map((f) => [
     esc(CHECK_LABELS[f.flag] ?? f.flag), `${num(f.users)}${share(f.users)}`, f.acted == null ? `<span class="dim">—</span>` : num(f.acted)]),
     "No check fired in this window."),
-    `<small title="users = whose own-account overview raised it; % of the ${num(c.overview_users)} users with an overview since the checks went live; acted = proposed a change on that account within the hour">${
-      lastW(v.days)} · of ${num(c.overview_users)} overview users</small>`);
+    `<small title="% of users with an overview · acted = proposed a change there within the hour">${lastW(v.days)} · ${num(c.overview_users)} users</small>`);
 }
 
 /** Read-only looks at accounts the plan doesn't cover (account_previews): what the user did next. */

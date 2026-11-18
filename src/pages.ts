@@ -1424,7 +1424,8 @@ ${cmd(`{ "mcpServers": { "camberstack": { "url": "${mcpUrl}" } } }`)}
 
 <h2 id="how-it-works">How it works</h2>
 <ol>
-<li><strong>Read.</strong> <code>account_overview</code> summarises an account; <code>run_gaql</code> runs any read-only Google Ads query;
+<li><strong>Read.</strong> <code>account_overview</code> summarises an account; <code>campaign_details</code>, <code>conversion_tracking</code>,
+<code>search_terms_report</code>, <code>ads_report</code> and <code>keywords_report</code> answer the common questions; <code>run_gaql</code> runs any read-only Google Ads query;
 <code>keyword_ideas</code> and <code>keyword_metrics</code> size search demand. None of these change anything.</li>
 <li><strong>Propose.</strong> <code>propose_changes</code> stores the change as a proposal and checks it with Google (validate-only). Nothing is applied.</li>
 <li><strong>Approve.</strong> Your AI shows you the proposal. You approve that specific proposal in the conversation.</li>

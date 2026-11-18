@@ -883,6 +883,13 @@ export class UserSession {
     };
   }
 
+  /** The read tools in reads.ts (0.45.0): the account's head and the demo note around what each returns. */
+  async readOn<T extends object>(customerId: string, fn: (read: (q: string) => Promise<any[]>, demo: boolean) => Promise<T>) {
+    const a = await this.account(customerId);
+    const out = await fn((q) => this.ads.search(a.customerId, q, a.loginCustomerId), isDemo(a.customerId));
+    return { account: accountHead(a), ...demoNote(a.customerId), ...out };
+  }
+
   /** Results ready on these accounts that nothing has pointed out yet (result-notes.ts), once. Never breaks the tool it rides on. */
   resultsNote(customerIds: string[], via: NoteVia) {
     try { return takeNote(this.deps.db, this.user.id, customerIds, via); } catch (e) { reportError(e, `${via} note`); return {}; }

@@ -7,6 +7,16 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.45.0", date: "2026-11-18",
+    summary: "Five new read tools answer the questions people most often asked for a custom query: a campaign's setup, conversion tracking, search terms, ads and keywords.",
+    items: [
+      "**`campaign_details`**: one campaign's status and why it isn't serving, budget, bid strategy and targets, networks, locations by name, languages, ad schedule, negative keywords and shared lists, sitelinks and other assets, the conversion goals it bids on, its ad groups with results, and impression share lost to budget and rank.",
+      "**`conversion_tracking`**: every conversion action with its conversions in the window and last conversion date, primary or secondary, how it counts and values them, the GA4 event behind an imported one, plus the account's auto-tagging and the goals bidding uses. It flags primary actions that recorded nothing.",
+      "**`search_terms_report`**: what people searched before clicking, with the keyword each matched, sorted by cost, and how much went to terms that never converted.",
+      "**`ads_report`** and **`keywords_report`**: ads with their headlines, descriptions, ad strength and policy issues; keywords with Quality Score and its three parts. Each covers the whole account, or one campaign or ad group.",
+    ],
+  },
+  {
     version: "0.44.6", date: "2026-11-18",
     summary: "Keyword research can count searches worldwide.",
     items: [
