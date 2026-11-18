@@ -348,7 +348,7 @@ export function homePage(baseUrl: string): string {
 <section class="sec" id="changes"><div class="wrap">
 <div class="sec-head"><p class="kicker">Google Ads</p><h2>What it can change</h2>
 <p class="muted">Every change is a proposal you approve. New campaigns are created paused.</p></div>
-<ul class="also">${CHANGE_GROUPS.map(([k, v]) => `<li><strong>${k}:</strong> ${v}</li>`).join("")}</ul>
+<dl class="defs">${CHANGE_GROUPS.map(([k, v]) => `<dt>${k}</dt><dd>${v[0].toUpperCase()}${v.slice(1)}.</dd>`).join("")}</dl>
 <p class="muted small">Most changes can be undone. The few Google can't reverse (deleting a campaign, ad group or ad, removing a conversion action, applying a recommendation) warn you before you approve.
 <a href="/tools">Every tool and what it can do</a>; the code is <a href="${SOURCE_URL}">open source</a>.</p>
 </div></section>
