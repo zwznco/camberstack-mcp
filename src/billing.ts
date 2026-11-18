@@ -31,8 +31,8 @@ export interface BillingDeps {
   signingKey: Buffer;
   stripe?: { secretKey: string; proPriceId: string; agencyPriceId?: string; plusPriceId?: string };
   fetch?: typeof fetch;
-  /** Told once per new subscription (adconversions.ts reports it for a user who came from a ChatGPT ad). */
-  onPaid?: (userId: string, plan: Plan) => void;
+  /** Told once per new subscription (adconversions.ts reports it for a user who came from a ChatGPT ad; paid-alert.ts mails the operator). */
+  onPaid?: (userId: string, plan: Plan, subId: string) => void;
 }
 
 export class Billing {
@@ -113,7 +113,7 @@ export class Billing {
     if (r.changes && session.subscription && !this.d.db.prepare("SELECT 1 FROM plan_events WHERE user_id = ? AND kind = 'paid' AND src = ?")
       .get(session.client_reference_id, String(session.subscription))) {
       this.track(session.client_reference_id, "paid", String(session.subscription));
-      try { this.d.onPaid?.(session.client_reference_id, this.planOf(sub)); } catch { /* reporting must not break a payment */ }
+      try { this.d.onPaid?.(session.client_reference_id, this.planOf(sub), String(session.subscription)); } catch { /* reporting must not break a payment */ }
     }
     return r.changes ? session.client_reference_id : null;
   }

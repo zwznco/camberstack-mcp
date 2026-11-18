@@ -32,6 +32,7 @@ import { readCookie } from "./http.js";
 import { initErrorReporting, reportError } from "./sentry.js";
 import { teeToFile } from "./logfile.js";
 import { ErrorAlerts, stuckNow, UNSUPPORTED_PREFIX } from "./alerts.js";
+import { notifyPaid } from "./paid-alert.js";
 import { PageSpeedClient } from "./pagespeed.js";
 const DRAIN_FILE = "/tmp/drain";
 
@@ -71,9 +72,13 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   app.set("trust proxy", 1); // behind Traefik: one hop
   app.disable("x-powered-by");
   const adConversions = new AdConversions(db, cfg.conversions, cfg.baseUrl.startsWith("https://"), overrides.adsConversionFetch);
-  const billing = new Billing({ db, baseUrl: cfg.baseUrl, stripe: cfg.stripe, fetch: overrides.stripeFetch, onPaid: (id, plan) => adConversions.paid(id, plan),
-    signingKey: deriveKey(cfg.encryptionKey, "billing-links") });
   const internalEmails = new Set([...cfg.adminEmails, ...cfg.proEmails]);
+  const billing = new Billing({ db, baseUrl: cfg.baseUrl, stripe: cfg.stripe, fetch: overrides.stripeFetch, onPaid: (id, plan, subId) => {
+    adConversions.paid(id, plan);
+    void notifyPaid({ db, internalEmails, mail: cfg.mail, adminUrl: cfg.adminUrl, fetch: overrides.mailFetch,
+      to: cfg.alertTo ?? cfg.feedbackTo ?? cfg.mail?.replyTo ?? "adam@camberstack.io" }, id, plan, subId);
+  },
+    signingKey: deriveKey(cfg.encryptionKey, "billing-links") });
   const lifecycle = new Lifecycle({
     db, baseUrl: cfg.baseUrl, mail: cfg.mail, fetch: overrides.mailFetch, internalEmails,
     signingKey: lifecycleSigningKey(cfg.encryptionKey),
