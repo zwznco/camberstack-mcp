@@ -244,33 +244,15 @@ export function cmd(text: string): string {
 const shot = (file: string, w: number, h: number, alt: string) =>
   `<img class="shot" src="/shots/${file}" width="${w}" height="${h}" alt="${alt}" loading="lazy">`;
 
-const CHANGES: [string, string][] = [
-  ["Add negative keywords to a campaign", "Removes exactly the negatives it added"],
-  ["Pause or re-enable a campaign, ad group or keyword", "Restores the previous status"],
-  ["Change a campaign's daily budget (not shared budgets)", "Restores the previous amount"],
-  ["Set or remove the last day a campaign runs", "Restores the previous end date"],
-  ["Build a Search campaign: budget, bidding, locations, languages, ad groups, keywords, responsive search ads, negatives, sitelinks. Created paused", "Removes the campaign it built"],
-  ["Build a Display campaign: responsive display ads from your image URLs or existing image assets, budget, bidding, locations, languages. Created paused", "Removes the campaign it built"],
-  ["Build a Demand Gen campaign with YouTube video ads (the API's route onto YouTube; Google doesn't let it create Video campaigns). Created paused", "Removes the campaign it built"],
-  ["Build a Performance Max campaign: asset groups of headlines, descriptions, images and videos, business name and logo, conversion bidding, locations, languages (no shopping feed). Created paused", "Removes the campaign it built"],
-  ["Add an ad group, keywords, a responsive search ad or sitelinks to an existing campaign", "Removes exactly what it added"],
-  ["Make a campaign count and bid on one conversion category only (e.g. sign-ups)", "Restores the previous goals"],
-  ["Change a keyword's or ad group's max CPC", "Restores the previous bid"],
-  ["Pause or re-enable an ad (add the new ad and pause the old one to replace it)", "Restores the previous status"],
-  ["Add or remove a campaign's locations and languages; in-location-only or also interested", "Restores the previous targeting"],
-  ["Switch bid strategy: manual CPC, maximize clicks, maximize conversions, target impression share (e.g. top of page)", "Restores the previous strategy"],
-  ["Set a campaign's tracking URL suffix", "Restores the previous suffix"],
-  ["Create a conversion action, or set how many conversions a click can count, or its value, window and attribution", "Removes it / restores the previous setting"],
-  ["Remove a conversion action", "None: Google can't restore it, so it warns you first (a GA4 import can be imported again)"],
-  ["Edit a responsive search ad in place: it keeps its stats", "Restores the previous text and link"],
-  ["Negative keywords on an ad group, and shared negative lists", "Removes them, or restores the list"],
-  ["Ad schedules and device bids", "Restores the previous settings"],
-  ["Add callouts, structured snippets, a business name, logos and images", "Takes them off again"],
-  ["Turn AI Max and Google-written text on or off", "Restores the previous settings"],
-  ["Create a remarketing list of site visitors and add it to a campaign in observation (no customer data)", "Removes the list / takes it off"],
-  ["Delete keywords, negatives or sitelinks", "Adds them back; a sitelink comes back as a new one, so its history restarts"],
-  ["Delete an ad, ad group, campaign or shared negative list", "None: these can't be restored, so each warns you first"],
-  ["Apply or dismiss one of Google's recommendations", "None: applying warns you first, and Google picks the details"],
+/** The homepage's Google Ads change list, grouped. The full list is /tools (built from the tool definitions). */
+const CHANGE_GROUPS: [string, string][] = [
+  ["Cut waste", "negative keywords (campaign, ad group, shared lists); pause or delete keywords, ads, ad groups and campaigns"],
+  ["Budgets and bids", "daily budgets, end dates, max CPCs, bid strategies, ad schedules, device bids"],
+  ["New campaigns", "Search, Performance Max, Display, Demand Gen (YouTube)"],
+  ["Existing campaigns", "add ad groups, keywords, responsive search ads (or edit one and keep its stats), sitelinks, callouts and images"],
+  ["Targeting", "locations, languages, remarketing lists"],
+  ["Conversion tracking", "create and adjust conversion actions; choose what a campaign optimizes for"],
+  ["Google's suggestions", "apply or dismiss recommendations; turn AI Max on or off"],
 ];
 
 /** Two-part rows: the thing, then a labelled line under it ("Undo: …", "Reads: …"). */
@@ -365,13 +347,10 @@ export function homePage(baseUrl: string): string {
 
 <section class="sec" id="changes"><div class="wrap">
 <div class="sec-head"><p class="kicker">Google Ads</p><h2>What it can change</h2>
-<p class="muted">Every change is a proposal you approve, and all but a few have an undo: the ones Google can't reverse warn you first. A new campaign is always created paused, so building it and letting it spend are two separate approvals.</p></div>
-${pairList(CHANGES, "Undo")}
-<p class="muted small">Besides the warnings above, a proposal also warns before removing a campaign's last location.
-It deletes only what you approve, and it cannot touch billing or edit anything outside Google Ads, the <a href="#analytics">Google Analytics setup changes</a> and the <a href="/google-search-console-mcp">Search Console sitemaps and properties</a>,
-the <a href="/google-merchant-center-mcp">Merchant Center</a> and <a href="/google-tag-manager-mcp">Tag Manager</a> changes on their pages.
-Any question beyond these tools is answered with read-only queries. <a href="/tools">Every tool and what it can do</a>;
-the code is <a href="${SOURCE_URL}">open source</a>.</p>
+<p class="muted">Every change is a proposal you approve. New campaigns are created paused.</p></div>
+<ul class="also">${CHANGE_GROUPS.map(([k, v]) => `<li><strong>${k}:</strong> ${v}</li>`).join("")}</ul>
+<p class="muted small">Most changes can be undone. The few Google can't reverse (deleting a campaign, ad group or ad, removing a conversion action, applying a recommendation) warn you before you approve.
+<a href="/tools">Every tool and what it can do</a>; the code is <a href="${SOURCE_URL}">open source</a>.</p>
 </div></section>
 
 <section class="sec sec-tint"><div class="wrap">
@@ -409,7 +388,7 @@ ${cmd(`claude mcp add --transport http camberstack ${mcpUrl}`)}</div>
 <div class="app"><h3>Cursor, VS Code, others</h3>
 ${cmd(`{ "mcpServers": { "camberstack": { "url": "${mcpUrl}" } } }`)}</div>
 </div>
-<p class="muted small">Your AI app handles sign-in. Google shows exactly what Camberstack asks for before anything is shared: your Google Ads, and (optional) Search Console and Google Analytics. Camberstack changes nothing without your approval.</p>
+<p class="muted small">Your AI app handles sign-in. Google shows exactly what Camberstack asks for before anything is shared: your Google Ads, and (optional) Search Console, Google Analytics, Merchant Center and Tag Manager. Camberstack changes nothing without your approval.</p>
 <div class="demo" id="demo"><h3>Want to look first?</h3>
 <p>Connect, then ask <em>"Show me Camberstack's demo account"</em>. It's a sample plumbing business with six months of
 campaigns and search terms, so you can try questions, proposals, applying and undo without touching a real account.
