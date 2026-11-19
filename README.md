@@ -16,7 +16,7 @@ or Google Cloud project. A demo account lets anyone try every tool first.
 ![Claude proposes two negative keywords, checked with Google and waiting for approval before anything changes (demo account, sample data)](brand/readme-approve.png)
 <sub>Demo account 000-000-0001: sample data for a fictional plumbing business.</sub>
 
-Hosted: **https://camberstack.io/mcp**. Free: every tool and all five services on 1 Google Ads account, with 10 applied
+Hosted: `https://camberstack.io/mcp`. Free: every tool and all five services on 1 Google Ads account, with 10 applied
 changes every 30 days (reading and proposing are never limited). Plus $7/mo: unlimited changes on 1 account. Pro $15/mo:
 up to 5 accounts. Agency $49/mo: up to 25.
 

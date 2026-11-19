@@ -203,6 +203,15 @@ nav a{margin-left:12px}nav{white-space:nowrap}
 `;
 
 const SOURCE_URL = "https://github.com/zwznco/camberstack-mcp";
+// Profiles of Camberstack on other sites, for schema.org sameAs: AI answer engines use these to corroborate
+// what the product is (scripts/seo/audits/camberstack-geo.md). Only pages that resolve; Smithery's 404s since ~11-18.
+const SAME_AS = [
+  SOURCE_URL,
+  "https://glama.ai/mcp/servers/zwznco/camberstack-mcp",
+  "https://glama.ai/mcp/connectors/io.camberstack/google-ads",
+  "https://claude.ai/directory/connectors/camberstack",
+  "https://chatgpt.com/plugins/plugin_asdk_app_6ad5f787afc88191b997b629bbb30866",
+];
 
 function layout(o: { title: string; description: string; path: string; body: string; baseUrl: string; jsonLd?: object; noindex?: boolean; wide?: boolean; lang?: string; alternates?: Record<string, string> }): string {
   return `<!doctype html>
@@ -304,7 +313,7 @@ export function homePage(baseUrl: string): string {
     description: `A hosted Google Ads MCP server for Claude, ChatGPT and Cursor. Your AI proposes changes, you approve each one, and undo takes one step; the few changes Google can't reverse are flagged first. Free for 1 account with ${freeChangesShort()}; ${PRO_PRICE_LABEL} for ${PRO_ACCOUNTS}.`,
     jsonLd: {
       "@context": "https://schema.org", "@type": "SoftwareApplication", name: "Camberstack",
-      applicationCategory: "BusinessApplication", operatingSystem: "Web", url: baseUrl,
+      applicationCategory: "BusinessApplication", operatingSystem: "Web", url: baseUrl, sameAs: SAME_AS,
       description: "Hosted Google Ads MCP server for Claude, ChatGPT and other MCP apps: read-only queries, optional Search Console, Google Analytics 4, Merchant Center and Tag Manager, and approved changes with undo.",
       offers: [
         { "@type": "Offer", name: "Free", price: "0", priceCurrency: "USD",
@@ -1720,7 +1729,7 @@ export function aboutPage(baseUrl: string): string {
     jsonLd: {
       "@context": "https://schema.org", "@type": "AboutPage", url: `${baseUrl}/about`,
       mainEntity: {
-        "@type": "Organization", name: "Camberstack", url: baseUrl, logo: `${baseUrl}/logo.png`, email: CONTACT, sameAs: [SOURCE_URL],
+        "@type": "Organization", name: "Camberstack", url: baseUrl, logo: `${baseUrl}/logo.png`, email: CONTACT, sameAs: SAME_AS,
         founder: { "@type": "Person", name: FOUNDER.name, jobTitle: FOUNDER.role, image: `${baseUrl}${FOUNDER.photo}`, sameAs: [FOUNDER.linkedin] },
       },
     },
