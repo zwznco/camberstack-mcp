@@ -18,7 +18,9 @@ import { GA_TARGET, GaChangeSchema, gaInverseAfterApply, gaNoteAfterApply, resol
 import { GTM_TARGET, GtmChangeSchema, orderGtmChanges, gtmInverseAfterApply, gtmNoteAfterApply, resolveGtmChange, writeGtm, type GtmChange, type GtmOp, type GtmResolved } from "./gtm-changes.js";
 import { DEMO_GTM_ACCOUNT, DemoTagManager, GtmClient, routedTagManager, sharedReads, type TagManager } from "./gtm.js";
 import { SC_TARGET, ScChangeSchema, resolveScChange, scNoteAfterApply, writeSc, type ScChange, type ScOp, type ScResolved } from "./search-console-changes.js";
-import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole } from "./demo.js";
+import { DEMO_CID, DEMO_NAME, DEMO_NOTE, DEMO_SITE, DemoAds, DemoSearchConsole, demoPageFetch } from "./demo.js";
+import { fetchPage } from "./fetch-safe.js";
+import { auditSite, type PageFetcher } from "./site-audit.js";
 import { writeFileSync } from "node:fs";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, queryShape } from "./gaql.js";
 import { reportBug, reportError } from "./sentry.js";
@@ -178,6 +180,8 @@ export interface SessionDeps {
   gaFactory?: (user: UserRow) => Analytics;
   merchantFactory?: (user: UserRow) => Merchant;
   gtmFactory?: (user: UserRow) => TagManager;
+  /** The site audit's page fetcher; tests inject a fake (default: fetch-safe.ts fetchPage). */
+  pageFetch?: PageFetcher;
   /** The personal link that adds one Google service to this user's connection (grant.ts). */
   grantLink?: (kind: GrantKind, userId: string) => string | null;
 }
@@ -1395,6 +1399,33 @@ export class UserSession {
         urls_submitted: (m.contents ?? []).reduce((n, c) => n + Number(c.submitted ?? 0), 0),
       })),
       ...(list.length ? {} : { note: `No sitemap is submitted for this property. ${this.chatgpt ? "propose_submit_sitemap" : "propose_search_console_changes"} can submit one.` }),
+    };
+  }
+
+  /**
+   * Crawls a property's own site (site-audit.ts) and joins it to the property's sitemaps and a sample of URL Inspection
+   * records. Only properties this login has verified, so the audit never crawls a site the user doesn't control.
+   */
+  async searchConsoleSiteAudit(site: string, o: { max_pages: number; index_sample: number; limit: number }) {
+    if (site !== DEMO_SITE) {
+      const entry = (await this.sc.sites()).find((x) => x.siteUrl === site);
+      if (!entry || entry.permissionLevel === "siteUnverifiedUser") {
+        throw new Error(`${site} isn't a verified Search Console property of this login. Use a site_url exactly as search_console_sites lists it: `
+          + "the audit only crawls sites the user has verified in Search Console.");
+      }
+    }
+    const sitemapPaths = await this.sc.sitemaps(site).then((l) => l.map((m) => m.path), () => [] as string[]);
+    const result = await auditSite({ site, sitemapPaths, maxPages: o.max_pages, indexSample: o.index_sample, limit: o.limit,
+      fetch: site === DEMO_SITE ? demoPageFetch : (this.deps.pageFetch ?? fetchPage),
+      inspect: (url) => this.sc.inspect(site, url) });
+    return {
+      ...siteNote(site), ...result,
+      how_to_read: "Fix in this order: broken pages that other pages link to, sitemap entries that fail, redirect, are noindex or name another "
+        + "canonical (the sitemap should list only final, indexable URLs), canonical problems, then titles and descriptions. orphans are sitemap "
+        + "pages no crawled page links to: Google finds them slowly, so link them from a related page. counts covers everything; each list "
+        + "shows the first `limit`. The crawl fetched the live site just now, but index_sample is Google's record as of its last crawl. "
+        + (result.crawl.complete ? "" : "The crawl stopped early, so counts cover only the pages fetched: raise max_pages for more. ")
+        + "Titles over 65 characters and descriptions over 160 get cut in results; that is advice, not an error.",
     };
   }
 

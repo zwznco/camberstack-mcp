@@ -15,6 +15,7 @@ import { demoShopping } from "./merchant.js";
 import type { DB } from "./db.js";
 import { loadDemoState, saveDemoState } from "./db.js";
 import type { SearchAnalyticsRequest, Sitemap, UrlInspection } from "./google.js";
+import type { PageResponse } from "./fetch-safe.js";
 
 export const DEMO_CID = "0000000001";
 export const DEMO_NAME = "DEMO: Northwind Plumbing (sample data)";
@@ -540,4 +541,51 @@ export class DemoSearchConsole {
     }
     return { indexStatusResult: { verdict: "NEUTRAL", coverageState: "URL is unknown to Google" } };
   }
+}
+
+// ---------------------------------------------------------------- the demo website's pages, for search_console_site_audit
+
+/**
+ * The demo site as a crawler sees it: every page with organic traffic plus a few planted problems, so an audit of the
+ * demo finds one of each kind: a link to a 404, a two-hop redirect, a canonical pointing at that redirect, a noindex
+ * page in the sitemap, two pages sharing a title, a missing description, an over-long title, a sitemap page nothing
+ * links to (also "Discovered - currently not indexed" in DemoSearchConsole.inspect), and a page missing from the sitemap.
+ */
+const DEMO_LINKS: Record<string, string[]> = {
+  "/": ["/emergency", "/water-heaters/repair", "/drains", "/leaks", "/reviews", "/blog/shut-off-water-main", "/specials"],
+  "/emergency": ["/emergency/burst-pipes"],
+  "/water-heaters/repair": ["/water-heaters/tankless", "/water-heaters/replacement"],
+  "/drains": ["/drains/hydro-jetting", "/drains/old-guide"],
+  "/leaks": ["/leaks/slab", "/sewer/camera"],
+  "/blog/shut-off-water-main": ["/blog/noisy-water-heater"],
+};
+const DEMO_TITLES: Record<string, string> = {
+  "/water-heaters/tankless": "Water Heaters | Northwind Plumbing", "/water-heaters/replacement": "Water Heaters | Northwind Plumbing",
+  "/blog/noisy-water-heater": "Why Is My Water Heater Making Noise? Popping, Rumbling, Ticking and Screeching Explained | Northwind Plumbing",
+};
+const demoPage = (path: string, o: { noindex?: boolean; canonical?: string } = {}) => {
+  const title = DEMO_TITLES[path] ?? `${path === "/" ? "Northwind Plumbing" : path.split("/").filter(Boolean).at(-1)!.replace(/-/g, " ")} | Northwind Plumbing`;
+  const links = [...(DEMO_LINKS[path] ?? []), "/"].map((l) => `<a href="${l}">${l}</a>`).join(" ");
+  return `<!doctype html><html><head><title>${title}</title>`
+    + (path === "/drains/hydro-jetting" ? "" : `<meta name="description" content="Northwind Plumbing: ${path} in Springfield, same-day service.">`)
+    + (o.noindex ? `<meta name="robots" content="noindex">` : "")
+    + `<link rel="canonical" href="${SITE_HOME}${o.canonical ?? path}"></head><body><h1>${title}</h1><nav>${links}</nav></body></html>`;
+};
+
+export async function demoPageFetch(url: string): Promise<PageResponse> {
+  const ok = (body: string, contentType = "text/html; charset=utf-8"): PageResponse => ({ status: 200, contentType, xRobots: "", body, truncated: false, ms: 120 });
+  const moved = (to: string): PageResponse => ({ status: 301, location: to, contentType: "", xRobots: "", body: "", truncated: false, ms: 40 });
+  const path = url.startsWith(SITE_HOME) ? url.slice(SITE_HOME.length) || "/" : null;
+  if (path === "/robots.txt") return ok(`User-agent: *\nDisallow: /admin\nSitemap: ${SITE_HOME}/sitemap.xml\n`, "text/plain");
+  if (path === "/sitemap.xml") {
+    const paths = [...new Set(ORGANIC.map((r) => r[1])), "/blog/winterize-pipes"];
+    return ok(`<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${paths.map((p) => `<url><loc>${SITE_HOME}${p}</loc></url>`).join("")}</urlset>`, "application/xml");
+  }
+  if (path === "/specials") return moved("/offers");
+  if (path === "/offers") return moved("/offers/");
+  if (path === "/offers/") return ok(demoPage("/offers/"));
+  if (path === "/reviews") return ok(demoPage(path, { canonical: "/specials" }));
+  if (path === "/sewer/camera") return ok(demoPage(path, { noindex: true }));
+  if (path && (ORGANIC.some((r) => r[1] === path) || path === "/blog/winterize-pipes")) return ok(demoPage(path));
+  return { status: 404, contentType: "text/html", xRobots: "", body: "<h1>Not found</h1>", truncated: false, ms: 60 };
 }

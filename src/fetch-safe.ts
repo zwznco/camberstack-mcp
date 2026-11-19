@@ -10,6 +10,7 @@
  *   - the bytes must be a PNG, JPEG or GIF, whatever the Content-Type says
  */
 import https from "node:https";
+import http from "node:http";
 import dns from "node:dns";
 import net from "node:net";
 import type { LookupFunction } from "node:net";
@@ -107,4 +108,78 @@ export async function fetchImage(input: string): Promise<Buffer> {
     return res.body;
   }
   throw new Error(`Image ${input} redirected too many times.`);
+}
+
+// ---------------------------------------------------------------- pages, for the site audit (site-audit.ts)
+
+const PAGE_TIMEOUT_MS = 10_000;
+const MAX_PAGE_BYTES = 2 * 1024 * 1024;
+const PAGE_USER_AGENT = "Mozilla/5.0 (compatible; Camberstack-SiteAudit/1.0; +https://camberstack.io)";
+
+/** One response, redirects NOT followed: the audit records each hop itself. */
+export interface PageResponse {
+  status: number;
+  location?: string;
+  contentType: string;
+  /** The X-Robots-Tag header, lowercased. */
+  xRobots: string;
+  /** Text body, cut at 2 MB (truncated says so). Empty for a redirect or a non-text type. */
+  body: string;
+  truncated: boolean;
+  ms: number;
+}
+
+/**
+ * Validates a URL the audit is about to fetch: http or https on the standard port, no credentials, a public domain
+ * name. The audit only fetches URLs inside a property the user verified, but a page can link anywhere and a redirect
+ * can point anywhere, and the address is still re-checked at connect time (safeLookup).
+ */
+export function checkPageUrl(input: string): URL {
+  let u: URL;
+  try { u = new URL(input); } catch { throw new Error(`"${input}" is not a URL.`); }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error(`${input} is not an http(s) URL.`);
+  if (u.username || u.password) throw new Error(`${input} contains credentials.`);
+  if (u.port && u.port !== (u.protocol === "https:" ? "443" : "80")) throw new Error(`${input} uses a non-standard port.`);
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  if (net.isIP(host)) throw new Error(`${input} uses an IP address, not a domain name.`);
+  if (!host.includes(".") || /\.(local|internal|lan|home|localhost)$/i.test(host)) throw new Error(`${input} is not on a public domain.`);
+  u.hash = "";
+  return u;
+}
+
+/** GET one page through the SSRF guard. Text types (HTML, XML, plain) are read up to 2 MB; anything else isn't read. */
+export function fetchPage(input: string): Promise<PageResponse> {
+  const url = checkPageUrl(input);
+  const started = Date.now();
+  const mod = url.protocol === "https:" ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = mod.request(url, { method: "GET", lookup: safeLookup, timeout: PAGE_TIMEOUT_MS,
+      headers: { "user-agent": PAGE_USER_AGENT, accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.5" } }, (res) => {
+      const status = res.statusCode ?? 0;
+      const contentType = String(res.headers["content-type"] ?? "").toLowerCase();
+      const xr = res.headers["x-robots-tag"];
+      const xRobots = (Array.isArray(xr) ? xr.join(", ") : String(xr ?? "")).toLowerCase();
+      const base = { status, contentType, xRobots, location: res.headers.location };
+      if ((status >= 300 && status < 400) || !/text\/|xml|xhtml/.test(contentType)) {
+        res.resume();
+        return resolve({ ...base, body: "", truncated: false, ms: Date.now() - started });
+      }
+      const chunks: Buffer[] = [];
+      let size = 0, truncated = false;
+      res.on("data", (c: Buffer) => {
+        if (truncated) return;
+        size += c.length;
+        if (size > MAX_PAGE_BYTES) { truncated = true; chunks.push(c.subarray(0, c.length - (size - MAX_PAGE_BYTES))); res.destroy(); finish(); return; }
+        chunks.push(c);
+      });
+      let done = false;
+      const finish = () => { if (done) return; done = true; resolve({ ...base, body: Buffer.concat(chunks).toString("utf8"), truncated, ms: Date.now() - started }); };
+      res.on("end", finish);
+      res.on("close", finish);
+      res.on("error", (e) => (truncated ? finish() : reject(e)));
+    });
+    req.on("timeout", () => req.destroy(new Error(`timed out after ${PAGE_TIMEOUT_MS / 1000}s`)));
+    req.on("error", (e) => reject(new Error(e.message)));
+    req.end();
+  });
 }

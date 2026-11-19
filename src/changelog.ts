@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.46.0", date: "2026-11-18",
+    summary: "A site audit: Camberstack crawls your website and reports what holds back indexing and clicks.",
+    items: [
+      "**`search_console_site_audit`**: crawls a verified Search Console property's own site (up to 300 pages, politely, obeying robots.txt) and reports broken pages and the links to them, redirect chains, noindex or redirecting pages in the sitemap, canonical conflicts, missing or duplicate titles and descriptions, H1 problems, orphan pages nothing links to, pages missing from the sitemap and slow pages. It also checks a sample of pages in Google's index, the likeliest problems first. It changes nothing.",
+    ],
+  },
+  {
     version: "0.45.1", date: "2026-11-18",
     summary: "Campaign details list the keywords in the shared negative lists a campaign uses.",
     items: [

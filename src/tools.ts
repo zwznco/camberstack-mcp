@@ -20,7 +20,7 @@ import { NotGrantedError, grantName } from "./google.js";
 import { adsReport, campaignDetails, conversionTracking, keywordsReport, searchTerms } from "./reads.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.45.1";
+export const SERVER_VERSION = "0.46.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -517,6 +517,22 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     inputSchema: { site_url: siteUrl },
     annotations: read,
   }, ({ site_url }: { site_url: string }) => session().searchConsoleSitemaps(site_url));
+
+  tool("search_console_site_audit", {
+    title: "Site audit (crawl)",
+    description: "Crawls a Search Console property's own website, politely and up to max_pages, and reports what holds back indexing and clicks: "
+      + "broken pages and the links to them, redirect chains, noindex or redirecting pages in the sitemap, canonical conflicts, missing or duplicate "
+      + "titles and descriptions, H1 problems, orphan pages nothing links to, pages missing from the sitemap, slow pages, and Google's index status "
+      + "for a sample. Only verified properties. Takes up to a minute. Changes nothing.",
+    inputSchema: {
+      site_url: siteUrl,
+      max_pages: z.number().int().min(10).max(300).default(100).describe("Most pages to fetch"),
+      index_sample: z.number().int().min(0).max(20).default(10).describe("Pages to check in Google's index (URL Inspection), likeliest problems first"),
+      limit: z.number().int().min(1).max(100).default(15).describe("Most rows in each list"),
+    },
+    annotations: read,
+  }, ({ site_url, ...o }: { site_url: string; max_pages: number; index_sample: number; limit: number }) =>
+    session().searchConsoleSiteAudit(site_url, o));
 
   if (!o.chatgpt) tool("propose_search_console_changes", {
     title: "Propose Search Console changes (applies nothing)",
