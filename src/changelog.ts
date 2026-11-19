@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.46.3", date: "2026-11-19",
+    summary: "Page speed checks of many pages at once no longer all fail, and pages Google never tested don't use up your daily limit.",
+    items: [
+      "**`landing_page_speed` and many pages:** Google turns away tests when one account starts too many at once. An AI that checked about 30 pages in parallel got every one back as \"No page could be checked\". Now at most 4 of your pages are tested at a time and the rest wait their turn. A page Google turns away is tried once more, and a page that can't get a turn says so.",
+      "**Daily limit:** pages Google never tested (turned away, over quota, unreachable, or still waiting their turn) no longer count toward your 100 pages a day.",
+    ],
+  },
+  {
     version: "0.46.2", date: "2026-11-19",
     summary: "Keyword numbers no longer show a close variant as a keyword with no searches.",
     items: [

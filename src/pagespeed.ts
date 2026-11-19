@@ -18,6 +18,18 @@ const DEMO_HOST = "northwind-plumbing.example";
 /** A Lighthouse run takes 10-40s. AI apps give up on a tool call at ~60s (Claude Code aborted at 60.0s, 2026-11-05), so
  *  a slow page ends here as its own error and the others still come back. */
 const TIMEOUT_MS = 45_000;
+/** Tests one user may have running at Google at once, across all their calls. An AI fired 6 calls of ~5 pages together
+ *  (28 tests) and Google turned every one away in 0.6s with "Unable to process request" (prod, 2026-11-19). */
+export const MAX_IN_FLIGHT = 4;
+/** How long a page waits for a free slot before giving up untested. Wait + one throttle retry + TIMEOUT_MS stays under
+ *  the ~60s an AI app waits for a tool. */
+const QUEUE_MS = 8_000;
+const RETRY_MS = 2_500;
+/** Google's reply when it turns a burst of tests away; it says nothing about the page. */
+const THROTTLED = /Unable to process request/i;
+
+/** A page Google never tested (busy, throttled, over quota, unreachable): it doesn't count against the daily cap. */
+class Untested extends Error {}
 
 export type Strategy = "mobile" | "desktop";
 type Rating = "good" | "needs improvement" | "poor";
@@ -128,7 +140,30 @@ export function summarize(url: string, strategy: Strategy, r: any, maxFixes: num
 }
 
 export class PageSpeedClient {
-  constructor(private apiKey: string | undefined, private f: typeof fetch = fetch, private db?: DB) {}
+  /** Tests running and waiting, per user (or "" with no user). One process serves prod, so in-memory is enough. */
+  private running = new Map<string, number>();
+  private waiting = new Map<string, (() => void)[]>();
+
+  constructor(private apiKey: string | undefined, private f: typeof fetch = fetch, private db?: DB,
+    private limits = { inFlight: MAX_IN_FLIGHT, queueMs: QUEUE_MS, retryMs: RETRY_MS }) {}
+
+  /** Waits for one of the user's test slots; resolves to a release function, or throws Untested after queueMs. */
+  private async slot(key: string, url: string): Promise<() => void> {
+    const release = () => {
+      const next = this.waiting.get(key)?.shift();
+      if (next) next(); else this.running.set(key, (this.running.get(key) ?? 1) - 1);
+    };
+    if ((this.running.get(key) ?? 0) < this.limits.inFlight) { this.running.set(key, (this.running.get(key) ?? 0) + 1); return release; }
+    return new Promise((resolve, reject) => {
+      const q = this.waiting.get(key) ?? []; this.waiting.set(key, q);
+      const go = () => { clearTimeout(timer); resolve(release); };  // the slot passes straight from releaser to waiter
+      const timer = setTimeout(() => { q.splice(q.indexOf(go), 1); reject(new Untested(
+        `Not tested: ${url} waited ${this.limits.queueMs / 1000}s while ${this.limits.inFlight} other pages were being tested for this account `
+        + `(Google turns away more at once). It didn't count against the daily limit. Test it again once the others are done, `
+        + `a few pages per call, one call at a time.`)); }, this.limits.queueMs);
+      q.push(go);
+    });
+  }
 
   /** Counts `pages` real pages against the user's day, or refuses the call (nothing counted) if it would go over. */
   private spend(userId: string, pages: number): void {
@@ -143,11 +178,22 @@ export class PageSpeedClient {
       .run(userId, day, pages);
   }
 
+  /** Gives back pages Google never tested. Same UTC day as spend() except across midnight, where it errs toward the user. */
+  private refund(userId: string, pages: number): void {
+    if (!this.db || !pages) return;
+    this.db.prepare("UPDATE pagespeed_usage SET pages = MAX(0, pages - ?) WHERE user_id = ? AND day = ?")
+      .run(pages, userId, new Date().toISOString().slice(0, 10));
+  }
+
   /** `token`: the calling user's Google access token, used when there is no API key. */
   async check(urls: string[], o: { strategy: Strategy; fixes: number; token?: () => Promise<string>; userId?: string }): Promise<{ pages: PageSpeed[]; note: string }> {
     if (o.userId) this.spend(o.userId, urls.filter((u) => !isDemoUrl(u)).length);
-    const pages = await Promise.all(urls.map((u) => this.one(u, o).catch((e: Error) =>
-      ({ url: u, strategy: o.strategy, field: null, lab: null, fixes: [], error: e.message } satisfies PageSpeed))));
+    let untested = 0;
+    const pages = await Promise.all(urls.map((u) => this.queued(u, o).catch((e: Error) => {
+      if (e instanceof Untested) untested++;
+      return { url: u, strategy: o.strategy, field: null, lab: null, fixes: [], error: e.message } satisfies PageSpeed;
+    })));
+    if (o.userId) this.refund(o.userId, untested);
     if (pages.every((p) => p.error)) throw new Error(pages.length === 1 ? pages[0]!.error! : `No page could be checked. ${pages.map((p) => p.error).join(" ")}`);
     const demo = urls.some((u) => isDemoUrl(u));
     return {
@@ -160,26 +206,40 @@ export class PageSpeedClient {
     };
   }
 
-  private async one(url: string, o: { strategy: Strategy; fixes: number; token?: () => Promise<string> }): Promise<PageSpeed> {
+  private async queued(url: string, o: { strategy: Strategy; fixes: number; token?: () => Promise<string>; userId?: string }): Promise<PageSpeed> {
     if (isDemoUrl(url)) return demoResult(url, o.strategy, o.fixes);
-    if (!this.apiKey && !o.token) throw new Error("Page speed checks need a connected Google account.");
+    const release = await this.slot(o.userId ?? "", url);
+    try {
+      try { return await this.one(url, o); } catch (e) {
+        if (!(e instanceof Untested) || !THROTTLED.test((e as Error).message)) throw e;
+        await new Promise((r) => setTimeout(r, this.limits.retryMs));
+        return await this.one(url, o);
+      }
+    } finally { release(); }
+  }
+
+  private async one(url: string, o: { strategy: Strategy; fixes: number; token?: () => Promise<string> }): Promise<PageSpeed> {
+    if (!this.apiKey && !o.token) throw new Untested("Page speed checks need a connected Google account.");
     const q = new URLSearchParams({ url, strategy: o.strategy, category: "performance", ...(this.apiKey ? { key: this.apiKey } : {}) });
     const headers: Record<string, string> = this.apiKey ? {} : { Authorization: `Bearer ${await o.token!()}` };
     const res = await this.f(`${PSI}?${q}`, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) }).catch((e: Error) => {
       // "Try it again" sent one model back three times on the same page, each run hitting the cap (prod, 2026-11-15): a page
       // whose test runs this long usually does every time, so point the user at the web tool, which has no deadline.
-      throw new Error(e.name === "TimeoutError"
-        ? `Google's ${o.strategy} test of ${url} didn't finish within ${TIMEOUT_MS / 1000}s, about as long as an AI app waits for a tool. A page that `
+      if (e.name !== "TimeoutError") throw new Untested(`PageSpeed Insights unreachable: ${e.message}`);
+      throw new Error(`Google's ${o.strategy} test of ${url} didn't finish within ${TIMEOUT_MS / 1000}s, about as long as an AI app waits for a tool. A page that `
           + `tests this slowly usually does so every time, so don't retry it now. Tell the user to run it at `
-          + `https://pagespeed.web.dev/report?url=${encodeURIComponent(url)}, which waits for the test to finish.`
-        : `PageSpeed Insights unreachable: ${e.message}`);
+          + `https://pagespeed.web.dev/report?url=${encodeURIComponent(url)}, which waits for the test to finish.`);
     });
     const text = await res.text();
     if (!res.ok) {
       let msg = text.slice(0, 300);
       try { msg = JSON.parse(text).error?.message ?? msg; } catch { /* not JSON */ }
       // A page Google couldn't load (DNS, 4xx/5xx, timeout) comes back as a 400/500 with Lighthouse's reason.
-      if (res.status === 429) throw new Error("PageSpeed Insights is over its quota right now; try again in a minute.");
+      if (res.status === 429) throw new Untested("PageSpeed Insights is over its quota right now; try again in a minute.");
+      if (THROTTLED.test(msg)) {
+        throw new Untested(`Google turned away the ${o.strategy} test of ${url} ("${msg}"): it limits how many tests one account runs at once, and `
+          + `this says nothing about the page. It didn't count against the daily limit. Test a few pages per call, one call at a time.`);
+      }
       // Lighthouse's own NO_FCP text says to keep the browser window in the foreground, which means nothing here, and a model
       // retried the same page at once and got Google's cached failure back (prod, 2026-11-18).
       if (/\(NO_FCP\)/.test(msg)) {

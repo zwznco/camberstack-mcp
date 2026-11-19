@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DAILY_PAGES, PageSpeedClient, isDemoUrl, summarize } from "./pagespeed.js";
+import { DAILY_PAGES, MAX_IN_FLIGHT, PageSpeedClient, isDemoUrl, summarize } from "./pagespeed.js";
 import { openDb } from "./db.js";
 
 /** The parts of a PageSpeed Insights v5 response pagespeed.ts reads (Lighthouse 12 shape). */
@@ -163,5 +163,50 @@ describe("a page Lighthouse can't paint (NO_FCP, prod 2026-11-18)", () => {
       audits: { "first-contentful-paint": { numericValue: 827 }, "cumulative-layout-shift": { numericValue: 0 } } } }, 5);
     expect(r.lab!.performance_score).toBeNull();
     expect(r.lab!.no_score).toContain("lcp_ms");
+  });
+});
+
+describe("a burst of tests (prod 2026-11-19: 28 at once, Google turned every one away)", () => {
+  const busy = { error: { code: 500, message: "Unable to process request. Please wait a while and try again." } };
+  const usage = (db: ReturnType<typeof openDb>, u = "u1") =>
+    (db.prepare("SELECT pages FROM pagespeed_usage WHERE user_id = ?").get(u) as { pages: number } | undefined)?.pages ?? 0;
+
+  it("runs at most MAX_IN_FLIGHT of one user's tests at once, across calls, and finishes the rest", async () => {
+    let now = 0, peak = 0;
+    const f = (async () => { peak = Math.max(peak, ++now); await new Promise((r) => setTimeout(r, 5)); now--; return new Response(JSON.stringify(psi())); }) as unknown as typeof fetch;
+    const c = new PageSpeedClient(undefined, f, undefined, { inFlight: MAX_IN_FLIGHT, queueMs: 1000, retryMs: 1 });
+    const call = (n: number) => c.check(Array.from({ length: n }, (_, i) => `https://shop.test/${n}-${i}`), { strategy: "mobile", fixes: 1, token: async () => "t", userId: "u1" });
+    const out = await Promise.all([call(5), call(5), call(3)]);
+    expect(peak).toBe(MAX_IN_FLIGHT);
+    expect(out.flatMap((o) => o.pages).every((p) => !p.error)).toBe(true);
+  });
+
+  it("gives up on a page that waits too long, says why, and doesn't count it", async () => {
+    const db = openDb(":memory:");
+    const f = (async () => { await new Promise((r) => setTimeout(r, 60)); return new Response(JSON.stringify(psi())); }) as unknown as typeof fetch;
+    const c = new PageSpeedClient(undefined, f, db, { inFlight: 2, queueMs: 20, retryMs: 1 });
+    const out = await c.check(["https://shop.test/a", "https://shop.test/b", "https://shop.test/c"], { strategy: "mobile", fixes: 1, token: async () => "t", userId: "u1" });
+    expect(out.pages.filter((p) => !p.error)).toHaveLength(2);
+    expect(out.pages[2]!.error).toMatch(/^Not tested: .*didn't count against the daily limit/);
+    expect(usage(db)).toBe(2);
+  });
+
+  it("retries once when Google turns a test away, then succeeds", async () => {
+    let calls = 0;
+    const f = (async () => ++calls === 1 ? new Response(JSON.stringify(busy), { status: 500 }) : new Response(JSON.stringify(psi()))) as unknown as typeof fetch;
+    const out = await new PageSpeedClient("k", f, undefined, { inFlight: 4, queueMs: 100, retryMs: 1 }).check(["https://shop.test/landing"], { strategy: "mobile", fixes: 1 });
+    expect(calls).toBe(2);
+    expect(out.pages[0]!.lab?.performance_score).toBe(42);
+  });
+
+  it("explains a refusal that persists and refunds those pages, but not pages Google did test", async () => {
+    const db = openDb(":memory:");
+    const f = (async (u: string) => u.includes("bad.test") ? new Response(JSON.stringify({ error: { message: "Unable to resolve host" } }), { status: 400 })
+      : new Response(JSON.stringify(busy), { status: 500 })) as unknown as typeof fetch;
+    const c = new PageSpeedClient(undefined, f, db, { inFlight: 4, queueMs: 100, retryMs: 1 });
+    const err = await c.check(["https://shop.test/a", "https://bad.test/"], { strategy: "mobile", fixes: 1, token: async () => "t", userId: "u1" }).catch((e: Error) => e.message);
+    expect(err).toContain("Google turned away the mobile test of https://shop.test/a");
+    expect(err).toContain("says nothing about the page");
+    expect(usage(db)).toBe(1);  // bad.test was tested (Google couldn't load it); shop.test/a never was
   });
 });
