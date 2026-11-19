@@ -219,3 +219,36 @@ export function describeTarget(t: PlanTarget, geoNames: Map<string, string>, lan
     ...(notes.length ? { note: notes.join(" ") } : {}),
   };
 }
+
+/**
+ * Keyword Planner's historical metrics group close variants, and where it puts things varies (dev probe, 2026-11-19):
+ * - the numbers can sit on one keyword and the variant list on another ("surf school", no metrics, closeVariants
+ *   ["surf schools", "surfing school"]; the numbers on "surf schools");
+ * - a variant asked for can come back as a row with no metrics ("surfing school") or not at all ("hotels", only named
+ *   as "hotel"'s variant);
+ * - a keyword with no data comes back as a row with no metrics and no variants ("surf school" asked alone).
+ * Rows were passed on as they came, so a variant read as a keyword with no searches. Here each row with numbers gets every
+ * other keyword of its group as close_variants; rows without numbers are dropped, and what's left is no_data.
+ */
+export function closeVariantGroups(results: { text?: string; closeVariants?: string[]; keywordMetrics?: unknown }[]): Map<object, string[]> {
+  const groups: Set<string>[] = [];
+  const name = new Map<string, string>();
+  for (const r of results) {
+    const members = [r.text, ...(r.closeVariants ?? [])].filter((k): k is string => !!k);
+    for (const k of members) if (!name.has(k.toLowerCase())) name.set(k.toLowerCase(), k);
+    const keys = new Set(members.map((k) => k.toLowerCase()));
+    const touching = groups.filter((g) => [...keys].some((k) => g.has(k)));
+    const merged = new Set([...keys, ...touching.flatMap((g) => [...g])]);
+    for (const g of touching) groups.splice(groups.indexOf(g), 1);
+    groups.push(merged);
+  }
+  const out = new Map<object, string[]>();
+  for (const r of results) {
+    if (!r.keywordMetrics || !r.text) continue;
+    const own = r.text.toLowerCase();
+    const group = groups.find((g) => g.has(own)) ?? new Set<string>();
+    const rest = [...name.keys()].filter((k) => k !== own && group.has(k)).map((k) => name.get(k)!);  // in the order Google listed them
+    if (rest.length) out.set(r, rest);
+  }
+  return out;
+}

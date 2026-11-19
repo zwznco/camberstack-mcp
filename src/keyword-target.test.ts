@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CRITERIA_QUERY, campaignMarket, chooseTarget, describeTarget, resolveLanguage, resolveLocations, type Search, type Suggest } from "./keyword-target.js";
+import { CRITERIA_QUERY, campaignMarket, chooseTarget, closeVariantGroups, describeTarget, resolveLanguage, resolveLocations, type Search, type Suggest } from "./keyword-target.js";
 
 const crit = (campaign: string, status: string, type: "LOCATION" | "LANGUAGE", id: string, extra: object = {}) => ({
   campaign: { id: campaign, status },
@@ -241,5 +241,24 @@ describe("describeTarget", () => {
     const many = Array.from({ length: 12 }, (_, i) => String(1000 + i));
     expect(describeTarget(chooseTarget({}, { locations: many, languages: [] }), new Map(), null).note)
       .toContain("(12 in all; Keyword Planner takes 10, so these are the ones most campaigns target)");
+  });
+});
+
+describe("closeVariantGroups", () => {
+  // Google's generateKeywordHistoricalMetrics answers, United States, dev probe 2026-11-19.
+  const m = { avgMonthlySearches: "14800" };
+  const named = (results: any[]) => results.flatMap((r) => r.keywordMetrics ? [[r.text, closeVariantGroups(results).get(r) ?? []]] : []);
+
+  it("puts the group's other keywords on the row with the numbers, wherever Google listed them", () => {
+    expect(named([{ text: "surf lessons", keywordMetrics: m }, { text: "surf school", closeVariants: ["surf schools", "surfing school"] },
+      { text: "surf schools", keywordMetrics: m }, { text: "surfing school" }, { text: "qxzv surf zzkq" }]))
+      .toEqual([["surf lessons", []], ["surf schools", ["surf school", "surfing school"]]]);
+  });
+  it("keeps a variant Google named but sent no row for", () => {
+    expect(named([{ text: "hotel", closeVariants: ["hotels"], keywordMetrics: m }, { text: "hotel near me", keywordMetrics: m }]))
+      .toEqual([["hotel", ["hotels"]], ["hotel near me", []]]);
+  });
+  it("leaves a keyword with no data out of every group", () => {
+    expect(named([{ text: "surf school" }])).toEqual([]);
   });
 });

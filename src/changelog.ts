@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.46.2", date: "2026-11-19",
+    summary: "Keyword numbers no longer show a close variant as a keyword with no searches.",
+    items: [
+      "**`keyword_metrics` and close variants:** Keyword Planner counts close variants (\"surf school\", \"surf schools\", \"surfing school\") as one keyword. A variant used to come back as its own row with no numbers, which read as no searches. Now the row with the numbers lists the others as `close_variants`, and `no_data` holds only keywords Google has no numbers for.",
+    ],
+  },
+  {
     version: "0.46.1", date: "2026-11-19",
     summary: "Keyword research understands more place names, and picks the likeliest place instead of refusing.",
     items: [

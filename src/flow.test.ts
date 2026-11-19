@@ -230,10 +230,12 @@ class FakeAds {
     // A big list: one row per keyword, searches = its position, so a test can tell rows apart.
     if (req.keywords?.length > 100) return { results: req.keywords.map((text: string, i: number) => ({ text, keywordMetrics: {
       avgMonthlySearches: String(i), competition: "LOW", monthlySearchVolumes: [{ year: "2026", month: "SEPTEMBER", monthlySearches: String(i) }] } })) };
+    // As Google answers (dev probe, 2026-11-19): a close variant asked for beside its group's keyword, and a keyword with no
+    // data, each come back as a row with no keywordMetrics, not left out.
     return { results: [{ text: "invoice software", closeVariants: ["invoicing software"], keywordMetrics: {
       avgMonthlySearches: "12100", competition: "HIGH",
       monthlySearchVolumes: [{ year: "2026", month: "AUGUST", monthlySearches: "11000" }, { year: "2026", month: "SEPTEMBER", monthlySearches: "13000" }],
-    } }] };
+    } }, ...(req.keywords ?? []).filter((k: string) => k.toLowerCase() !== "invoice software").map((text: string) => ({ text }))] };
   }
   goals: Record<string, boolean> = { PURCHASE: true, SIGNUP: true };
   /** The HIDDEN copy Google Ads keeps of linked GA4 property 321's key event generate_lead. */
@@ -1706,6 +1708,8 @@ describe("OAuth + MCP end to end", () => {
     expect(m.json.target).toMatchObject({ locations: [{ id: "2826", name: "United Kingdom" }], language: "all languages", locations_from: "given", language_from: "all" });
     expect(m.json.keywords[0]).toMatchObject({ keyword: "invoice software", avg_monthly_searches: 12100, monthly: { "2026-08": 11000, "2026-09": 13000 } });
     expect(m.json.no_data).toEqual(["zzz"]);
+    // The variant's searches are in its group's row, and "zzz" has none: neither comes back as a row of nulls.
+    expect(m.json.keywords.map((k: any) => k.keyword)).toEqual(["invoice software"]);
 
     // "Worldwide": no geo target sent, which Keyword Planner counts as every location (prod #30593).
     const w = await call(token, "keyword_metrics", { customer_id: "1112223333", keywords: ["invoice software"], location_ids: ["Worldwide"], language_id: "1000" });

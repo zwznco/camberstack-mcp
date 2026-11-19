@@ -24,7 +24,7 @@ import { auditSite, type PageFetcher } from "./site-audit.js";
 import { writeFileSync } from "node:fs";
 import { CATALOG_QUERY, FIELD_COLUMNS, catalog, checkGaql, fieldQuery, queryShape } from "./gaql.js";
 import { reportBug, reportError } from "./sentry.js";
-import { CRITERIA_QUERY, campaignMarket, chooseTarget, describeTarget, resolveLanguage, resolveLocations, type PlanTarget, type Search } from "./keyword-target.js";
+import { CRITERIA_QUERY, campaignMarket, chooseTarget, closeVariantGroups, describeTarget, resolveLanguage, resolveLocations, type PlanTarget, type Search } from "./keyword-target.js";
 import { markNoted, takeNote, type NoteVia } from "./result-notes.js";
 import { CONVERSION_ACTIONS_QUERY, KEYWORD_URLS_QUERY, LIVE_ADS_QUERY, adCopyOf, adWording, bidStrategyChanges, callsQuery, campaignChangesQuery, conversionCountsQuery, flaggedWording, keywordUrlOverrides, looksLegal, shortCalls, stoppedConversions, WORDING_NOTE } from "./checks.js";
 import { CAVEATS, MIN_DAYS, add, changeLogQuery, changeLogWindow, overlapNote, overlaps, addDays, between, blocks, localDay, measurable, minus, reading, shown, targets, windows, zero, type Metrics, type Target, type Windows } from "./results.js";
@@ -1094,13 +1094,15 @@ export class UserSession {
     const split = o.by_location && t.location_ids.length > 1
       ? await this.splitByLocation(a, t, keywords, o.months, new Map(t.location_ids.map((id, i) => [id, (target.locations as { name: string }[])[i]?.name ?? id])))
       : null;
-    const rows = (res.results ?? []).map((r) => ({
+    const results: any[] = res.results ?? [];
+    const variants = closeVariantGroups(results);
+    const rows = results.filter((r) => r.keywordMetrics).map((r) => ({
       ...keywordRow(r.text, r.keywordMetrics, have),
-      ...(r.closeVariants?.length ? { close_variants: r.closeVariants } : {}),
+      ...(variants.get(r) ? { close_variants: variants.get(r) } : {}),
       monthly: monthly(r.keywordMetrics?.monthlySearchVolumes),
       ...(split ? { by_location: split.per.get(String(r.text).toLowerCase()) ?? {} } : {}),
     }));
-    // Google omits keywords it has no data for; say so rather than dropping them silently.
+    // Keywords with no row of their own: no data, unless a row counted them as its close variant.
     const covered = new Set(rows.flatMap((r) => [r.keyword, ...(r.close_variants ?? [])].map((k: string) => k.toLowerCase())));
     const head = {
       account: accountHead(a),
