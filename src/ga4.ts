@@ -223,7 +223,9 @@ export async function report(ga: Analytics, propertyId: string, o: { days: numbe
   const w = gaWindow(o);
   const r = await ga.runReport(propertyId, { ...w, dimensions: o.dimensions, metrics: o.metrics, limit: o.limit, orderBy: o.order_by,
     ...(o.filter ? { filter: { dimension: o.filter.dimension, value: o.filter.contains } } : {}) })
-    .catch(async (e: Error) => { throw new Error(e.message + await fieldHint(ga, propertyId, e.message)); });
+    // A missing grant passes through as itself: tools.ts turns it into a normal result with grant_url, and a rewrapped one
+    // logged as a failure instead (prod #29821, 2026-11-18).
+    .catch(async (e: Error) => { throw e instanceof NotGrantedError ? e : new Error(e.message + await fieldHint(ga, propertyId, e.message)); });
   return { property_id: propertyId, ...(propertyId === DEMO_PROPERTY ? { note: DEMO_NOTE } : {}), window: w, ...r };
 }
 

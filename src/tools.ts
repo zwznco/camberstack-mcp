@@ -20,7 +20,7 @@ import { NotGrantedError, grantName } from "./google.js";
 import { adsReport, campaignDetails, conversionTracking, keywordsReport, searchTerms } from "./reads.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.46.4";
+export const SERVER_VERSION = "0.46.5";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.

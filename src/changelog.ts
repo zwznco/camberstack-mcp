@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.46.5", date: "2026-11-19",
+    summary: "An Analytics report on a connection without Google Analytics now answers with the link to add it, not an error.",
+    items: [
+      "**`analytics_report` without Google Analytics added:** it came back as an error (with the link inside the message) instead of the normal answer the other tools give: what's missing and a one-click `grant_url` to add it.",
+    ],
+  },
+  {
     version: "0.46.4", date: "2026-11-19",
     summary: "Page speed checks sent alongside another check now wait their turn instead of failing.",
     items: [

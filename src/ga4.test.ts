@@ -97,6 +97,14 @@ describe("AnalyticsClient", () => {
     await expect(report(ga3, "9", { days: 7, dimensions: [], metrics: ["purchases"], limit: 10 })).rejects.toThrow(/^Google Analytics API 400: Field purchases is not a valid metric\.$/);
   });
 
+  it("lets a missing grant through report() as itself, so tools.ts answers with grant_url instead of an error (prod #29821)", async () => {
+    const ga = client(() => json({ error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED",
+      details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } }, 403));
+    const e = await report(ga, "9", { days: 7, dimensions: [], metrics: ["sessions"], limit: 10 }).catch((x: Error) => x);
+    expect(e).toBeInstanceOf(NotGrantedError);
+    expect((e as NotGrantedError).link).toBe("https://camberstack.io/connect/analytics?t=x");
+  });
+
   it("runs at most four Data API calls at once per property; the rest queue (2026-11-13: nine at once hit 429)", async () => {
     let live = 0, peak = 0, other = 0;
     const releases: (() => void)[] = [];
