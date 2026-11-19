@@ -1,6 +1,6 @@
 // Resource limits from the 2026-11-13 security review: run_gaql's LIMIT, the Ads response size cap, the Google fetch deadline.
 import { describe, expect, it } from "vitest";
-import { AdsClient, MAX_ADS_BODY_BYTES, fetchGoogle, GOOGLE_TIMEOUT_MS } from "./google.js";
+import { AdsClient, MAX_ADS_BODY_BYTES, fetchGoogle, GOOGLE_TIMEOUT_MS, UNREACHABLE } from "./google.js";
 import { capLimit, dropLimit, hasLimit, MAX_QUERY_ROWS } from "./session.js";
 
 describe("capLimit", () => {
@@ -55,5 +55,39 @@ describe("Google fetch deadline", () => {
     expect(signal).toBeInstanceOf(AbortSignal);
     const hung = (async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); }) as typeof fetch;
     await expect(fetchGoogle(hung, "https://example.test/")).rejects.toThrow(`Google didn't answer within ${GOOGLE_TIMEOUT_MS / 1000} seconds`);
+  });
+});
+
+describe("Google fetch: a connection that never opened", () => {
+  // What undici throws (checked on node 22 in the prod image, 2026-11-18).
+  const notSent = (code: string) => new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code }) });
+  const flaky = (errors: unknown[]) => {
+    let calls = 0;
+    const f = (async () => { const e = errors[calls++]; if (e) throw e; return new Response("{}"); }) as typeof fetch;
+    return { f, calls: () => calls };
+  };
+  it("retries once when the connect timed out, was refused or the name didn't resolve, even for a write", async () => {
+    for (const code of ["UND_ERR_CONNECT_TIMEOUT", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]) {
+      const { f, calls } = flaky([notSent(code)]);
+      expect((await fetchGoogle(f, "https://example.test/", { method: "POST" }, 0)).status).toBe(200);
+      expect(calls()).toBe(2);
+    }
+  });
+  it("reads the code from a dual-stack connect's error list", async () => {
+    const both = new TypeError("fetch failed", { cause: Object.assign(new AggregateError([{ code: "ECONNREFUSED" }, { code: "ENETUNREACH" }]), { code: undefined }) });
+    const { f, calls } = flaky([both]);
+    await fetchGoogle(f, "https://example.test/", {}, 0);
+    expect(calls()).toBe(2);
+  });
+  it("says plainly that nothing was sent when the retry fails too", async () => {
+    const { f, calls } = flaky([notSent("UND_ERR_CONNECT_TIMEOUT"), notSent("UND_ERR_CONNECT_TIMEOUT")]);
+    await expect(fetchGoogle(f, "https://example.test/", {}, 0)).rejects.toThrow(new RegExp(`^${UNREACHABLE}.*nothing was sent`));
+    expect(calls()).toBe(2);
+  });
+  it("never retries a failure after the request may have reached Google", async () => {
+    const reset = new TypeError("fetch failed", { cause: Object.assign(new Error("other side closed"), { code: "ECONNRESET" }) });
+    const { f, calls } = flaky([reset]);
+    await expect(fetchGoogle(f, "https://example.test/", { method: "POST" }, 0)).rejects.toBe(reset);
+    expect(calls()).toBe(1);
   });
 });

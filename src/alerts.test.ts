@@ -105,6 +105,13 @@ describe("verdict", () => {
     expect(verdict(errorCode(long), long, false).act).toBe(true);
     expect(verdict("RESOURCE_EXHAUSTED", "Google Ads API 429: RESOURCE_EXHAUSTED Too many requests.", false).act).toBe(true);
   });
+  it("calls our network failing to reach Google FYI, not a bug", () => {
+    for (const e of ["fetch failed", "Camberstack couldn't reach Google (a network problem on Camberstack's side, not your request; nothing was sent, so nothing changed). Try again in a minute."]) {
+      const v = verdict(errorCode(e), e, false);
+      expect(v.act).toBe(false);
+      expect(v.why).not.toMatch(/Bugsink/);
+    }
+  });
   it("points a crash at Bugsink", () => {
     expect(verdict("TypeError", "TypeError: Cannot read properties of undefined", false).why).toMatch(/Bugsink/);
   });

@@ -88,7 +88,11 @@ export function verdict(code: string, error: string, recoveredLater: boolean, re
   }
   if (ACCOUNT_REFUSALS.test(code)) return { act: true, why: "Google refuses this for their account; the user must fix it in Google Ads. Check our message says how, and consider emailing them." };
   if (/^[A-Z_]+$/.test(code)) return { act: true, why: "The model kept writing a request Google rejects. Check the error tells it the fix (src/gaql.ts catalog, or the hint in google.ts)." };
-  if (/^(TypeError|ReferenceError|SqliteError|RangeError)|Cannot read propert|is not a function|fetch failed/.test(error))
+  // Our network, not our code: the box couldn't reach Google (fetchGoogle already retried once). A bare "fetch failed" is
+  // a network error that happened after the request was sent (reset), or one from before the retry existed.
+  if (/couldn't reach Google|^fetch failed$/.test(error))
+    return { act: false, why: "Camberstack's network couldn't reach Google (not the request, not our code). Act only if it repeats across users: check the box's outbound (~/CLAUDE.md, NAT hairpin section)." };
+  if (/^(TypeError|ReferenceError|SqliteError|RangeError)|Cannot read propert|is not a function/.test(error))
     return { act: true, why: "Looks like our bug. Check Bugsink (errors.zwznco.com) for the stack." };
   return { act: true, why: "Our own message, and the model didn't get past it. Check it says what to do next." };
 }

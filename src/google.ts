@@ -147,14 +147,36 @@ type FetchLike = typeof fetch;
 /** A total deadline on every call to Google. Before 2026-11-13 there was none (only PageSpeed had one): a hung upstream held the
  *  request, its socket and the user's gate queue indefinitely. Abort also stops a body still being read. */
 export const GOOGLE_TIMEOUT_MS = 90_000;
-export async function fetchGoogle(f: FetchLike, url: string, init: RequestInit = {}): Promise<Response> {
-  try {
-    return await f(url, { ...init, signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS) });
-  } catch (e) {
-    if ((e as Error)?.name === "TimeoutError") {
-      throw new Error(`Google didn't answer within ${GOOGLE_TIMEOUT_MS / 1000} seconds, so Camberstack stopped waiting. Try again; if it repeats, narrow the request.`);
+/** Failures that happen before a request leaves the box: the connection never opened, or Google's name didn't resolve.
+ *  Google never saw the request, so retrying is safe even for a write. A reset or a timeout after sending is not here:
+ *  a change might already have applied. undici puts the code on `cause` (on `cause.errors` for a dual-stack connect). */
+const NOT_SENT = new Set(["UND_ERR_CONNECT_TIMEOUT", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH"]);
+export function neverSent(e: unknown): boolean {
+  const cause = (e as { cause?: { code?: string; errors?: { code?: string }[] } })?.cause;
+  if (!cause) return false;
+  return NOT_SENT.has(cause.code ?? "") || (cause.errors ?? []).some((x) => NOT_SENT.has(x.code ?? ""));
+}
+/** Starts the message for a call that couldn't reach Google at all; alerts.ts and session.ts recognise it by this text. */
+export const UNREACHABLE = "Camberstack couldn't reach Google";
+
+/**
+ * 2026-11-19 02:21–02:22 UTC: for a minute the box couldn't open connections to Google, and four calls (two
+ * tag_manager_containers, two run_gaql) failed with a bare "fetch failed" after the 10s connect timeout. One retry after a
+ * short wait rides out a blip like that; if it fails again, the AI hears that it's our network, not the request.
+ */
+export async function fetchGoogle(f: FetchLike, url: string, init: RequestInit = {}, retryWaitMs = 2_000): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await f(url, { ...init, signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS) });
+    } catch (e) {
+      if ((e as Error)?.name === "TimeoutError") {
+        throw new Error(`Google didn't answer within ${GOOGLE_TIMEOUT_MS / 1000} seconds, so Camberstack stopped waiting. Try again; if it repeats, narrow the request.`);
+      }
+      if (!neverSent(e)) throw e;
+      if (attempt === 0) { await new Promise((r) => setTimeout(r, retryWaitMs)); continue; }
+      throw new Error(`${UNREACHABLE} (a network problem on Camberstack's side, not your request; nothing was sent, so nothing changed). `
+        + "Try again in a minute.", { cause: e });
     }
-    throw e;
   }
 }
 

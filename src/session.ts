@@ -57,7 +57,7 @@ type Unreadable = { customerId: string; error: string; grant_url?: string; trans
 function isTransient(e: unknown): boolean {
   if (e instanceof AdsApiError) return e.status >= 500 || e.status === 429;
   const err = e as { name?: string; message?: string; cause?: { code?: string; name?: string } };
-  return err?.name === "TimeoutError" || err?.name === "AbortError" || /fetch failed|timed? ?out|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket/i.test(`${err?.message} ${err?.cause?.code} ${err?.cause?.name}`);
+  return err?.name === "TimeoutError" || err?.name === "AbortError" || /fetch failed|couldn't reach Google|timed? ?out|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket/i.test(`${err?.message} ${err?.cause?.code} ${err?.cause?.name}`);
 }
 /**
  * Each user's account list, shared across requests. A UserSession lives for one MCP request, so a cache on the
