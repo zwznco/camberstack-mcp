@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.46.4", date: "2026-11-19",
+    summary: "Page speed checks sent alongside another check now wait their turn instead of failing.",
+    items: [
+      "**`landing_page_speed` called twice at once:** a page waiting for one of your 4 test slots gave up after 8 seconds, shorter than a single test, so a second check sent alongside a first of 4 or more pages came back as \"No page could be checked\". Pages now wait up to 30 seconds, and one that waited runs on the time left before your AI stops waiting. If that runs out, it says so and doesn't count toward your daily limit.",
+    ],
+  },
+  {
     version: "0.46.3", date: "2026-11-19",
     summary: "Page speed checks of many pages at once no longer all fail, and pages Google never tested don't use up your daily limit.",
     items: [

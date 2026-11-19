@@ -174,7 +174,7 @@ describe("a burst of tests (prod 2026-11-19: 28 at once, Google turned every one
   it("runs at most MAX_IN_FLIGHT of one user's tests at once, across calls, and finishes the rest", async () => {
     let now = 0, peak = 0;
     const f = (async () => { peak = Math.max(peak, ++now); await new Promise((r) => setTimeout(r, 5)); now--; return new Response(JSON.stringify(psi())); }) as unknown as typeof fetch;
-    const c = new PageSpeedClient(undefined, f, undefined, { inFlight: MAX_IN_FLIGHT, queueMs: 1000, retryMs: 1 });
+    const c = new PageSpeedClient(undefined, f, undefined, { inFlight: MAX_IN_FLIGHT, queueMs: 1000, retryMs: 1, callMs: 60_000 });
     const call = (n: number) => c.check(Array.from({ length: n }, (_, i) => `https://shop.test/${n}-${i}`), { strategy: "mobile", fixes: 1, token: async () => "t", userId: "u1" });
     const out = await Promise.all([call(5), call(5), call(3)]);
     expect(peak).toBe(MAX_IN_FLIGHT);
@@ -184,17 +184,38 @@ describe("a burst of tests (prod 2026-11-19: 28 at once, Google turned every one
   it("gives up on a page that waits too long, says why, and doesn't count it", async () => {
     const db = openDb(":memory:");
     const f = (async () => { await new Promise((r) => setTimeout(r, 60)); return new Response(JSON.stringify(psi())); }) as unknown as typeof fetch;
-    const c = new PageSpeedClient(undefined, f, db, { inFlight: 2, queueMs: 20, retryMs: 1 });
+    const c = new PageSpeedClient(undefined, f, db, { inFlight: 2, queueMs: 20, retryMs: 1, callMs: 60_000 });
     const out = await c.check(["https://shop.test/a", "https://shop.test/b", "https://shop.test/c"], { strategy: "mobile", fixes: 1, token: async () => "t", userId: "u1" });
     expect(out.pages.filter((p) => !p.error)).toHaveLength(2);
     expect(out.pages[2]!.error).toMatch(/^Not tested: .*didn't count against the daily limit/);
     expect(usage(db)).toBe(2);
   });
 
+  it("lets a second call wait out a first call's tests instead of failing whole (prod, 2026-11-19)", async () => {
+    const f = (async () => { await new Promise((r) => setTimeout(r, 60)); return new Response(JSON.stringify(psi())); }) as unknown as typeof fetch;
+    const c = new PageSpeedClient(undefined, f, undefined, { inFlight: 4, queueMs: 500, retryMs: 1, callMs: 60_000 });
+    const call = (tag: string, n: number) => c.check(Array.from({ length: n }, (_, i) => `https://shop.test/${tag}-${i}`), { strategy: "mobile", fixes: 1, token: async () => "t", userId: "u1" });
+    const [a, b] = await Promise.all([call("a", 4), call("b", 3)]);
+    expect([...a.pages, ...b.pages].every((p) => !p.error)).toBe(true);
+  });
+
+  it("runs a page that waited on what's left of the call, and doesn't count it if that runs out", async () => {
+    const db = openDb(":memory:");
+    const f = ((_u: string, init: RequestInit) => new Promise<Response>((res, rej) => {
+      const t = setTimeout(() => res(new Response(JSON.stringify(psi()))), 70);
+      init.signal!.addEventListener("abort", () => { clearTimeout(t); rej(init.signal!.reason); });
+    })) as unknown as typeof fetch;
+    const c = new PageSpeedClient(undefined, f, db, { inFlight: 1, queueMs: 1000, retryMs: 1, callMs: 100 });
+    const out = await c.check(["https://shop.test/a", "https://shop.test/b"], { strategy: "mobile", fixes: 1, token: async () => "t", userId: "u1" });
+    expect(out.pages[0]!.error).toBeUndefined();
+    expect(out.pages[1]!.error).toMatch(/^Not tested: .*waited its turn.*didn't count against the daily limit/);
+    expect(usage(db)).toBe(1);
+  });
+
   it("retries once when Google turns a test away, then succeeds", async () => {
     let calls = 0;
     const f = (async () => ++calls === 1 ? new Response(JSON.stringify(busy), { status: 500 }) : new Response(JSON.stringify(psi()))) as unknown as typeof fetch;
-    const out = await new PageSpeedClient("k", f, undefined, { inFlight: 4, queueMs: 100, retryMs: 1 }).check(["https://shop.test/landing"], { strategy: "mobile", fixes: 1 });
+    const out = await new PageSpeedClient("k", f, undefined, { inFlight: 4, queueMs: 100, retryMs: 1, callMs: 60_000 }).check(["https://shop.test/landing"], { strategy: "mobile", fixes: 1 });
     expect(calls).toBe(2);
     expect(out.pages[0]!.lab?.performance_score).toBe(42);
   });
@@ -203,7 +224,7 @@ describe("a burst of tests (prod 2026-11-19: 28 at once, Google turned every one
     const db = openDb(":memory:");
     const f = (async (u: string) => u.includes("bad.test") ? new Response(JSON.stringify({ error: { message: "Unable to resolve host" } }), { status: 400 })
       : new Response(JSON.stringify(busy), { status: 500 })) as unknown as typeof fetch;
-    const c = new PageSpeedClient(undefined, f, db, { inFlight: 4, queueMs: 100, retryMs: 1 });
+    const c = new PageSpeedClient(undefined, f, db, { inFlight: 4, queueMs: 100, retryMs: 1, callMs: 60_000 });
     const err = await c.check(["https://shop.test/a", "https://bad.test/"], { strategy: "mobile", fixes: 1, token: async () => "t", userId: "u1" }).catch((e: Error) => e.message);
     expect(err).toContain("Google turned away the mobile test of https://shop.test/a");
     expect(err).toContain("says nothing about the page");

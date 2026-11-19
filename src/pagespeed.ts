@@ -21,9 +21,13 @@ const TIMEOUT_MS = 45_000;
 /** Tests one user may have running at Google at once, across all their calls. An AI fired 6 calls of ~5 pages together
  *  (28 tests) and Google turned every one away in 0.6s with "Unable to process request" (prod, 2026-11-19). */
 export const MAX_IN_FLIGHT = 4;
-/** How long a page waits for a free slot before giving up untested. Wait + one throttle retry + TIMEOUT_MS stays under
- *  the ~60s an AI app waits for a tool. */
-const QUEUE_MS = 8_000;
+/** The whole call's budget, under the ~60s an AI app waits for a tool. A page that waited for a slot gets what's left. */
+const CALL_MS = 55_000;
+/** How long a page waits for a free slot before giving up untested. It was 8s, shorter than one test (10-20s), so a second
+ *  call sent alongside a first of 4+ pages failed whole (prod, 2026-11-19, Codex). 30s leaves the page 25s to run. */
+const QUEUE_MS = 30_000;
+/** A throttled page is retried only if at least this much of the call's budget is left after the pause. */
+const MIN_RETRY_MS = 10_000;
 const RETRY_MS = 2_500;
 /** Google's reply when it turns a burst of tests away; it says nothing about the page. */
 const THROTTLED = /Unable to process request/i;
@@ -145,7 +149,7 @@ export class PageSpeedClient {
   private waiting = new Map<string, (() => void)[]>();
 
   constructor(private apiKey: string | undefined, private f: typeof fetch = fetch, private db?: DB,
-    private limits = { inFlight: MAX_IN_FLIGHT, queueMs: QUEUE_MS, retryMs: RETRY_MS }) {}
+    private limits = { inFlight: MAX_IN_FLIGHT, queueMs: QUEUE_MS, retryMs: RETRY_MS, callMs: CALL_MS }) {}
 
   /** Waits for one of the user's test slots; resolves to a release function, or throws Untested after queueMs. */
   private async slot(key: string, url: string): Promise<() => void> {
@@ -189,7 +193,8 @@ export class PageSpeedClient {
   async check(urls: string[], o: { strategy: Strategy; fixes: number; token?: () => Promise<string>; userId?: string }): Promise<{ pages: PageSpeed[]; note: string }> {
     if (o.userId) this.spend(o.userId, urls.filter((u) => !isDemoUrl(u)).length);
     let untested = 0;
-    const pages = await Promise.all(urls.map((u) => this.queued(u, o).catch((e: Error) => {
+    const run = { ...o, deadline: Date.now() + this.limits.callMs };
+    const pages = await Promise.all(urls.map((u) => this.queued(u, run).catch((e: Error) => {
       if (e instanceof Untested) untested++;
       return { url: u, strategy: o.strategy, field: null, lab: null, fixes: [], error: e.message } satisfies PageSpeed;
     })));
@@ -206,26 +211,33 @@ export class PageSpeedClient {
     };
   }
 
-  private async queued(url: string, o: { strategy: Strategy; fixes: number; token?: () => Promise<string>; userId?: string }): Promise<PageSpeed> {
+  private async queued(url: string, o: { strategy: Strategy; fixes: number; token?: () => Promise<string>; userId?: string; deadline: number }): Promise<PageSpeed> {
     if (isDemoUrl(url)) return demoResult(url, o.strategy, o.fixes);
     const release = await this.slot(o.userId ?? "", url);
     try {
       try { return await this.one(url, o); } catch (e) {
         if (!(e instanceof Untested) || !THROTTLED.test((e as Error).message)) throw e;
+        if (o.deadline - Date.now() - this.limits.retryMs < MIN_RETRY_MS) throw e;
         await new Promise((r) => setTimeout(r, this.limits.retryMs));
         return await this.one(url, o);
       }
     } finally { release(); }
   }
 
-  private async one(url: string, o: { strategy: Strategy; fixes: number; token?: () => Promise<string> }): Promise<PageSpeed> {
+  private async one(url: string, o: { strategy: Strategy; fixes: number; token?: () => Promise<string>; deadline: number }): Promise<PageSpeed> {
     if (!this.apiKey && !o.token) throw new Untested("Page speed checks need a connected Google account.");
+    // A page that waited its turn runs on what's left of the call, so the call still answers before the AI app gives up.
+    const timeoutMs = Math.min(TIMEOUT_MS, o.deadline - Date.now());
+    const outOfTime = `Not tested: ${url} waited its turn behind this account's other tests and then ran out of the time an AI app waits `
+      + `for a tool. It didn't count against the daily limit. Test it again in a call of its own.`;
+    if (timeoutMs <= 0) throw new Untested(outOfTime);
     const q = new URLSearchParams({ url, strategy: o.strategy, category: "performance", ...(this.apiKey ? { key: this.apiKey } : {}) });
     const headers: Record<string, string> = this.apiKey ? {} : { Authorization: `Bearer ${await o.token!()}` };
-    const res = await this.f(`${PSI}?${q}`, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) }).catch((e: Error) => {
+    const res = await this.f(`${PSI}?${q}`, { headers, signal: AbortSignal.timeout(timeoutMs) }).catch((e: Error) => {
       // "Try it again" sent one model back three times on the same page, each run hitting the cap (prod, 2026-11-15): a page
       // whose test runs this long usually does every time, so point the user at the web tool, which has no deadline.
       if (e.name !== "TimeoutError") throw new Untested(`PageSpeed Insights unreachable: ${e.message}`);
+      if (timeoutMs < TIMEOUT_MS) throw new Untested(outOfTime);
       throw new Error(`Google's ${o.strategy} test of ${url} didn't finish within ${TIMEOUT_MS / 1000}s, about as long as an AI app waits for a tool. A page that `
           + `tests this slowly usually does so every time, so don't retry it now. Tell the user to run it at `
           + `https://pagespeed.web.dev/report?url=${encodeURIComponent(url)}, which waits for the test to finish.`);
