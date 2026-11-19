@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import dns from "node:dns";
 import { checkImageUrl, fetchImage, imageType, isPrivateAddress } from "./fetch-safe.js";
 import { youtubeId } from "./changes.js";
 
@@ -20,7 +21,14 @@ describe("image fetch guards", () => {
   });
 
   it("refuses a name that resolves to a private address at connect time", async () => {
-    await expect(fetchImage("https://localhost.localtest.me/a.png")).rejects.toThrow(/resolves to a private address/);
+    // The resolver is stubbed: a real lookup (of localhost.localtest.me) ran past the 5s test limit about 1 run in 5
+    // while the router dropped DNS queries (infrastructure/README.md, 2026-11-18). The connect-time check is what's tested.
+    const lookup = vi.spyOn(dns, "lookup").mockImplementation(((_h: string, _o: unknown, cb: (e: null, a: dns.LookupAddress[]) => void) =>
+      cb(null, [{ address: "127.0.0.1", family: 4 }])) as unknown as typeof dns.lookup);
+    try {
+      await expect(fetchImage("https://rebind.example.com/a.png")).rejects.toThrow(/resolves to a private address/);
+      expect(lookup).toHaveBeenCalledWith("rebind.example.com", expect.anything(), expect.any(Function));
+    } finally { lookup.mockRestore(); }
   });
 
   it("knows PNG, JPEG and GIF by their bytes", () => {
