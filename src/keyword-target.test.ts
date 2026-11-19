@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CRITERIA_QUERY, campaignMarket, chooseTarget, describeTarget, resolveLanguage, resolveLocations, type Search } from "./keyword-target.js";
+import { CRITERIA_QUERY, campaignMarket, chooseTarget, describeTarget, resolveLanguage, resolveLocations, type Search, type Suggest } from "./keyword-target.js";
 
 const crit = (campaign: string, status: string, type: "LOCATION" | "LANGUAGE", id: string, extra: object = {}) => ({
   campaign: { id: campaign, status },
@@ -14,11 +14,20 @@ const g = (id: string, name: string, canonicalName: string, countryCode: string,
 const COUNTRIES = [g("2040", "Austria", "Austria", "AT", "Country"), g("2826", "United Kingdom", "United Kingdom", "GB", "Country"),
   g("2840", "United States", "United States", "US", "Country"), g("2268", "Georgia", "Georgia", "GE", "Country"),
   g("2158", "Taiwan", "Taiwan", "TW", "Region"), g("2344", "Hong Kong", "Hong Kong", "HK", "Region")];
-const PLACES: Record<string, any[]> = {
-  Vienna: [g("20050", "Vienna", "Vienna,Austria", "AT", "State"), g("1000997", "Vienna", "Vienna,Vienna,Vienna,Austria", "AT", "City"),
-    g("1027317", "Vienna", "Vienna,Virginia,United States", "US", "City"), g("9198853", "Vienna", "Vienna,Vienna,Austria", "AT", "Municipality")],
-  Chicago: [g("1016367", "Chicago", "Chicago,Illinois,United States", "US", "City")],
-  Bangkok: [g("1012873", "Bangkok", "Bangkok,Thailand", "TH", "City", "REMOVAL_PLANNED"), g("9112482", "Bangkok", "Bangkok,Thailand", "TH", "Province")],
+// SuggestGeoTargetConstants as Google answered these names on 2026-11-19 (dev probe; top 4 per name, reach left out).
+const sg = (id: string, canonicalName: string, targetType: string, status = "ENABLED") => ({ id, canonicalName, targetType, status });
+const SUGGESTED: Record<string, ReturnType<typeof sg>[]> = {
+  "Las Palmas de Gran Canaria, Canary Islands, Spain": [sg("1005463", "Las Palmas de Gran Canaria,Las Palmas de Gran Canaria,Canary Islands,Spain", "City"),
+    sg("9248572", "Las Palmas de Gran Canaria,Canary Islands,Spain", "Municipality"), sg("9217943", "35130,Canary Islands,Spain", "Postal Code"),
+    sg("9047034", "Province of Las Palmas,Canary Islands,Spain", "Province")],
+  "Vienna, Austria": [sg("20050", "Vienna,Austria", "State"), sg("1000997", "Vienna,Vienna,Vienna,Austria", "City"),
+    sg("9062730", "Innere Stadt,Vienna,Austria", "District"), sg("9062727", "Donaustadt,Vienna,Austria", "District")],
+  "Springfield, Illinois": [sg("1016864", "Springfield,Illinois,United States", "City")],
+  "Nueva York": [sg("21167", "New York,United States", "State"), sg("1023191", "New York,New York,United States", "City")],
+  chicago: [sg("1016367", "Chicago,Illinois,United States", "City")],
+  Bangkok: [sg("1012873", "Bangkok,Thailand", "City", "REMOVAL_PLANNED"), sg("21025", "Bangkok,Thailand", "Province")],
+  Worldwide: [sg("9198225", "Tai Wai,New Territories,Hong Kong", "Neighborhood")],
+  Wordlwide: [sg("9198225", "Tai Wai,New Territories,Hong Kong", "Neighborhood")],  // made up: a typo landing on a fuzzy match, like "Worldwide"
 };
 const LANGS = [["1000", "English", "en"], ["1001", "German", "de"], ["1014", "Portuguese", "pt"], ["1017", "Chinese (simplified)", "zh_CN"],
   ["1018", "Chinese (traditional)", "zh_TW"]]
@@ -34,7 +43,12 @@ function fakeSearch() {
     if (q.includes("FROM language_constant")) return LANGS;
     throw new Error(`unexpected query ${q}`);
   };
-  return { search, queries };
+  const suggested: string[][] = [];
+  const suggest: Suggest = async (names) => {
+    suggested.push(names);
+    return names.flatMap((term) => (SUGGESTED[term] ?? []).map((x) => ({ term, ...x })));
+  };
+  return { search, queries, suggest, suggested };
 }
 
 describe("campaignMarket", () => {
@@ -97,63 +111,78 @@ describe("chooseTarget", () => {
 });
 
 describe("resolveLocations", () => {
+  const resolve = (inputs: string[], f = fakeSearch(), notes: string[] = []) => resolveLocations(inputs, f.search, f.suggest, notes);
+
   it("passes ids through without a lookup", async () => {
     const f = fakeSearch();
-    expect(await resolveLocations(["2840", " 2826 "], f.search)).toEqual(["2840", "2826"]);
+    expect(await resolve(["2840", " 2826 "], f)).toEqual(["2840", "2826"]);
     expect(f.queries).toEqual([]);
+    expect(f.suggested).toEqual([]);
   });
 
   it("takes a country by name or two-letter code, in any case, reading the country list once", async () => {
     const f = fakeSearch();
-    expect(await resolveLocations(["austria", "AT", "us", "UK", "United Kingdom"], f.search)).toEqual(["2040", "2840", "2826"]);
+    expect(await resolve(["austria", "AT", "us", "UK", "United Kingdom"], f)).toEqual(["2040", "2840", "2826"]);
     expect(f.queries.filter((q) => q.includes("parent_geo_target IS NULL"))).toHaveLength(1);
+    expect(f.suggested).toEqual([]);
   });
 
-  it("takes the places Google types as a Region with no parent, like Taiwan and Hong Kong", async () => {
-    expect(await resolveLocations(["TW", "tw", "Hong Kong", "HK"], fakeSearch().search)).toEqual(["2158", "2344"]);
-  });
-
-  it("takes a place that matches one enabled location, retrying in Google's capitalisation", async () => {
+  it("takes the places Google types as a Region with no parent, like Taiwan and Hong Kong, from our list (Google's lookup reads \"TW\" as UK postcodes)", async () => {
     const f = fakeSearch();
-    expect(await resolveLocations(["chicago"], f.search)).toEqual(["1016367"]);
-    expect(f.queries.filter((q) => q.includes("geo_target_constant.name ="))).toHaveLength(2);
-    expect(await resolveLocations(["Bangkok"], f.search)).toEqual(["9112482"]);  // the REMOVAL_PLANNED one doesn't count
+    expect(await resolve(["TW", "tw", "Hong Kong", "HK"], f)).toEqual(["2158", "2344"]);
+    expect(f.suggested).toEqual([]);
   });
 
-  it("narrows a place by what follows the comma", async () => {
-    const f = fakeSearch();
-    expect(await resolveLocations(["Vienna, Virginia"], f.search)).toEqual(["1027317"]);
-    expect(await resolveLocations(["Vienna, US"], f.search)).toEqual(["1027317"]);
+  it("asks Google's lookup for every other place in one call and takes its best enabled match", async () => {
+    const f = fakeSearch(), notes: string[] = [];
+    expect(await resolve(["chicago", "Springfield, Illinois", "Bangkok"], f, notes)).toEqual(["1016367", "1016864", "21025"]);
+    expect(f.suggested).toEqual([["chicago", "Springfield, Illinois", "Bangkok"]]);
+    expect(notes).toEqual([]);  // one enabled match each: nothing to say
   });
 
-  it("refuses an ambiguous or unknown name with the candidates' ids, all problems at once", async () => {
-    const f = fakeSearch();
-    const err = await resolveLocations(["Vienna, Austria", "Atlantis", "2840"], f.search).catch((e: Error) => e.message);
-    expect(err).toContain(`"Vienna, Austria" matches 3 places: 20050 Vienna,Austria (State); 1000997 Vienna,Vienna,Vienna,Austria (City); 9198853 Vienna,Vienna,Austria (Municipality). Pass the id of the one meant`);
-    expect(err).toContain(`no location named "Atlantis"`);
+  it("picks the best match where several share a name, and says which and what else (prod #31320)", async () => {
+    const notes: string[] = [];
+    expect(await resolve(["Las Palmas de Gran Canaria, Canary Islands, Spain"], fakeSearch(), notes)).toEqual(["1005463"]);
+    expect(notes).toEqual([`"Las Palmas de Gran Canaria, Canary Islands, Spain" was counted as 1005463 Las Palmas de Gran Canaria,Las Palmas de Gran Canaria,Canary Islands,Spain (City), `
+      + "Google's best match; others: 9248572 Las Palmas de Gran Canaria,Canary Islands,Spain (Municipality); 9217943 35130,Canary Islands,Spain (Postal Code); "
+      + "9047034 Province of Las Palmas,Canary Islands,Spain (Province). Pass an id in location_ids to count another."]);
+    expect(await resolve(["Vienna, Austria"], fakeSearch())).toEqual(["20050"]);
+  });
+
+  it("takes a name in another language", async () => {
+    const notes: string[] = [];
+    expect(await resolve(["Nueva York"], fakeSearch(), notes)).toEqual(["21167"]);
+    expect(notes[0]).not.toContain("shares no word");
+  });
+
+  it("flags a match that shares no word with the name, even with nothing else to choose from", async () => {
+    const notes: string[] = [];
+    expect(await resolve(["Wordlwide"], fakeSearch(), notes)).toEqual(["9198225"]);
+    expect(notes).toEqual([`"Wordlwide" was counted as 9198225 Tai Wai,New Territories,Hong Kong (Neighborhood), Google's best match. `
+      + `It shares no word with "Wordlwide", so check it's the place meant. Pass an id in location_ids to count another.`]);
+  });
+
+  it("refuses a name Google has no match for, all problems at once", async () => {
+    const err = await resolve(["Atlantis", "Nowhere, Narnia", "2840"]).catch((e: Error) => e.message);
+    expect(err).toContain(`no location named "Atlantis". no location named "Nowhere, Narnia"`);
     expect(err).toContain("Nothing was looked up in Keyword Planner.");
   });
 
-  it("escapes quotes in a name it queries", async () => {
+  it("takes \"worldwide\" and its synonyms alone as every location, without a lookup (prod #30593; Google's lookup reads it as Tai Wai)", async () => {
     const f = fakeSearch();
-    await resolveLocations(["O'Fallon"], f.search).catch(() => null);
-    expect(f.queries.at(-2)).toContain("geo_target_constant.name = 'O\\'Fallon'");
-  });
-
-  it("takes \"worldwide\" and its synonyms alone as every location, without a lookup (prod #30593)", async () => {
-    const f = fakeSearch();
-    for (const w of ["Worldwide", " global ", "ALL", "all countries"]) expect(await resolveLocations([w], f.search)).toEqual([]);
+    for (const w of ["Worldwide", " global ", "ALL", "all countries"]) expect(await resolve([w], f)).toEqual([]);
     expect(f.queries).toEqual([]);
+    expect(f.suggested).toEqual([]);
   });
 
   it("refuses worldwide combined with other locations", async () => {
-    const err = await resolveLocations(["Austria", "Worldwide"], fakeSearch().search).catch((e: Error) => e.message);
+    const err = await resolve(["Austria", "Worldwide"]).catch((e: Error) => e.message);
     expect(err).toContain(`"Worldwide" counts every location, so it can't be combined with other locations.`);
     expect(err).toContain("Nothing was looked up in Keyword Planner.");
   });
 
   it("prefers the country for a bare name that is also a place", async () => {
-    expect(await resolveLocations(["Georgia"], fakeSearch().search)).toEqual(["2268"]);
+    expect(await resolve(["Georgia"])).toEqual(["2268"]);
   });
 });
 
@@ -203,6 +232,10 @@ describe("describeTarget", () => {
     const d = describeTarget(t, new Map(), null);
     expect(d.locations).toBe("worldwide");
     expect(d.note).toBe("Searches in every location are counted (worldwide). Searches in every language are counted. Pass language_id to count one language only.");
+  });
+  it("carries how named places were picked into the note", () => {
+    const t = { ...chooseTarget({ location_ids: ["1005463"] }, null), location_notes: ["\"Las Palmas\" was counted as 1005463 …"] };
+    expect(describeTarget(t, new Map(), null).note).toBe("\"Las Palmas\" was counted as 1005463 … Searches in every language are counted. Pass language_id to count one language only.");
   });
   it("says how many locations were left out", () => {
     const many = Array.from({ length: 12 }, (_, i) => String(1000 + i));

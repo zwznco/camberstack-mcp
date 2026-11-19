@@ -7,7 +7,6 @@
  * are outside the US. Now a call that names no locations uses the ones the account's campaigns target, a place can be
  * named instead of looked up, and every result says which market it counted and where that came from.
  */
-import { gaqlStr } from "./gaql.js";
 
 /** Runs a GAQL query against the account. */
 export type Search = (query: string) => Promise<any[]>;
@@ -28,6 +27,8 @@ export interface PlanTarget {
   language_from: From | "all";
   /** Locations the campaigns target beyond the 10 Keyword Planner takes. */
   locations_left_out: number;
+  /** How named places were picked (resolveLocations), for the result's note. */
+  location_notes?: string[];
 }
 
 /** Positive location and language criteria on campaigns that aren't removed. Verified against Google 2026-11-16. */
@@ -92,7 +93,6 @@ export function chooseTarget(given: { location_ids?: string[]; language_id?: str
   };
 }
 
-const titleCase = (s: string) => s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
 /**
  * Words for every location. Keyword Planner counts worldwide when no geo target is sent, but leaving location_ids out
  * means the campaigns' market, so a model asking for worldwide passed "Worldwide" and was refused (prod #30593, 2026-11-18).
@@ -101,13 +101,28 @@ const WORLDWIDE = new Set(["worldwide", "world", "global", "globally", "everywhe
 /** Names people use that aren't Google's country code. */
 const CODE_ALIASES: Record<string, string> = { UK: "GB" };
 
+/** One of Google's ranked matches for a place name (GeoTargetConstantService.SuggestGeoTargetConstants). */
+export interface GeoSuggestion { term: string; id: string; canonicalName: string; targetType: string; status: string; reach?: number }
+/** Google's matches for each name, best first per name. */
+export type Suggest = (names: string[]) => Promise<GeoSuggestion[]>;
+
+/** Words for comparing a name with Google's: accents folded, case and punctuation dropped. */
+const words = (s: string) => new Set(s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1));
+
 /**
- * Location ids for what the caller named: ids pass through (Google validates them, and keywordPlan names a bad one),
- * a country by name or two-letter code, or any other place by Google's name for it, optionally narrowed by what follows
- * a comma ("Vienna, Austria", "Springfield, Illinois"). A name that matches no place, or several, is refused with the
- * candidates' ids. Every problem is reported at once.
+ * Location ids for what the caller named. Ids pass through (Google validates them, and keywordPlan names a bad one);
+ * "worldwide" words, and a country by name or two-letter code, come from our own list; any other place goes to Google's
+ * own name lookup, and its best match is taken. `notes` gets a line for each pick that had alternatives or looks off,
+ * so the result says which place was counted and how to pick another.
+ *
+ * Until 0.47 Camberstack matched names itself (exact name query, Google's capitalisation, qualifiers after a comma) and
+ * refused anything that matched several places. Each new way of writing a place needed a patch (#27472 "TW", #30593
+ * "Worldwide", #31320 "Las Palmas de Gran Canaria, Canary Islands, Spain": matches a City and a Municipality), and a
+ * refusal is where the model gave up (3 of 9 location errors, 2026-10-03 → 11-19). Google's lookup, checked on dev
+ * 2026-11-19, ranks by reach and takes translations ("Nueva York"), but gets "TW" (UK postcodes) and "Worldwide" (Tai Wai,
+ * Hong Kong) wrong: those stay ours.
  */
-export async function resolveLocations(inputs: string[], search: Search): Promise<string[]> {
+export async function resolveLocations(inputs: string[], search: Search, suggest: Suggest, notes: string[] = []): Promise<string[]> {
   const world = inputs.filter((i) => WORLDWIDE.has(i.trim().toLowerCase()));
   if (world.length) {
     if (world.length < inputs.length) {
@@ -119,40 +134,40 @@ export async function resolveLocations(inputs: string[], search: Search): Promis
   let countries: { id: string; name: string; code: string }[] | undefined;
   const countryList = async () => (countries ??= (await search(COUNTRIES_QUERY)).map((r) => ({
     id: String(r.geoTargetConstant.id), name: String(r.geoTargetConstant.name), code: String(r.geoTargetConstant.countryCode ?? "") })));
-  const out: string[] = [];
-  const problems: string[] = [];
+  const out: (string | { place: string })[] = [];
   for (const raw of inputs) {
     const input = raw.trim();
     if (/^\d+$/.test(input)) { out.push(input); continue; }
-    const [head = "", ...quals] = input.split(",").map((p) => p.trim()).filter(Boolean);
-    if (!quals.length) {
+    if (!input.includes(",")) {
       const code = CODE_ALIASES[input.toUpperCase()] ?? input.toUpperCase();
       const c = (await countryList()).find((x) => x.name.toLowerCase() === input.toLowerCase() || (/^[A-Z]{2}$/.test(code) && x.code === code));
       if (c) { out.push(c.id); continue; }
     }
-    const byName = (name: string) => search(`SELECT geo_target_constant.id, geo_target_constant.canonical_name, geo_target_constant.target_type,
-        geo_target_constant.country_code, geo_target_constant.status FROM geo_target_constant WHERE geo_target_constant.name = '${gaqlStr(name)}'`);
-    let rows = await byName(head);
-    if (!rows.length && titleCase(head) !== head) rows = await byName(titleCase(head));  // Google's names are case-sensitive
-    const want = quals.map((q) => q.toLowerCase());
-    const places = rows.map((r) => r.geoTargetConstant).filter((g) => g?.status === "ENABLED").filter((g) => {
-      const parts = String(g.canonicalName).split(",").slice(1).map((p) => p.trim().toLowerCase());
-      return want.every((q) => parts.includes(q) || q === String(g.countryCode ?? "").toLowerCase());
-    });
-    if (places.length === 1) { out.push(String(places[0].id)); continue; }
-    if (!places.length) {
-      problems.push(`no location named "${input}"`);
-      continue;
-    }
-    const shown = places.slice(0, 12).map((g) => `${g.id} ${g.canonicalName} (${g.targetType})`).join("; ");
-    problems.push(`"${input}" matches ${places.length} places: ${shown}${places.length > 12 ? "; …" : ""}. Pass the id of the one meant`);
+    out.push({ place: input });
   }
+  const places = [...new Set(out.flatMap((o) => typeof o === "string" ? [] : [o.place]))];
+  const found = places.length ? await suggest(places) : [];
+  const problems: string[] = [];
+  const ids = out.flatMap((o) => {
+    if (typeof o === "string") return [o];
+    const matches = found.filter((g) => g.term === o.place && g.status === "ENABLED");
+    if (!matches.length) { problems.push(`no location named "${o.place}"`); return []; }
+    const [top, ...rest] = matches;
+    const odd = ![...words(o.place)].some((w) => words(top.canonicalName).has(w));
+    if (rest.length || odd) {
+      notes.push(`"${o.place}" was counted as ${top.id} ${top.canonicalName} (${top.targetType}), Google's best match`
+        + (rest.length ? `; others: ${rest.slice(0, 3).map((g) => `${g.id} ${g.canonicalName} (${g.targetType})`).join("; ")}` : "")
+        + "." + (odd ? ` It shares no word with "${o.place}", so check it's the place meant.` : "")
+        + " Pass an id in location_ids to count another.");
+    }
+    return [top.id];
+  });
   if (problems.length) {
     throw new Error(`Couldn't tell which location: ${problems.join(". ")}. `
       + "location_ids takes a Google geo target id, a country name or two-letter code (\"Austria\", \"AT\"), or a place name, "
       + "narrowed after a comma when needed (\"Springfield, Illinois\"), or \"worldwide\" alone. Nothing was looked up in Keyword Planner.");
   }
-  return [...new Set(out)];
+  return [...new Set(ids)];
 }
 
 /** A language id for an id, a name ("German") or a code ("de", "pt-BR" falls back to "pt"); Keyword Planner's languages only. */
@@ -183,6 +198,7 @@ export function describeTarget(t: PlanTarget, geoNames: Map<string, string>, lan
   const places = t.location_ids.map((id) => geoNames.get(id) ?? id);
   const notes: string[] = [];
   if (!t.location_ids.length) notes.push("Searches in every location are counted (worldwide).");
+  notes.push(...(t.location_notes ?? []));
   if (t.locations_from === "campaigns") {
     notes.push(`Locations are the ones this account's campaigns target${t.locations_left_out
       ? ` (${t.locations_left_out + t.location_ids.length} in all; Keyword Planner takes 10, so these are the ones most campaigns target)` : ""}.`);

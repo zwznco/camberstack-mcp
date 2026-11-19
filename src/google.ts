@@ -517,6 +517,16 @@ export class AdsClient {
     return out;
   }
 
+  /** Google's ranked matches for place names (GeoTargetConstantService.SuggestGeoTargetConstants): not tied to any account
+   *  (`_customerId` only routes the demo account's calls to the demo). */
+  async suggestGeoTargets(names: string[], _customerId?: string): Promise<{ term: string; id: string; canonicalName: string; targetType: string; status: string; reach?: number }[]> {
+    const j = await this.post("geoTargetConstants:suggest", { locale: "en", locationNames: { names } });
+    return (j.geoTargetConstantSuggestions ?? []).map((x: any) => ({
+      term: String(x.searchTerm ?? ""), id: String(x.geoTargetConstant?.id ?? ""), canonicalName: String(x.geoTargetConstant?.canonicalName ?? ""),
+      targetType: String(x.geoTargetConstant?.targetType ?? ""), status: String(x.geoTargetConstant?.status ?? ""),
+      ...(x.reach != null ? { reach: Number(x.reach) } : {}) }));
+  }
+
   /** Keyword Planner (KeywordPlanIdeaService). Read-only. */
   async keywordPlan(
     customerId: string, method: "generateKeywordIdeas" | "generateKeywordHistoricalMetrics", request: object, loginCustomerId?: string | null,

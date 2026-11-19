@@ -282,6 +282,13 @@ export class DemoAds {
     return q.limit ? rows.slice(0, q.limit) : rows;
   }
 
+  /** Google's place-name lookup over GEOS: places whose canonical name starts with the name's first part. */
+  async suggestGeoTargets(names: string[]) {
+    return names.flatMap((term) => Object.entries(GEOS)
+      .filter(([, [canonicalName]]) => canonicalName.toLowerCase().startsWith(term.split(",")[0]!.trim().toLowerCase()))
+      .map(([id, [canonicalName]]) => ({ term, id, canonicalName, targetType: canonicalName.includes(",") ? "City" : "Country", status: "ENABLED" })));
+  }
+
   /** Keyword Planner over PLANNER: ideas share a word with a seed (or everything, for a URL seed); metrics are exact matches. */
   async keywordPlan(_cid: string, method: "generateKeywordIdeas" | "generateKeywordHistoricalMetrics", req: any): Promise<{ results?: any[] }> {
     // Sample history ends September 2026 whatever was asked; a range only sets how many months come back.

@@ -187,7 +187,7 @@ export interface SessionDeps {
 }
 
 /** The Google Ads calls the tools make; the demo account answers the same ones. */
-type Ads = Pick<AdsClient, "listAccessibleCustomers" | "search" | "mutate" | "keywordPlan" | "searchFields">;
+type Ads = Pick<AdsClient, "listAccessibleCustomers" | "search" | "mutate" | "keywordPlan" | "searchFields" | "suggestGeoTargets">;
 
 /** Edits between two ids: insert, delete, change a digit, or swap two neighbouring digits, each counting 1. */
 function digitEdits(a: string, b: string): number {
@@ -207,6 +207,7 @@ function routed(google: Ads, demo: DemoAds): Ads {
     mutate: (cid, service, ops, opts) => (cid === DEMO_CID ? demo.mutate(cid, service, ops, opts) : google.mutate(cid, service, ops, opts)),
     keywordPlan: (cid, method, req, login) => (cid === DEMO_CID ? demo.keywordPlan(cid, method, req) : google.keywordPlan(cid, method, req, login)),
     searchFields: (q) => google.searchFields(q),
+    suggestGeoTargets: (names, cid) => (cid === DEMO_CID ? demo.suggestGeoTargets(names) : google.suggestGeoTargets(names, cid)),
   };
 }
 
@@ -1167,12 +1168,14 @@ export class UserSession {
   private async planTarget(a: Account, o: KeywordPlanOpts): Promise<PlanTarget> {
     const q: Search = (query) => this.ads.search(a.customerId, query, a.loginCustomerId);
     const named = !!o.location_ids?.length;
+    const location_notes: string[] = [];
     const [location_ids, language_id, market] = await Promise.all([
-      named ? resolveLocations(o.location_ids!, q) : undefined,
+      named ? resolveLocations(o.location_ids!, q, (names) => this.ads.suggestGeoTargets(names, a.customerId), location_notes) : undefined,
       o.language_id ? resolveLanguage(o.language_id, q) : undefined,
       named ? null : q(CRITERIA_QUERY).then(campaignMarket),
     ]);
-    return chooseTarget({ location_ids, language_id }, market);
+    const t = chooseTarget({ location_ids, language_id }, market);
+    return location_notes.length ? { ...t, location_notes } : t;
   }
 
   /** The result's `target`: the market with names. A failed name lookup leaves the ids; it never fails the call. */

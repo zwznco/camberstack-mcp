@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.46.1", date: "2026-11-19",
+    summary: "Keyword research understands more place names, and picks the likeliest place instead of refusing.",
+    items: [
+      "**Locations by name:** `keyword_ideas` and `keyword_metrics` now look places up with Google's own place search, so names in other languages (\"Nueva York\") and full names that several places share (\"Las Palmas de Gran Canaria, Canary Islands, Spain\") work. When a name fits several places, the most populous is counted, and the result names it with the others' ids so your AI can pick another. Country codes and \"worldwide\" work as before.",
+    ],
+  },
+  {
     version: "0.46.0", date: "2026-11-18",
     summary: "A site audit: Camberstack crawls your website and reports what holds back indexing and clicks.",
     items: [

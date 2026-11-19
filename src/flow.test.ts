@@ -209,6 +209,8 @@ class FakeAds {
   plannerCalls: { method: string; req: any }[] = [];
   /** A geo target whose single-location call answers 429, as Keyword Planner does to bursts. */
   planner429For: string | null = null;
+  /** Google's place-name lookup: knows no place, so a name that isn't a country is refused. */
+  async suggestGeoTargets(_names: string[]) { return []; }
   async keywordPlan(_cid: string, method: string, req: any) {
     this.plannerCalls.push({ method, req });
     if (this.planner429For && req.geoTargetConstants?.length === 1 && req.geoTargetConstants[0] === `geoTargetConstants/${this.planner429For}`)
