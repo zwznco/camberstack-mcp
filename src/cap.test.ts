@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, now } from "./db.js";
-import { capChanges, capCounted } from "./session.js";
+import { CHANGES_COUNTED_FROM, capChanges, capCounted } from "./session.js";
 
 const DAY = 86400;
 
@@ -19,9 +19,17 @@ describe("capCounted", () => {
   it("counts each change in an applied proposal, not each approval", () => {
     // Prod, 2026-11-21: a Free user's one apply of 12 merged proposals counted once.
     const { db, add } = setup();
-    add("twelve", now() - DAY, JSON.stringify(Array.from({ length: 12 }, () => ({ type: "pause_campaign" }))));
-    add("one", now() - DAY);
-    expect(capCounted(db, "u", null)).toHaveLength(13);
+    add("twelve", CHANGES_COUNTED_FROM + 60, JSON.stringify(Array.from({ length: 12 }, () => ({ type: "pause_campaign" }))));
+    add("one", CHANGES_COUNTED_FROM + 60);
+    expect(capCounted(db, "u", null, CHANGES_COUNTED_FROM + DAY)).toHaveLength(13);
+  });
+
+  it("counts an approval made before per-change counting once, as it counted then", () => {
+    const { db, add } = setup();
+    const twelve = JSON.stringify(Array.from({ length: 12 }, () => ({ type: "pause_campaign" })));
+    add("before", CHANGES_COUNTED_FROM - 60, twelve);
+    add("publish", CHANGES_COUNTED_FROM - 60, '[{"type":"publish_container"}]', "gtm");
+    expect(capCounted(db, "u", null, CHANGES_COUNTED_FROM + DAY)).toHaveLength(1);
   });
 
   it("leaves out a Tag Manager publish, on its own or shipped with tag changes", () => {

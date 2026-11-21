@@ -105,7 +105,7 @@ function isFreeUndo(db: DB, undoOf: string | null | undefined): boolean {
 
 /**
  * The changes the change cap counts for a user, oldest first: one entry per change (its proposal's applied_at, or claim
- * time while applying), so an approval holding 12 changes counts 12 (operator, 2026-11-21: one ChatGPT apply of 12
+ * time while applying), so an approval holding 12 changes counts 12; one approved before CHANGES_COUNTED_FROM counts once (operator, 2026-11-21: one ChatGPT apply of 12
  * merged proposals had counted once). Real proposals applied since the latest of 30 days ago, plan_reset_at and the cap's
  * start (plans.ts changeCapFrom). Counted: applied ones, and ones claimed and still being written (status 'proposed' with
  * applied_at set, newer than STALE_CLAIM), so parallel applies each see the others. Not counted: failed or discarded ones,
@@ -123,8 +123,14 @@ export function capCounted(db: DB, userId: string, resetAt: number | null, t = n
         AND (p.undo_of IS NULL OR o.undo_of IS NOT NULL)
       ORDER BY p.applied_at`).all(userId, since, t - STALE_CLAIM) as { customer_id: string; changes: string; applied_at: number }[];
   return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes))
-    .flatMap((r) => Array<number>(capChanges(r.changes)).fill(r.applied_at));
+    .flatMap((r) => Array<number>(r.applied_at < CHANGES_COUNTED_FROM ? Math.min(1, capChanges(r.changes)) : capChanges(r.changes)).fill(r.applied_at));
 }
+
+/**
+ * When the cap began counting each change (0.47.0 went live). Applies before it count once each, as they did when they
+ * were made, so nobody's count jumped on the switch (operator, 2026-11-21: don't back-date, to prevent confusion).
+ */
+export const CHANGES_COUNTED_FROM = Date.parse("2026-11-21T17:34:47Z") / 1000;
 
 /**
  * How many changes in a proposal the cap counts: every one but a Tag Manager publish, whose tag changes were counted

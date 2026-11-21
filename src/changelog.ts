@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.47.1", date: "2026-11-21",
+    summary: "What you applied before 0.47.0 still counts as it did, once per approval.",
+    items: [
+      "**No back-dating:** approvals applied before Free began counting each change (0.47.0, earlier today) count once each, as they did when you made them. Only changes applied from 0.47.0 on count one by one, so nobody's count jumped.",
+    ],
+  },
+  {
     version: "0.47.0", date: "2026-11-21",
     summary: "On Free, each change in a proposal now counts toward the 10 a month, not each approval.",
     items: [
