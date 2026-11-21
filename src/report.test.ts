@@ -180,13 +180,15 @@ describe("buildReport", () => {
 
   it("counts applied changes by when they were applied, not by when the user signed up", () => {
     const db = seed();
-    const p = db.prepare("INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at) VALUES (?, 'paid', ?, '[]', '', ?, ?, ?)");
-    p.run("old", "1", "applied", now() - 20 * 86400, now() - 20 * 86400);
-    p.run("new", "1", "applied", now() - 60, now() - 60);
-    p.run("new2", "2", "applied", now() - 30, now() - 30);
-    p.run("open", "1", "proposed", now() - 30, null);
-    expect(buildReport(db, { days: 1, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 2 });
-    expect(buildReport(db, { days: 30, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 3 });
+    const p = db.prepare("INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at) VALUES (?, 'paid', ?, ?, '', ?, ?, ?)");
+    const c = (n: number, publish = false) => JSON.stringify([...Array.from({ length: n }, () => ({ type: "pause_campaign" })), ...(publish ? [{ type: "publish_container" }] : [])]);
+    p.run("old", "1", c(1), "applied", now() - 20 * 86400, now() - 20 * 86400);
+    p.run("new", "1", c(3, true), "applied", now() - 60, now() - 60);  // 3 changes; the publish doesn't count
+    p.run("new2", "2", c(1), "applied", now() - 30, now() - 30);
+    p.run("open", "1", c(1), "proposed", now() - 30, null);
+    // Each change counts, as the cap counts it, not each approval.
+    expect(buildReport(db, { days: 1, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 4 });
+    expect(buildReport(db, { days: 30, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 5 });
   });
 
   it("counts only live subscriptions as paying", () => {
