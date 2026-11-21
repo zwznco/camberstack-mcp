@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDb, now } from "./db.js";
 import { buildReport, capUsage, MONTHLY, userDetail, windowStart } from "./report.js";
 import { setChangeCap } from "./plans.js";
+import { CHANGES_COUNTED_FROM } from "./session.js";
 
 describe("buildReport", () => {
   // The seeds sit 25-30 min back; between 00:00 and 00:30 UTC that is yesterday, outside a "today" window. Pin to noon.
@@ -179,6 +180,7 @@ describe("buildReport", () => {
   });
 
   it("counts applied changes by when they were applied, not by when the user signed up", () => {
+    vi.setSystemTime((CHANGES_COUNTED_FROM + 86400) * 1000);  // after per-change counting began
     const db = seed();
     const p = db.prepare("INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at) VALUES (?, 'paid', ?, ?, '', ?, ?, ?)");
     const c = (n: number, publish = false) => JSON.stringify([...Array.from({ length: n }, () => ({ type: "pause_campaign" })), ...(publish ? [{ type: "publish_container" }] : [])]);
@@ -189,6 +191,9 @@ describe("buildReport", () => {
     // Each change counts, as the cap counts it, not each approval.
     expect(buildReport(db, { days: 1, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 4 });
     expect(buildReport(db, { days: 30, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 5 });
+    // Before per-change counting began, an approval counts once, as the cap counts it.
+    db.prepare("UPDATE proposals SET applied_at = ? WHERE id = 'new'").run(CHANGES_COUNTED_FROM - 60);
+    expect(buildReport(db, { days: 30, exclude: [] }).appliedInWindow).toEqual({ users: 1, changes: 3 });
   });
 
   it("counts only live subscriptions as paying", () => {

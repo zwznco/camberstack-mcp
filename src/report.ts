@@ -11,7 +11,7 @@ import { GA_TARGET } from "./ga4-changes.js";
 import { GTM_TARGET } from "./gtm-changes.js";
 import { SC_TARGET } from "./search-console-changes.js";
 import { now } from "./db.js";
-import { capCounted } from "./session.js";
+import { CHANGES_COUNTED_FROM, capCounted } from "./session.js";
 import { ADS_SCOPE, ANALYTICS_EDIT_SCOPE, ANALYTICS_SCOPE, MERCHANT_SCOPE, SEARCH_CONSOLE_READONLY_SCOPE, SEARCH_CONSOLE_SCOPE, TAG_MANAGER_SCOPES } from "./google.js";
 import { ACCOUNT_WINDOW_DAYS, AGENCY_PRICE_LABEL, SERVICE_LABELS, listedServices, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, changeCapFrom, PRO_PRICE_LABEL, SWITCH_NOTICE_PREFIX, payingSql } from "./plans.js";
 
@@ -26,8 +26,10 @@ const client = "coalesce(json_extract(cl.info, '$.client_name'), c.client_id, 'u
  * alone isn't paying either. `u` is the users alias.
  */
 const PAYING = payingSql("u.");
-/** The changes in applied proposal `p`, as the change cap counts them (session.ts capChanges): every one but a Tag Manager publish. */
-const CHANGES_IN = `(SELECT count(*) FROM json_each(p.changes) WHERE coalesce(json_extract(value, '$.type'), '') != 'publish_container')`;
+/** The changes in applied proposal `p`, as the change cap counts them (session.ts capCounted): every one but a Tag Manager
+ *  publish, and an approval before CHANGES_COUNTED_FROM once. */
+const CHANGES_IN = `(SELECT CASE WHEN p.applied_at < ${CHANGES_COUNTED_FROM} THEN min(count(*), 1) ELSE count(*) END
+  FROM json_each(p.changes) WHERE coalesce(json_extract(value, '$.type'), '') != 'publish_container')`;
 /** Monthly dollars per paid plan, from the labels the site shows, so the two can't drift. */
 export const MONTHLY: Record<string, number> = Object.fromEntries(
   ([["plus", PLUS_PRICE_LABEL], ["pro", PRO_PRICE_LABEL], ["agency", AGENCY_PRICE_LABEL]] as const).map(([p, l]) => [p, Number(l.match(/\d+/)?.[0] ?? 0)]));
@@ -173,20 +175,21 @@ export function buildReport(db: DB, o: ReportOptions) {
     // Counted on its own: summing `errors` would stop at its 15 groups and undercount wide windows.
     errorsInWindow: n("SELECT count(*) n FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.at >= ? AND c.ok = 0", since),
     users: q<{ id: string; email: string; plan: string; created_at: number; last_seen_at: number | null; connected: number;
-               google_scopes: string | null; paying: number; calls: number; errors: number; approvals: number; applied: number; client: string | null;
+               google_scopes: string | null; paying: number; calls: number; errors: number; plan_reset_at: number | null; client: string | null;
                used_accounts: number; ads_accounts: number | null; ads_managers: number | null }>(
       `SELECT u.id, u.email, u.plan, u.created_at, u.last_seen_at, u.enc_refresh IS NOT NULL connected, u.google_scopes,
          ${PAYING} paying,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id) calls,
          (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 0) errors,
-         (SELECT count(*) FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied') approvals,
-         (SELECT coalesce(sum(${CHANGES_IN}), 0) FROM proposals p WHERE p.user_id = u.id AND p.status = 'applied') applied,
+         u.plan_reset_at,
          -- Used as the plan counts it (session.ts usage): an account a call was stopped on, like a switch notice, isn't used.
          (SELECT count(DISTINCT customer_id) FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.customer_id IS NOT NULL
             AND ${ON_ADS}) used_accounts, u.ads_accounts, u.ads_managers,
          (SELECT ${client} FROM tool_calls c LEFT JOIN clients cl ON cl.client_id = c.client_id
             WHERE c.user_id = u.id ORDER BY c.at DESC LIMIT 1) client
-       FROM {U} u ORDER BY coalesce(u.last_seen_at, u.created_at) DESC LIMIT 200`),
+       FROM {U} u ORDER BY coalesce(u.last_seen_at, u.created_at) DESC LIMIT 200`)
+      // Applied changes as the cap counts them (the Cap tab, the account page, billing): one number everywhere.
+      .map((u) => ({ ...u, applied: capCounted(db, u.id, u.plan_reset_at).length })),
     tools: q<{ tool: string; calls: number; users: number; errors: number; avg_ms: number; max_ms: number }>(
       `SELECT tool, count(*) calls, count(DISTINCT c.user_id) users, sum(ok = 0) errors, cast(avg(ms) AS int) avg_ms, max(ms) max_ms
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE at >= ? GROUP BY tool ORDER BY calls DESC`, since),
@@ -468,9 +471,8 @@ export function userDetail(db: DB, id: string, since = 0) {
        ORDER BY ct.fetched_at DESC`).all(id, id) as { client: string; version: string; fetched_at: number }[],
     tools: calls<{ tool: string; calls: number; errors: number }>(
       "SELECT tool, count(*) calls, sum(ok = 0) errors FROM tool_calls WHERE user_id = ? AND at >= ? GROUP BY 1 ORDER BY calls DESC"),
-    // All time, not the 50 listed below: approvals applied, and the changes in them as the cap counts them.
-    applied: db.prepare(`SELECT count(*) proposals, coalesce(sum(${CHANGES_IN}), 0) changes, (SELECT count(*) FROM proposals WHERE user_id = ?) total
-        FROM proposals p WHERE p.user_id = ? AND p.status = 'applied'`).get(id, id) as { proposals: number; changes: number; total: number },
+    // Applied changes as the cap counts them, the same number as the Cap tab, the Users table and the user's account page.
+    applied: capCounted(db, id, (db.prepare("SELECT plan_reset_at FROM users WHERE id = ?").get(id) as { plan_reset_at: number | null } | undefined)?.plan_reset_at ?? null).length,
     proposals: all<{ id: string; customer_id: string; summary: string; status: string; undo_of: string | null; created_at: number; applied_at: number | null }>(
       "SELECT id, customer_id, summary, status, undo_of, created_at, applied_at FROM proposals WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
     emails: all<{ kind: string; sent_at: number }>("SELECT kind, sent_at FROM email_log WHERE user_id = ? ORDER BY sent_at"),

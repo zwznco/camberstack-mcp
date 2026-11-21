@@ -452,7 +452,7 @@ function usersPage(v: View): string {
   const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
   return churnCard(v) + switchingCard(v) + askedPlansCard(v) + signupsChart(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "Google permissions", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying), perms(u.google_scopes, u.connected, { short: true }),
-      when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), `<span title="${u.applied} changes in ${u.approvals} applied proposal${u.approvals === 1 ? "" : "s"}, all time">${num(u.applied)}</span>`, usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
+      when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
     `<small>${toggle}</small>`);
 }
@@ -507,7 +507,7 @@ function userPage(x: UserDetail, v: View): string {
   return `<div class="stats">
 ${stat(`Calls · ${w}`, num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
 ${stat(`Errors · ${w}`, x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
-${stat("Proposals · all time", num(x.applied.total), `${x.applied.proposals} applied · ${x.applied.changes} change${x.applied.changes === 1 ? "" : "s"}`)}
+${stat("Changes applied · 30 days", num(x.applied), `${x.proposals.length} proposals`)}
 ${stat("Ads accounts used", num(x.accounts.filter((a) => a.ok_calls > 0 && a.customer_id !== DEMO_CID && a.customer_id !== GA_TARGET && a.customer_id !== SC_TARGET && a.customer_id !== GTM_TARGET && !a.customer_id.startsWith("mc:")).length),
     u.ads_accounts === null ? `${w} · visible not recorded yet`
       : `${w} · of ${u.ads_accounts} visible${u.ads_managers ? ` + ${u.ads_managers} manager${u.ads_managers > 1 ? "s" : ""}` : ""} (${ago(u.ads_accounts_at!)})`)}
