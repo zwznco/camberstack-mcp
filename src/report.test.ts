@@ -302,7 +302,7 @@ describe("capUsage", () => {
     const db = openDb(":memory:"), t = now(), DAY = 86400;
     const user = db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES (?, ?, ?, ?, ?, ?)");
     const applied = db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, undo_of, created_at, applied_at)
-      VALUES (?, ?, ?, '[]', 's', 'applied', ?, ?, ?)`);
+      VALUES (?, ?, ?, '[{"type":"pause_campaign"}]', 's', 'applied', ?, ?, ?)`);
     let n = 0;
     const apply = (u: string, daysAgo: number, cid = "1112223333", undo: string | null = null) => applied.run(`p${n++}`, u, cid, undo, t - daysAgo * DAY, t - daysAgo * DAY);
     user.run("full", "g1", "full@example.com", "free", null, t - 40 * DAY);

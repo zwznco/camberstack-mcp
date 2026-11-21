@@ -3547,11 +3547,11 @@ describe("OAuth + MCP end to end", () => {
     }
   });
 
-  it("applies several proposals approved together as one: all or nothing, one approval under the cap (ChatGPT's per-type tools)", async () => {
+  it("applies several proposals approved together as one: all or nothing, each change counted under the cap (ChatGPT's per-type tools)", async () => {
     // Prod, 2026-11-12: a ChatGPT user swapping broad negatives for exact ones needed an add and a delete, two proposals,
     // so two approvals, where Claude's propose_changes made it one.
     googleUser.sub = "google-sub-batch"; googleUser.email = "batch@example.com";
-    setChangeCap(3);
+    setChangeCap(4);
     try {
       const t = await connect(undefined, "xyz", "203.0.113.9");
       const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-batch") as { id: string }).id;
@@ -3567,7 +3567,7 @@ describe("OAuth + MCP end to end", () => {
       const status = (id: string) => (db.prepare("SELECT status FROM proposals WHERE id = ?").get(id) as { status: string }).status;
       const count = () => db.prepare("SELECT count(*) n FROM proposals WHERE user_id = ? AND status = 'applied'").get(uid) as { n: number };
 
-      // Two proposals applied together: one merged proposal, both changes in, one approval.
+      // Two proposals applied together: one merged proposal, both changes in, and both count.
       const a = await negative("batch one"), b = await pause();
       const both = await call(t, "apply_changes", { proposal_ids: [a, b] });
       expect(both.json).toMatchObject({ status: "applied", combined: [a, b] });
@@ -3576,7 +3576,7 @@ describe("OAuth + MCP end to end", () => {
       expect(ads.kwStatus).toBe("PAUSED");
       expect([status(a), status(b)]).toEqual(["discarded", "discarded"]);
       expect(count().n).toBe(1);
-      expect((await call(t, "billing")).json.changes_applied).toBe(1);
+      expect((await call(t, "billing")).json.changes_applied).toBe(2);
       // The merged proposal undoes as one, for free.
       const u = await call(t, "propose_undo", { proposal_id: both.json.proposal_id });
       expect((await call(t, "apply_changes", { proposal_id: u.json.proposal_id })).json.status).toBe("applied");
@@ -3599,11 +3599,27 @@ describe("OAuth + MCP end to end", () => {
       expect(status(e)).toBe("proposed");
       expect((await call(t, "apply_changes", {})).text).toContain("Give proposal_id");
 
-      // 2 of 3, then a batch of two still fits: one approval.
+      // A proposal of more changes than the whole cap never fits on Free: it stops, and says to split it.
+      // Prod, 2026-11-21: a Free ChatGPT user applied 12 proposals together, which had counted once.
+      const five: string[] = [];
+      for (let k = 0; k < 5; k++) five.push(await negative(`batch five ${k}`));
+      const big = await call(t, "apply_changes", { proposal_ids: five });
+      expect(big.json).toMatchObject({ stop: "change_limit", changes_applied: 2, changes_left: 2, proposal_changes: 5, proposal_fits_on: null, next_change_opens: null });
+      expect(big.text).toContain("holds 5 changes with 2 left, more than the plan allows in 30 days");
+      expect(big.text).toContain("A smaller proposal of up to 2 can be applied now");
+      expect(five.map(status)).toEqual(Array(5).fill("proposed"));
+      // 3 of 4, then a batch of two doesn't fit in the 1 left: nothing written, both originals open, and when it fits.
       expect((await call(t, "apply_changes", { proposal_id: e })).json.status).toBe("applied");
       const f = await negative("batch f"), g = await negative("batch g");
-      expect((await call(t, "apply_changes", { proposal_ids: [f, g] })).json.status).toBe("applied");
-      expect((await call(t, "billing")).json.changes_applied).toBe(3);
+      const over = await call(t, "apply_changes", { proposal_ids: [f, g] });
+      expect(over.json).toMatchObject({ stop: "change_limit", changes_applied: 3, changes_left: 1, proposal_changes: 2,
+        proposal_fits_on: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), proposal_ids: [f, g] });
+      expect(over.text).toContain("holds 2 changes with 1 left; all 2 fit on");
+      expect([status(f), status(g)]).toEqual(["proposed", "proposed"]);
+      expect(ads.negatives.map((n) => n.text)).not.toContain("batch f");
+      // The one left takes a single change.
+      expect((await call(t, "apply_changes", { proposal_id: f })).json.status).toBe("applied");
+      expect((await call(t, "billing")).json.changes_applied).toBe(4);
       // At the cap, a batch stops like a single apply: nothing written, every original still open.
       const h = await negative("batch h"), i = await pause();
       const before = ads.negatives.length;
@@ -3625,7 +3641,7 @@ describe("OAuth + MCP end to end", () => {
       expect(undos.json).toMatchObject({ status: "applied", combined: [ue, ufg] });
       expect(undos.json.each.map((r: { status: string }) => r.status)).toEqual(["applied", "applied"]);
       expect(ads.negatives.map((n) => n.text).filter((x) => /^batch [efg]$/.test(x))).toEqual([]);
-      expect((await call(t, "billing")).json.changes_applied).toBe(3);
+      expect((await call(t, "billing")).json.changes_applied).toBe(4);
     } finally {
       ads.failOn = undefined;
       setChangeCap(null);
@@ -3715,7 +3731,7 @@ describe("OAuth + MCP end to end", () => {
       expect(plans).toContain("10 applied changes every 30 days");
       expect(plans).toContain("Unlimited applied changes, on <strong>1 Google Ads account</strong>");
       expect(home).toContain("Free for one account. $7/month for unlimited changes");
-      expect(home).toContain("A change counts when you approve and apply a proposal");
+      expect(home).toContain("Each change in a proposal you approve and apply counts, so a proposal of 5 edits uses 5");
       expect(home).not.toContain("unlimited applied changes and undo, on <strong>1 Google Ads account");
       expect(docsPage("https://x.test")).toContain("<code>change_limit</code>");
       expect(llmsTxt("https://x.test", [])).toContain("Plus $7/month has unlimited applied changes");

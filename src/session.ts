@@ -104,11 +104,13 @@ function isFreeUndo(db: DB, undoOf: string | null | undefined): boolean {
 }
 
 /**
- * The approvals the change cap counts for a user, oldest first (their applied_at, or claim time while applying): real
- * proposals applied since the latest of 30 days ago, plan_reset_at and the cap's start (plans.ts changeCapFrom). Counted:
- * applied ones, and ones claimed and still being written (status 'proposed' with applied_at set, newer than STALE_CLAIM),
- * so parallel applies each see the others. Not counted: failed or discarded ones, a first-order undo (isFreeUndo), the
- * demo (isDemoProposal), a Tag Manager publish on its own (isPublishOnly), and anything before a paid plan ended (paid_ended_at). The gate (session.ts checkChangeCap) and the admin Cap tab (report.ts capUsage) both read this.
+ * The changes the change cap counts for a user, oldest first: one entry per change (its proposal's applied_at, or claim
+ * time while applying), so an approval holding 12 changes counts 12 (operator, 2026-11-21: one ChatGPT apply of 12
+ * merged proposals had counted once). Real proposals applied since the latest of 30 days ago, plan_reset_at and the cap's
+ * start (plans.ts changeCapFrom). Counted: applied ones, and ones claimed and still being written (status 'proposed' with
+ * applied_at set, newer than STALE_CLAIM), so parallel applies each see the others. Not counted: failed or discarded ones,
+ * a first-order undo (isFreeUndo), the demo (isDemoProposal), a Tag Manager publish (capChanges), and anything before a
+ * paid plan ended (paid_ended_at). The gate (session.ts checkChangeCap) and the admin Cap tab (report.ts capUsage) both read this.
  */
 export function capCounted(db: DB, userId: string, resetAt: number | null, t = now()): number[] {
   // Approvals made on a paid plan were unlimited when they were made: after it ends, Free counts from then (paid_ended_at).
@@ -120,18 +122,18 @@ export function capCounted(db: DB, userId: string, resetAt: number | null, t = n
         AND (p.status = 'applied' OR (p.status = 'proposed' AND p.applied_at >= ?))
         AND (p.undo_of IS NULL OR o.undo_of IS NOT NULL)
       ORDER BY p.applied_at`).all(userId, since, t - STALE_CLAIM) as { customer_id: string; changes: string; applied_at: number }[];
-  return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes) && !isPublishOnly(r.changes)).map((r) => r.applied_at);
+  return rows.filter((r) => !isDemoProposal(r.customer_id, r.changes))
+    .flatMap((r) => Array<number>(capChanges(r.changes)).fill(r.applied_at));
 }
 
 /**
- * A proposal that only publishes Tag Manager containers: free under the cap. The tag changes it makes live were counted
- * when they were applied, so publishing them separately would charge twice for one change.
+ * How many changes in a proposal the cap counts: every one but a Tag Manager publish, whose tag changes were counted
+ * when they were applied (publishing them separately would charge twice for one change).
  */
-export function isPublishOnly(changesJson: string): boolean {
+export function capChanges(changesJson: string): number {
   try {
-    const changes = JSON.parse(changesJson) as { type?: string }[];
-    return changes.length > 0 && changes.every((c) => c.type === "publish_container");
-  } catch { return false; }
+    return (JSON.parse(changesJson) as { type?: string }[]).filter((c) => c.type !== "publish_container").length;
+  } catch { return 0; }
 }
 
 /** How many ads account_overview's attention block names, and how long a primary conversion can stay quiet before it says so. */
@@ -1640,7 +1642,7 @@ export class UserSession {
     if (p.status !== "proposed") throw new Error(`Proposal ${proposalId} is already ${p.status}.`);
     // At the cap: someone who just paid from the stop's link and closed the tab before /upgraded must not stay stopped
     // until the hourly sweep. Ask Stripe first, as the account gate does. checkChangeCap still runs right before the claim.
-    await this.refreshIfAtCap();
+    await this.refreshIfAtCap(p);
     this.checkChangeCap(p);
     const changes = JSON.parse(p.changes) as AnyChange[];
     // Claim it before any write: a client retrying after a timeout would otherwise apply it twice. applied_at
@@ -1737,7 +1739,7 @@ export class UserSession {
   }
 
   /**
-   * Several proposals the user approved together, applied as one: all or nothing, and one approval under the change cap.
+   * Several proposals the user approved together, applied as one: all or nothing (each change counts under the cap).
    * ChatGPT's propose_ tools make one change type per proposal, so a single request (swap broad negatives for exact ones:
    * an add and a delete) took two approvals there and one in Claude's propose_changes (prod, 2026-11-12). The proposals
    * are merged into a new one, the originals discarded, and that runs through apply() as it is: its claim, its drift check
@@ -1773,7 +1775,7 @@ export class UserSession {
     const id = `p_${randomUUID().slice(0, 8)}`;
     const merged = { ...first, id, changes: JSON.stringify(changes), summary, created_at: now(), applied_at: null } as ProposalRow;
     // At the cap nothing should move: the originals stay open, as a single apply leaves its proposal open.
-    await this.refreshIfAtCap();
+    await this.refreshIfAtCap(merged);
     try { this.checkChangeCap(merged); } catch (e) {
       if (e instanceof SwitchNotice) {
         const { proposal_id: _, ...detail } = e.detail;
@@ -1814,14 +1816,14 @@ export class UserSession {
   /** The change cap that applies to this proposal: 0 on a paid plan, for a free undo, the demo or a publish on its own. */
   private capFor(p: ProposalRow): number {
     const cap = changeCap();
-    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes) || isPublishOnly(p.changes)) return 0;
+    if (!cap || this.isPro || isFreeUndo(this.deps.db, p.undo_of) || isDemoProposal(p.customer_id, p.changes) || !capChanges(p.changes)) return 0;
     return cap;
   }
 
-  /** At the cap, ask Stripe whether the user just paid and reload the plan if so. */
-  private async refreshIfAtCap(): Promise<void> {
-    const cap = changeCap();
-    if (cap && !this.isPro && this.changesApplied().length >= cap && await this.deps.refreshPlan?.(this.user.id)) this.reloadPlan();
+  /** When this proposal wouldn't fit under the cap, ask Stripe whether the user just paid and reload the plan if so. */
+  private async refreshIfAtCap(p: ProposalRow): Promise<void> {
+    const cap = this.capFor(p);
+    if (cap && this.changesApplied().length + capChanges(p.changes) > cap && await this.deps.refreshPlan?.(this.user.id)) this.reloadPlan();
   }
 
   /** What the change cap counts for this user now (capCounted). */
@@ -1830,8 +1832,8 @@ export class UserSession {
   }
 
   /**
-   * The change cap (FREE_CHANGE_CAP, Free only): with the window's allowance used, applying stops with a Change limit
-   * notice, a normal result (SwitchNotice) rather than an error. The proposal stays open. An undo and the demo are never
+   * The change cap (FREE_CHANGE_CAP, Free only): when the proposal's changes don't fit in what's left of the window's
+   * allowance, applying stops with a Change limit notice (all or nothing: a proposal is never applied in part), a normal result (SwitchNotice) rather than an error. The proposal stays open. An undo and the demo are never
    * capped; an undo of an undo is (it would replay the original change for free). Runs synchronously right before the
    * claim, so with in-flight claims counted (capCounted) parallel applies can't all pass on the same count.
    */
@@ -1842,13 +1844,21 @@ export class UserSession {
     // say "nothing was applied" while it applies. The claim below answers "already being applied" instead.
     if (p.applied_at && p.applied_at >= now() - STALE_CLAIM) return;
     const used = this.changesApplied();
-    if (used.length < cap) return;
-    // A slot opens when the cap-th most recent approval ages out of the window.
-    const opens = new Date((used[used.length - cap]! + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
-    const common = { stop: "change_limit", changes_applied: used.length, changes_included: cap, window_days: ACCOUNT_WINDOW_DAYS,
-      next_change_opens: opens, proposal_id: p.id, proposal_status: "proposed (still open)" };
-    const head = `${CHANGE_LIMIT_PREFIX} nothing was applied. ${this.chatgpt ? "The current plan" : "The Free plan"} includes ${cap} applied changes every `
-      + `${ACCOUNT_WINDOW_DAYS} days, and this login has used them; the next opens on ${opens}. Proposal ${p.id} stays open. `
+    const n = capChanges(p.changes);
+    if (used.length + n <= cap) return;
+    const left = Math.max(0, cap - used.length);
+    const window = (i: number) => new Date((used[i]! + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
+    // The next change opens when the cap-th most recent ages out; this proposal fits once enough have aged out for all n.
+    const opens = window(Math.max(0, used.length - cap));
+    const fits = n <= cap ? window(used.length + n - cap - 1) : null;
+    const plan = this.chatgpt ? "The current plan" : "The Free plan";
+    const common = { stop: "change_limit", changes_applied: used.length, changes_included: cap, changes_left: left, proposal_changes: n,
+      window_days: ACCOUNT_WINDOW_DAYS, next_change_opens: left ? null : opens, proposal_fits_on: fits, proposal_id: p.id, proposal_status: "proposed (still open)" };
+    const why = !left ? `and this login has used them; the next opens on ${opens}.`
+      : `and this proposal holds ${n} changes with ${left} left${fits ? `; all ${n} fit on ${fits}` : `, more than ${plan === "The Free plan" ? "Free" : "the plan"} allows in ${ACCOUNT_WINDOW_DAYS} days`}. `
+        + `A smaller proposal of up to ${left} can be applied now.`;
+    const head = `${CHANGE_LIMIT_PREFIX} nothing was applied. ${plan} includes ${cap} applied changes every `
+      + `${ACCOUNT_WINDOW_DAYS} days (each change in a proposal counts), ${why} Proposal ${p.id} stays open. `
       + "Reading, proposing, undo and change history keep working. Tell the user, and don't retry the apply.";
     if (this.chatgpt) throw new SwitchNotice(`${head} Unlimited changes need a different plan (plans_page).`, { ...common, plans_page: this.plansPage });
     const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;

@@ -20,7 +20,7 @@ import { NotGrantedError, grantName } from "./google.js";
 import { adsReport, campaignDetails, conversionTracking, keywordsReport, searchTerms } from "./reads.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.46.5";
+export const SERVER_VERSION = "0.47.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -786,7 +786,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     description: `Applies a proposal from ${o.chatgpt ? "a propose_ tool" : "propose_changes"} to the account. Only call this after the user has explicitly approved that proposal. All or nothing: every change is checked with Google first, and if one still fails the ones before it are rolled back. Each change is logged and, unless its summary says otherwise, can be reversed with ${o.chatgpt ? "propose_undo" : "undo_changes"}. `
       + "If the account changed since the proposal, nothing is applied and the result (status \"needs approval\") is a new proposal with the updated summary: show it to the user and apply it only after they approve. "
       + "When one request took several proposals (e.g. add exact negatives, delete the broad ones they replace), show the summaries together and, "
-      + "once approved, pass them all in proposal_ids: one apply, all or nothing, counted as one approved change.",
+      + "once approved, pass them all in proposal_ids: one apply, all or nothing.",
     inputSchema: {
       proposal_id: z.string().optional().describe("The proposal_id a propose tool returned"),
       proposal_ids: z.array(z.string()).min(1).max(MAX_CHANGES).optional()

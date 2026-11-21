@@ -30,13 +30,13 @@ export const ACCOUNT_CHOICE_PREFIX = "Account choice:";
 
 /**
  * The change cap (projects/camberstack/PRICING-TEST.md, replacing one-service Free before it switched on, 2026-11-11):
- * Free applies at most this many proposals per ACCOUNT_WINDOW_DAYS, counted per approval (one apply_changes of a
- * proposal, however many changes it holds); paid plans are unlimited. Undo and the demo don't count. Set once at boot
+ * Free applies at most this many changes per ACCOUNT_WINDOW_DAYS, each change in an applied proposal counting (counted per
+ * approval until 0.47.0, when one apply of 12 merged proposals counted once); paid plans are unlimited. Undo and the demo don't count. Set once at boot
  * from FREE_CHANGE_CAP (a whole number; unset = unlimited), and read by every page, email and tool result that describes Free.
  */
 let changeCapValue: number | null = null;
 let changeCapStart = 0;
-/** `from` (FREE_CHANGE_CAP_FROM, unix seconds): only approvals since then count, so everyone starts at 0 when it goes on. */
+/** `from` (FREE_CHANGE_CAP_FROM, unix seconds): only changes applied since then count, so everyone starts at 0 when it goes on. */
 export const setChangeCap = (n: number | null, from = 0) => { changeCapValue = n && n > 0 ? Math.floor(n) : null; changeCapStart = from; };
 export const changeCap = () => changeCapValue;
 export const changeCapFrom = () => changeCapStart;

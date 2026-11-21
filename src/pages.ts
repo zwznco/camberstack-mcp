@@ -302,8 +302,8 @@ const closer = (title: string, sub: string, ctas: string) =>
 /** The homepage's "What does Free cover?" while the change cap is on; nothing otherwise. */
 const freeFaq = () => (capOn() ? `<div><h3>What does Free cover?</h3>
 <p>Every tool on 1 Google Ads account, with Search Console, Google Analytics, Merchant Center (1 account) and Tag Manager included, and
-${freeChanges()}. A change counts when you approve and apply a proposal, however many edits it holds; undo, the demo account
-and publishing Tag Manager changes on their own don't count. Reading, asking and proposing are never limited.${plusLine()}</p></div>` : "");
+${freeChanges()}. Each change in a proposal you approve and apply counts, so a proposal of 5 edits uses 5; undo, the demo account
+and publishing Tag Manager changes don't count. Reading, asking and proposing are never limited.${plusLine()}</p></div>` : "");
 
 export function homePage(baseUrl: string): string {
   const mcpUrl = `${baseUrl}/mcp`;
@@ -1502,8 +1502,9 @@ ${!capOn() ? "" : `<tr><td>Plus, ${PLUS_PRICE_LABEL}</td><td>Unlimited applied c
 <p>An account counts when you use Camberstack on it; it stops counting ${ACCOUNT_WINDOW_DAYS} days after its last use. Manager (MCC) accounts and the demo don't count.
 Using one more account than your plan covers returns a <code>plan_limit</code> error listing the accounts in use, when one frees up, and, on Free,
 a personal upgrade link valid for 7 days.${changeCap() ? ` On Free, applying a proposal once ${changeCap()} have been applied in the last ${ACCOUNT_WINDOW_DAYS} days
-returns a <code>change_limit</code> result with the date the next one opens; nothing is applied and the proposal stays open. A proposal counts once
-however many edits it holds, and undo, the demo and a Tag Manager publish on its own don't count.` : ""} Undo, change history and billing are never limited. Ask <em>"What plan am I on?"</em> to see your usage.</p>
+returns a <code>change_limit</code> result with the date the next one opens; nothing is applied and the proposal stays open. Each change in a
+proposal counts (one of 5 edits uses 5), and a proposal that doesn't fit in what's left stops whole, never in part, saying how many are left.
+Undo, the demo and a Tag Manager publish don't count.` : ""} Undo, change history and billing are never limited. Ask <em>"What plan am I on?"</em> to see your usage.</p>
 
 <h2 id="access">Google API access and your data</h2>
 <p>Camberstack accesses the Google Ads API under its own approved API access, with the user's Google OAuth consent. Search Console, Google Analytics,

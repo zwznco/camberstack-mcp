@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, now } from "./db.js";
-import { capCounted, isPublishOnly } from "./session.js";
+import { capChanges, capCounted } from "./session.js";
 
 const DAY = 86400;
 
@@ -16,14 +16,22 @@ describe("capCounted", () => {
     return { db, add: (id: string, at: number, changes = '[{"type":"pause_campaign"}]', cid = "1112223333") => ins.run(id, cid, changes, at, at) };
   };
 
-  it("leaves out a Tag Manager publish on its own, but not one that ships tag changes with it", () => {
+  it("counts each change in an applied proposal, not each approval", () => {
+    // Prod, 2026-11-21: a Free user's one apply of 12 merged proposals counted once.
+    const { db, add } = setup();
+    add("twelve", now() - DAY, JSON.stringify(Array.from({ length: 12 }, () => ({ type: "pause_campaign" }))));
+    add("one", now() - DAY);
+    expect(capCounted(db, "u", null)).toHaveLength(13);
+  });
+
+  it("leaves out a Tag Manager publish, on its own or shipped with tag changes", () => {
     const { db, add } = setup();
     const publish = JSON.stringify([{ type: "publish_container", container: "accounts/1/containers/2" }]);
     add("tags", now() - DAY, JSON.stringify([{ type: "add_tag", container: "accounts/1/containers/2" }]), "gtm");
     add("publish", now() - DAY, publish, "gtm");
     add("both", now() - DAY, JSON.stringify([{ type: "add_tag", container: "accounts/1/containers/2" }, { type: "publish_container", container: "accounts/1/containers/2" }]), "gtm");
-    expect(isPublishOnly(publish)).toBe(true);
-    expect(isPublishOnly("[]")).toBe(false);
+    expect(capChanges(publish)).toBe(0);
+    expect(capChanges("[]")).toBe(0);
     expect(capCounted(db, "u", null)).toHaveLength(2);
   });
 

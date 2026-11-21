@@ -25,9 +25,9 @@ export interface Config {
   freeAccounts: number;
   proAccounts: number;
   agencyAccounts: number;
-  /** FREE_CHANGE_CAP: approvals Free may apply per 30 days (plans.ts changeCap). Unset = unlimited. */
+  /** FREE_CHANGE_CAP: changes Free may apply per 30 days, each change in a proposal counting (plans.ts changeCap). Unset = unlimited. */
   freeChangeCap: number | null;
-  /** FREE_CHANGE_CAP_FROM: when the cap went on; approvals before it don't count (plans.ts parseCapFrom). */
+  /** FREE_CHANGE_CAP_FROM: when the cap went on; changes before it don't count (plans.ts parseCapFrom). */
   freeChangeCapFrom: number;
   /**
    * Pro subscription; unset = no upgrade links (free users stop at the limit with no way to pay).

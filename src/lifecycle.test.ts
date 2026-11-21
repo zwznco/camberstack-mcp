@@ -27,7 +27,7 @@ function setup(clock = () => MORNING) {
     db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, ms, bytes) VALUES (?, ?, ?, 1, 10, 10)").run(now(), userId, tool);
   const applied = (userId: string, daysAgo: number, cid = "1112223333", undoOf: string | null = null) =>
     db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, undo_of, created_at, applied_at)
-      VALUES (?, ?, ?, '[]', 's', 'applied', ?, ?, ?)`).run(`p${Math.random()}`, userId, cid, undoOf, now() - daysAgo * DAY, now() - daysAgo * DAY);
+      VALUES (?, ?, ?, '[{"type":"pause_campaign"}]', 's', 'applied', ?, ?, ?)`).run(`p${Math.random()}`, userId, cid, undoOf, now() - daysAgo * DAY, now() - daysAgo * DAY);
   return { db, lc, sent, user, call, applied };
 }
 
@@ -86,7 +86,7 @@ describe("lifecycle emails", () => {
     try {
     // At the cap: 10 approvals, the oldest 20 days ago, so the next opens in 10 days.
     const atCap = (userId: string) => { for (let i = 0; i < 10; i++) db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at)
-        VALUES (?, ?, '1112223333', '[]', 's', 'applied', ?, ?)`).run(`${userId}-${i}`, userId, now() - 20 * DAY, now() - (20 - i) * DAY);
+        VALUES (?, ?, '1112223333', '[{"type":"pause_campaign"}]', 's', 'applied', ?, ?)`).run(`${userId}-${i}`, userId, now() - 20 * DAY, now() - (20 - i) * DAY);
       // Their check-in went long ago, so it isn't due here (its window reaches back 22 days).
       db.prepare("INSERT OR IGNORE INTO email_log (user_id, kind, sent_at) VALUES (?, 'check_in', ?)").run(userId, now() - 17 * DAY); };
     const opens = new Date((now() + 10 * DAY) * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
@@ -131,7 +131,7 @@ describe("lifecycle emails", () => {
     try {
       user("cap", "cap@example.com", 10); call("cap", "account_overview");
       for (let i = 0; i < 10; i++) db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at)
-        VALUES (?, 'cap', '1112223333', '[]', 's', 'applied', ?, ?)`).run(`cap-${i}`, now() - DAY, now() - DAY);
+        VALUES (?, 'cap', '1112223333', '[{"type":"pause_campaign"}]', 's', 'applied', ?, ?)`).run(`cap-${i}`, now() - DAY, now() - DAY);
       db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'cap', 'apply_changes', 1, ?, 10, 10)").run(now() - 0.3 * DAY,
         "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days, and this login has used them; the next opens on 2026-12-02.");
       expect(await lc.run()).toBe(1);

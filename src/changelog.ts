@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.47.0", date: "2026-11-21",
+    summary: "On Free, each change in a proposal now counts toward the 10 a month, not each approval.",
+    items: [
+      "**Free counts changes, not approvals:** a proposal of 5 edits uses 5 of Free's 10 applied changes every 30 days. Before, one approval counted once however many edits it held, so a single apply could make dozens of changes.",
+      "**A proposal that doesn't fit stops whole:** nothing is applied in part. The answer says how many changes are left, that a smaller proposal can be applied now, and the date the whole one fits (or that it's larger than Free allows in 30 days). Undo, the demo account and publishing Tag Manager changes still don't count.",
+    ],
+  },
+  {
     version: "0.46.5", date: "2026-11-19",
     summary: "An Analytics report on a connection without Google Analytics now answers with the link to add it, not an error.",
     items: [
