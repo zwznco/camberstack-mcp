@@ -121,6 +121,7 @@ export function checkGaql(query: string, cat: Catalog): string[] {
   const usable = (f: FieldMeta) => fromAllows(from, f);
   const unknown = new Set<string>();
   const listed = new Set<string>();
+  const said = new Set<string>();
   for (const [clause, names] of [["SELECT", p.select], ["WHERE", p.where], ["ORDER BY", p.orderBy]] as const) {
     for (const name of names) {
       const f = cat.get(name);
@@ -150,7 +151,8 @@ export function checkGaql(query: string, cat: Catalog): string[] {
         const near = closest(name, pool.filter(usable).map((x) => x.name));
         const around = name.split(".").at(-1)!.includes("_") && near.some((c) => sameLeaf(c, name)) ? null : fieldsAround(name, cat, usable);
         if (around) {
-          issues.push(listed.has(around) ? `${name} doesn't exist either.` : `${name} doesn't exist. ${around}`);
+          const same = sameElsewhere(name, p.from, cat, said);
+          issues.push(listed.has(around) ? `${name} doesn't exist either.${same ? ` ${same}` : ""}` : `${name} doesn't exist.${same ? ` ${same}` : ""} ${around}`);
           listed.add(around);
           unknown.add(issues.at(-1)!);
           continue;
@@ -204,7 +206,7 @@ export function checkGaql(query: string, cat: Catalog): string[] {
   const all = [...new Set([...issues, ...enumIssues(query, cat)])];
   // One unknown field and nothing else: say the rest stands. The model dropped a valid query over one bad field (prod, 2026-10-26).
   if (all.length === 1 && unknown.has(all[0]!) && p.select.length > 1) {
-    all[0] = all[0]!.replace(/\. (Drop it|Closest|Fields under|Select)/, (_, w: string) => `, and nothing else in this query is flagged: without it, the rest runs. ${w}`);
+    all[0] = all[0]!.replace(/\. (Drop it|Closest|Same field|Fields under|Select)/, (_, w: string) => `, and nothing else in this query is flagged: without it, the rest runs. ${w}`);
   }
   return all;
 }
@@ -281,6 +283,42 @@ function fieldsAround(name: string, cat: Catalog, usable: (f: FieldMeta) => bool
   const inner = parts.slice(1, -1).find((x) => cat.get(x)?.category === "RESOURCE");
   const its = inner ? under(inner, () => true) : [];
   return its.length && short(its) ? `Fields under ${inner}, its own resource: ${its.join(", ")}; query them FROM ${inner}.` : null;
+}
+
+/**
+ * The same path under other resources: customer_negative_criterion.keyword.text is shared_criterion.keyword.text, since
+ * account-level negative keywords live in a negative keyword list. Listing only customer_negative_criterion's own fields,
+ * 7 of 11 such mistakes in a week ended without the keywords (prod, 2026-11-22). A resource this one links to through a
+ * nested field (negative_keyword_list.shared_set) and that names it directly (shared_criterion.shared_set) comes first,
+ * with the filter that joins them; `said` keeps that filter to one mention. Only paths of two parts or more under the
+ * resource (keyword.text, device.type): a bare `.id` or `.status` is on every resource.
+ */
+function sameElsewhere(name: string, from: string, cat: Catalog, said: Set<string>): string | null {
+  const parts = name.split(".");
+  if (parts.length < 3) return null;
+  const tail = parts.slice(1).join(".");
+  const hits = [...cat.values()].filter((r) => r.category === "RESOURCE" && r.name !== from)
+    .map((r) => cat.get(`${r.name}.${tail}`)).filter((f): f is FieldMeta => !!f && f.category === "ATTRIBUTE" && f.selectable !== false);
+  if (!hits.length) return null;
+  const words = parts[1]!.split("_");
+  const links = [...cat.values()].filter((x) => x.name.startsWith(`${from}.`) && x.dataType === "RESOURCE_NAME" && x.name.split(".").length >= 3)
+    .sort((a, b) => Number(words.some((w) => b.name.includes(w))) - Number(words.some((w) => a.name.includes(w))));
+  const join = (f: FieldMeta) => {
+    const res = f.name.split(".")[0]!;
+    for (const l of links) {
+      const own = cat.get(`${res}.${l.name.split(".").at(-1)}`);
+      if (own?.dataType === "RESOURCE_NAME" && own.filterable !== false) return { own: own.name, link: l.name };
+    }
+    return null;
+  };
+  const ranked = hits.map((f) => ({ f, j: join(f) })).sort((a, b) => Number(!!b.j) - Number(!!a.j)).slice(0, 4);
+  const shown = ranked.map(({ f, j }) => {
+    const res = f.name.split(".")[0]!;
+    if (!j || said.has(j.link)) return `${f.name} (FROM ${res})`;
+    said.add(j.link);
+    return `${f.name} (FROM ${res} WHERE ${j.own} = the ${j.link} value)`;
+  });
+  return `Same field on other resources: ${shown.join(", ")}.`;
 }
 
 /**

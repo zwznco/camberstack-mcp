@@ -273,6 +273,39 @@ describe("checkGaql against Google's field catalog", () => {
       // One word says too little.
       expect(checkGaql("SELECT invoice.id FROM invoice", live)).toEqual(["FROM invoice: there is no such resource."]);
     });
+    it("names the same path under other resources, and the join to the one this resource links to (prod, 2026-11-22)", () => {
+      // From the v26 catalog. Was only customer_negative_criterion's own fields: 7 of 11 such mistakes in a week ended
+      // without the account's negative keywords, which are shared_criterion rows in its negative keyword list.
+      const neg: Catalog = new Map(live);
+      const add = (f: FieldMeta) => neg.set(f.name, f);
+      const ref = (name: string) => add({ name, category: "ATTRIBUTE", dataType: "RESOURCE_NAME", selectable: true, filterable: true });
+      add({ name: "customer_negative_criterion", category: "RESOURCE", attributeResources: ["customer", "mobile_app_category_constant", "shared_set"] });
+      add({ name: "shared_criterion", category: "RESOURCE", attributeResources: ["customer", "mobile_app_category_constant", "shared_set"] });
+      add({ name: "shared_set", category: "RESOURCE", attributeResources: ["customer"] });
+      add({ name: "campaign_criterion", category: "RESOURCE", attributeResources: ["campaign", "customer", "shared_set"] });
+      for (const n of ["customer_negative_criterion.id", "customer_negative_criterion.type", "customer_negative_criterion.placement.url"]) add(attr(n));
+      ref("customer_negative_criterion.placement_list.shared_set");
+      ref("customer_negative_criterion.negative_keyword_list.shared_set");
+      ref("shared_criterion.shared_set");
+      ref("campaign_criterion.campaign");
+      for (const r of ["shared_criterion", "campaign_criterion"]) { add(attr(`${r}.keyword.text`)); add(attr(`${r}.keyword.match_type`, "ENUM")); }
+      const i = checkGaql("SELECT customer_negative_criterion.keyword.text, customer_negative_criterion.keyword.match_type FROM customer_negative_criterion", neg);
+      expect(i[0]).toMatch(/^customer_negative_criterion\.keyword\.text doesn't exist\. Same field on other resources: shared_criterion\.keyword\.text /);
+      // The resource that names the linked shared set itself comes first, joined through the keyword list (not the placement list).
+      expect(i[0]).toContain("shared_criterion.keyword.text (FROM shared_criterion WHERE shared_criterion.shared_set = the "
+        + "customer_negative_criterion.negative_keyword_list.shared_set value), ad_group_criterion.keyword.text (FROM ad_group_criterion), "
+        + "campaign_criterion.keyword.text (FROM campaign_criterion).");
+      expect(i[0]).toContain("Fields under customer_negative_criterion: ");
+      // The join is said once.
+      expect(i[1]).toBe("customer_negative_criterion.keyword.match_type doesn't exist either. Same field on other resources: "
+        + "shared_criterion.keyword.match_type (FROM shared_criterion), ad_group_criterion.keyword.match_type (FROM ad_group_criterion), "
+        + "campaign_criterion.keyword.match_type (FROM campaign_criterion).");
+      // One bad field among good ones: the rest still runs, said before the other resources.
+      expect(checkGaql("SELECT customer_negative_criterion.id, customer_negative_criterion.keyword.text FROM customer_negative_criterion", neg)[0])
+        .toContain("without it, the rest runs. Same field on other resources: shared_criterion.keyword.text");
+      // A bare leaf such as .id is on every resource: no list for it.
+      expect(checkGaql("SELECT customer_negative_criterion.criterion_id FROM customer_negative_criterion", neg)[0]).not.toContain("Same field");
+    });
   });
 });
 

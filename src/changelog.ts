@@ -7,6 +7,13 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.47.2", date: "2026-11-22",
+    summary: "Asking for your account-level negative keywords now gets them, instead of a dead end.",
+    items: [
+      "**Account-level negative keywords:** they live in a negative keyword list, not on the account itself, so the AI's first guess at reading them failed and it often went on without them. The error it gets now names where the keywords are (the list's own entries) and how to reach that list from the account, and does the same for any field that only exists under another part of Google Ads.",
+    ],
+  },
+  {
     version: "0.47.1", date: "2026-11-21",
     summary: "What you applied before 0.47.0 still counts as it did, once per approval.",
     items: [
