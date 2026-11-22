@@ -18,6 +18,10 @@
  * `utm_source=openai&click_id={oppref}`; the reference is kept as kind "oppref" and handed to operations' second
  * endpoint, which sends it to OpenAI's Conversions API. Two events go out for such a user: the first connection, and
  * the first paid plan if it starts within OpenAI's 30-day window (paid()). Still nothing about the user travels.
+ * The connection goes out only once list_accounts has read at least one real Google Ads account for that login
+ * (users.ads_accounts > 0), so the hourly sweep sends it, not the OAuth callback. Before 2026-11-22 every connect was
+ * sent: 9 of 10 ad-attributed connects had no Ads account (ChatGPT users curious about "Google Ads", not advertisers),
+ * and the LatAm ES campaign's oCPC bidding was learning to find more of them. Google's kinds are unchanged.
  */
 import { createHash } from "node:crypto";
 import type { Request, Response } from "express";
@@ -104,7 +108,10 @@ export class AdConversions {
   }
 
   private async flushPending(cfg: ConversionConfig): Promise<void> {
-    const pending = this.db.prepare(`SELECT * FROM ad_conversions WHERE uploaded_at IS NULL AND attempts < ? ORDER BY at`).all(MAX_ATTEMPTS) as
+    // A ChatGPT Ads connect waits until the login is known to hold a real Ads account, and inside OpenAI's window.
+    const pending = this.db.prepare(`SELECT c.* FROM ad_conversions c JOIN users u ON u.id = c.user_id
+      WHERE c.uploaded_at IS NULL AND c.attempts < ?
+        AND (c.kind <> 'oppref' OR (coalesce(u.ads_accounts, 0) > 0 AND c.at > ?)) ORDER BY c.at`).all(MAX_ATTEMPTS, now() - OPENAI_WINDOW) as
       { user_id: string; kind: Kind; click_id: string; at: number }[];
     for (const p of pending) {
       if (p.kind === "oppref" && !cfg.openaiUrl) continue;  // kept; goes out once the endpoint is configured

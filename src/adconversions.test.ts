@@ -18,8 +18,9 @@ function ops() {
 }
 const cfg = { opsUrl: "http://ops/v1/conversions", opsKey: "crk_ours", actionId: "555", openaiUrl: "http://ops/v1/openai-conversions", siteUrl: "https://camberstack.io/" };
 const res = () => { const h: string[] = []; return { h, append: (_: string, v: string) => { h.push(v); }, setHeader: (k: string, v: string) => { h.push(`${k}: ${v}`); } } as any; };
-const user = (db: ReturnType<typeof openDb>, id: string) =>
-  db.prepare("INSERT INTO users (id, email, google_sub, created_at) VALUES (?, ?, ?, ?)").run(id, `${id}@example.com`, `g-${id}`, now());
+/** A user whose login holds `ads` Google Ads accounts (null: list_accounts hasn't recorded any yet). */
+const user = (db: ReturnType<typeof openDb>, id: string, ads: number | null = 1) =>
+  db.prepare("INSERT INTO users (id, email, google_sub, created_at, ads_accounts) VALUES (?, ?, ?, ?, ?)").run(id, `${id}@example.com`, `g-${id}`, now(), ads);
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
 describe("ChatGPT Ads conversions", () => {
@@ -89,6 +90,26 @@ describe("ChatGPT Ads conversions", () => {
     ac.record({ headers: { cookie: "cs_click=oppref:oppref_click_def" } } as any, r, "u2", false);
     expect(r.h[0]).toMatch(/^cs_click=; /);
     expect(db.prepare("SELECT count(*) n FROM ad_conversions").get()).toEqual({ n: 1 });
+  });
+
+  it("sends a ChatGPT Ads connect only once the login is known to hold a real Ads account", async () => {
+    const db = openDb(":memory:"); const o = ops();
+    const ac = new AdConversions(db, cfg, true, o.f);
+    user(db, "none", null); user(db, "zero", 0); user(db, "later", null); user(db, "stale", null);
+    for (const id of ["none", "zero", "later"]) ac.record({ headers: { cookie: `cs_click=oppref:oppref_${id}_click` } } as any, res(), id, true);
+    db.prepare("INSERT INTO ad_conversions (user_id, kind, click_id, at) VALUES ('stale', 'oppref', 'oppref_stale_click', ?)").run(now() - 31 * 86400);
+    await tick(); await ac.flush();
+    expect(o.sent).toEqual([]);
+    expect(db.prepare("SELECT count(*) n FROM ad_conversions WHERE attempts = 0 AND uploaded_at IS NULL").get()).toEqual({ n: 4 });
+    // list_accounts reads a real account for two of them; the sweep sends only the one still inside OpenAI's window.
+    db.prepare("UPDATE users SET ads_accounts = 2 WHERE id IN ('later', 'stale')").run();
+    await ac.flush();
+    expect(o.sent.map((s) => s.body.oppref)).toEqual(["oppref_later_click"]);
+    // A Google click isn't held.
+    user(db, "g", null);
+    ac.record({ headers: { cookie: "cs_click=gclid:Cj0KCQtest_click_1234" } } as any, res(), "g", true);
+    await tick();
+    expect(o.sent.at(-1)!.body).toMatchObject({ gclid: "Cj0KCQtest_click_1234" });
   });
 
   it("holds ChatGPT Ads clicks when the OpenAI endpoint isn't configured, and still uploads Google's", async () => {
