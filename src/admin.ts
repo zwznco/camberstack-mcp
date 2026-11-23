@@ -536,8 +536,9 @@ ${card("Counting", table(cols, rows.filter((r) => r.plan === "free" && !r.atCap 
  */
 function errorsPage(v: View): string {
   const r = v.report, w = lastW(v.days);
-  return `${card("Errors by message", table(["error", "tool", ["times", "r"], ["users", "r"], "last"], r.errors.map((e) => [`<span class="err">${errorText(e.error)}</span>`,
-    `<code>${esc(e.tool)}</code>`, num(e.n), num(e.users), when(e.last)]), "No errors in this window.", "stack")
+  return `${card("Errors by message", table(["error", "tool", ["errors", "r"], ["users", "r"], "last"], r.errors.map((e) => [`<span class="err">${errorText(e.error)}</span>`,
+    // Units in the cell: on a phone the header is hidden and two bare numbers read alike.
+    `<code>${esc(e.tool)}</code>`, `${num(e.n)} ${e.n === 1 ? "error" : "errors"}`, `${num(e.users)} ${e.users === 1 ? "user" : "users"}`, when(e.last)]), "No errors in this window.", "stack")
     .replaceAll('<td><span class="err">', '<td class="wrap"><span class="err">'), `<small>${w} · newest first</small>`)}
 ${card("Each error", table(["error", "user", "tool", "account", "when"], r.recentErrors.map((c) => [`<span class="err">${errorText(c.error)}</span>`,
     userLink(v, c.id, c.email), `<code>${esc(c.tool)}</code> <span class="muted">${esc(c.client)}</span>`, cid(c.customer_id), when(c.at)]), "No errors in this window.", "stack")
