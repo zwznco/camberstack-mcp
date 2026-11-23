@@ -286,6 +286,13 @@ describe("remarketing, recommendations, review requests", () => {
     expect(r.operations[0]).toMatchObject({ policyValidationParameter: { ignorablePolicyTopics: ["HEALTH_IN_PERSONALIZED_ADS"] } });
     expect(r.describe).toContain("can't run until Google approves");
   });
+
+  it("a review topic copied from ads_report loses its (limited) suffix", async () => {
+    const ads = { async search(_c: string, q: string): Promise<any[]> { return q.includes("FROM ad_group_ad") ? [] : [{ adGroup: { name: "Drains" }, campaign: { name: "Search" } }]; } };
+    const r = await resolveChange(ads, "1", null, { type: "add_responsive_search_ad", ad_group_id: "5", request_review_topics: ["TRADEMARKS_IN_AD_TEXT (limited)"],
+      ad: { headlines: ["A", "B", "C"], descriptions: ["D", "E"], final_url: "https://a.example" } });
+    expect(r.operations[0]).toMatchObject({ policyValidationParameter: { ignorablePolicyTopics: ["TRADEMARKS_IN_AD_TEXT"] } });
+  });
 });
 
 describe("set_conversion_goal", () => {

@@ -391,6 +391,11 @@ function adsErrorFix(code: string, message: string, field: string): string | nul
         + "ALL CAPS, symbols or emoji used for emphasis, phone numbers in headlines, or a video or landing page that breaks policy. "
         + "Reword the ad and propose again; the full reasons show under Policy in Google Ads. Only if the user says it complies and no topic is PROHIBITED, "
         + "propose it again with request_review_topics set to those topics, which asks Google to review it.";
+    case "POLICY_TOPIC_NOT_FOUND":
+      // A user's AI sent request_review_topics Google didn't know, 6× in a row, and only got through by dropping them (prod, 2026-11-23).
+      return "request_review_topics holds a topic Google doesn't know. Use only the exact topic names from a POLICY_FINDING refusal's "
+        + "[policy …] entries (e.g. TRADEMARKS_IN_AD_TEXT), without the (limited) or (prohibited) suffix ads_report adds. If Google hasn't "
+        + "refused this ad, propose it again without request_review_topics: an ad that passes the check needs no review request.";
     case "POLICY_ERROR":
       return /keyword\.text$/.test(field)
         ? "Google's policy check refused a keyword (the policy and the words it flagged are above). Drop or reword that keyword "

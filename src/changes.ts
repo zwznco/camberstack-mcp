@@ -1753,7 +1753,9 @@ export async function resolveChange(
 }
 
 /** Asks Google to review a refused ad: an operation's policyValidationParameter, for the topics the refusal listed. */
-const reviewOf = (topics?: string[]) => (topics?.length ? { policyValidationParameter: { ignorablePolicyTopics: topics } } : {});
+// ads_report lists topics as "TOPIC (limited)"; Google wants the bare topic and answers POLICY_TOPIC_NOT_FOUND otherwise.
+const reviewOf = (topics?: string[]) => (topics?.length
+  ? { policyValidationParameter: { ignorablePolicyTopics: topics.map((t) => t.replace(/\s*\(.*\)\s*$/, "").trim()) } } : {});
 const reviewSaid = (topics?: string[]) => (topics?.length ? `, asking Google to review it (${topics.join(", ")}) ⚠ it can't run until Google approves` : "");
 
 /** An ad group's own negative keywords. */
