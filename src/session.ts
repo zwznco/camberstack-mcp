@@ -10,7 +10,7 @@ import {
   AdsApiError, AdsClient, NotConnectedError, NotGrantedError, SEARCH_CONSOLE_SCOPE, SearchConsoleClient, micros, refreshGoogleToken, revokeGoogleToken,
   type GoogleCreds, type GrantKind, type SearchAnalyticsRequest, type SearchAnalyticsRow, type UrlInspection,
 } from "./google.js";
-import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, changeCap, changeCapFrom, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SwitchNotice, accountsLabel, isPaid, poolOf, planLabel, type Plan, type Pool } from "./plans.js";
+import { ACCOUNT_CHOICE_PREFIX, ACCOUNT_WINDOW_DAYS, CHANGE_LIMIT_PREFIX, FREE_TOOLS, PLUS_FEATURE_PREFIX, PLUS_TOOLS, TREND_REPORT, changeCap, changeCapFrom, freeChanges, AGENCY_PRICE_LABEL, PLAN_LIMIT_PREFIX, PLUS_ACCOUNTS, PLUS_PRICE_LABEL, PRO_PRICE_LABEL, SwitchNotice, accountsLabel, isPaid, poolOf, planLabel, type Plan, type Pool } from "./plans.js";
 import { AnalyticsClient, DEMO_PROPERTY, DemoAnalytics, routedAnalytics, type Analytics } from "./ga4.js";
 import { oneRowPerOffer, DEMO_MERCHANT, DemoMerchant, MerchantClient, OverrideStore, routedMerchant, type Merchant, type MerchantAccount } from "./merchant.js";
 import { McChangeSchema, isMcTarget, resolveMcChange, writeMc, type McChange, type McOp, type McResolved } from "./merchant-changes.js";
@@ -28,6 +28,7 @@ import { CRITERIA_QUERY, campaignMarket, chooseTarget, closeVariantGroups, descr
 import { markNoted, takeNote, type NoteVia } from "./result-notes.js";
 import { CONVERSION_ACTIONS_QUERY, KEYWORD_URLS_QUERY, LIVE_ADS_QUERY, adCopyOf, adWording, bidStrategyChanges, callsQuery, campaignChangesQuery, conversionCountsQuery, flaggedWording, keywordUrlOverrides, looksLegal, shortCalls, stoppedConversions, WORDING_NOTE } from "./checks.js";
 import { CAVEATS, MIN_DAYS, add, changeLogQuery, changeLogWindow, overlapNote, overlaps, addDays, between, blocks, localDay, measurable, minus, reading, shown, targets, windows, zero, type Metrics, type Target, type Windows } from "./results.js";
+import { performanceTrend, type Applied } from "./trend.js";
 import {
   ChangeSchema, MAX_CHANGES, inverseAfterApply, quotedKeywords, sameSummary, pendingOf, resolveChange, summarize,
   type Change, type ResolvedChange,
@@ -606,8 +607,43 @@ export class UserSession {
   /** Plus is pitched while the change cap is on, outside ChatGPT, when it's sold. Without the cap it would equal Free. */
   private get plusOffered(): boolean { return !this.chatgpt && !!this.deps.plusAvailable && !!changeCap(); }
 
+  /**
+   * PLUS_TOOLS (plans.ts) on a real account need Plus or above: a Free call stops here, before the account gate, so it never
+   * takes Free's one account. A normal result (SwitchNotice), like the change cap's stop. The demo answers anyone.
+   * On ChatGPT the stop carries only the plans page (its guidelines: no upgrade pitches), and says to give it to the user:
+   * the change cap's stop named plans_page only in passing and no stopped ChatGPT user ever opened it (2026-11-23).
+   */
+  requirePlus(tool: string, customerId: string): void {
+    if (!PLUS_TOOLS.has(tool) || this.isPro || isDemo(customerId)) return;
+    // ChatGPT: no plan names, prices or upgrade wording (OpenAI's guidelines), as the change cap's stop.
+    const head = `${PLUS_FEATURE_PREFIX} nothing was read. ${tool} ${this.chatgpt ? "isn't on the current plan" : "is part of Plus and above"}: it compares a period with the one before, `
+      + "finds which campaigns moved and on what day, and lists what was changed in the account around then. "
+      + `The other read tools keep working, and ${tool} works on the demo account 000-000-0001 for anyone. Tell the user`;
+    const common = { stop: "plus_feature", tool, demo_account: "000-000-0001" };
+    if (this.chatgpt) throw new SwitchNotice(`${head}, and give them the plans_page link: it describes the plans.`, { ...common, plans_page: this.plansPage });
+    const plusUrl = this.deps.plusAvailable ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
+    const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
+    const pro = { plan: "pro", price: PRO_PRICE_LABEL, covers: `${TREND_REPORT}${changeCap() ? " and unlimited applied changes" : ""}, on up to ${accountsLabel(this.deps.proAccounts)}`, upgrade_url: proUrl };
+    if (plusUrl) throw new SwitchNotice(`${head}, and give them upgrade_url: Plus (${PLUS_PRICE_LABEL}) includes it.`,
+      { ...common, upgrade: { plan: "plus", price: PLUS_PRICE_LABEL, covers: `${TREND_REPORT}${changeCap() ? " and unlimited applied changes" : ""}, on 1 Google Ads account`,
+        cancel: "any time", upgrade_url: plusUrl, upgrade_url_expires: "7 days; personal to this user" }, or_pro: pro });
+    throw new SwitchNotice(`${head}${proUrl ? `, and give them upgrade_url: Pro (${PRO_PRICE_LABEL}) includes it.` : "."}`, { ...common, upgrade: { ...pro, cancel: "any time" } });
+  }
+
+  /** Changes Camberstack applied to this account in the last `days`, oldest first: date (UTC) and the summary the user approved. */
+  private appliedIn(customerId: string, days: number): Applied[] {
+    const rows = this.deps.db.prepare(`SELECT applied_at, summary FROM proposals WHERE user_id = ? AND customer_id = ? AND status = 'applied'
+        AND applied_at >= ? ORDER BY applied_at`).all(this.user.id, bareCid(customerId), now() - (days + 1) * 86400) as { applied_at: number; summary: string | null }[];
+    return rows.map((r) => ({ date: new Date(r.applied_at * 1000).toISOString().slice(0, 10), summary: String(r.summary ?? "").slice(0, 300) }));
+  }
+
+  /** performance_trend (trend.ts): a period against the one before, the movers, and what changed around each shift. */
+  async trend(customerId: string, o: { campaign_id?: string; days: number }) {
+    return this.readOn(customerId, (read, demo) => performanceTrend(read, o, { demo, applied: demo ? [] : this.appliedIn(customerId, 2 * o.days) }));
+  }
+
   private freeIncluded(): string {
-    return `every tool on 1 Google Ads account, with ${freeChanges()}; undo and history always work`;
+    return `${FREE_TOOLS} on 1 Google Ads account, with ${freeChanges()}; undo and history always work`;
   }
 
   /** With the change cap on: how many of Free's applied changes this window has used. Nothing otherwise. */
@@ -648,8 +684,8 @@ export class UserSession {
           ...(this.planName === "plus" && upgrade ? { pro: `${changeCap() ? "unlimited applied changes, on " : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`, pro_upgrade_url: upgrade } : {}) }
       : { plan: "free", account_page, ...usage, ...this.changeUsage(),
           included: this.freeIncluded(),
-          ...(plusUrl ? { plus: `unlimited applied changes, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
-          pro: `${changeCap() ? "unlimited applied changes, on " : ""}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
+          ...(plusUrl ? { plus: `unlimited applied changes and ${TREND_REPORT}, on 1 Google Ads account, ${PLUS_PRICE_LABEL}, cancel any time`, plus_upgrade_url: plusUrl } : {}),
+          pro: `${changeCap() ? "unlimited applied changes and the trend report, on " : "the trend report, on "}up to ${accountsLabel(this.deps.proAccounts)}, ${PRO_PRICE_LABEL}, cancel any time`,
           upgrade_url: upgrade, ...agency,
           note: upgrade ? "upgrade_url is personal to this user and expires in 7 days." : "Upgrades are not open yet." };
   }

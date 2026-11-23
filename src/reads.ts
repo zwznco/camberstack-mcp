@@ -11,31 +11,31 @@ import { micros } from "./google.js";
 
 export type Read = (query: string) => Promise<any[]>;
 
-const round = (n: number) => Math.round(n * 100) / 100;
+export const round = (n: number) => Math.round(n * 100) / 100;
 const pctOf = (v: unknown) => (v == null ? null : round(Number(v) * 100));
-const DAY = 86400_000;
-const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+export const DAY = 86400_000;
+export const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
 /** The window ending yesterday (today is partial), as account_overview reads it. */
 export function dateRange(days: number): string {
   const d = Math.max(1, Math.min(365, Math.floor(days)));
   const end = Date.now() - DAY;
   return `segments.date BETWEEN '${isoDay(end - (d - 1) * DAY)}' AND '${isoDay(end)}'`;
 }
-const digits = (s: string) => {
+export const digits = (s: string) => {
   if (!/^\d+$/.test(s)) throw new Error(`"${s}" isn't an id: give the digits only.`);
   return s;
 };
 
-type Totals = { cost: number; clicks: number; impressions: number; conversions: number; conversion_value: number };
-const zero = (): Totals => ({ cost: 0, clicks: 0, impressions: 0, conversions: 0, conversion_value: 0 });
-function addMetrics(t: Totals, m: any) {
+export type Totals = { cost: number; clicks: number; impressions: number; conversions: number; conversion_value: number };
+export const zero = (): Totals => ({ cost: 0, clicks: 0, impressions: 0, conversions: 0, conversion_value: 0 });
+export function addMetrics(t: Totals, m: any) {
   t.cost += micros(m?.costMicros);
   t.clicks += Number(m?.clicks ?? 0);
   t.impressions += Number(m?.impressions ?? 0);
   t.conversions += Number(m?.conversions ?? 0);
   t.conversion_value += Number(m?.conversionsValue ?? 0);
 }
-const done = (t: Totals) => ({
+export const done = (t: Totals) => ({
   cost: round(t.cost), clicks: t.clicks, impressions: t.impressions, conversions: round(t.conversions),
   ...(t.conversion_value ? { conversion_value: round(t.conversion_value) } : {}),
   ...(t.conversions > 0 ? { cost_per_conversion: round(t.cost / t.conversions) } : {}),

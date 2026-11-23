@@ -728,7 +728,8 @@ describe("OAuth + MCP end to end", () => {
     // +1K (0.44.0): local_services_report, and account_overview naming its new checks.
     // +5.3K (0.45.0): campaign_details, conversion_tracking, search_terms_report, ads_report, keywords_report (the gap audit's top run_gaql reads).
     // +1.25K (0.46.0): search_console_site_audit.
-    expectToolBudget(tools, { total: 132_700, perTool: 6_000, except: { propose_changes: 57_200, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
+    // +1.3K (0.48.0): performance_trend.
+    expectToolBudget(tools, { total: 134_000, perTool: 6_000, except: { propose_changes: 57_200, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1346,7 +1347,7 @@ describe("OAuth + MCP end to end", () => {
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
       // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K; propose_archive_custom_dimension / _metric: +2.2K.
-      expectToolBudget(tools, { total: 174_400, perTool: 6_000 });  // +1.25K (0.46.0) search_console_site_audit, +5.3K (0.45.0) the five read tools, +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid, +0.9K (0.44.0) local_services_report + account_overview's checks
+      expectToolBudget(tools, { total: 175_800, perTool: 6_000 });  // +1.35K (0.48.0) performance_trend, +1.25K (0.46.0) search_console_site_audit, +5.3K (0.45.0) the five read tools, +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid, +0.9K (0.44.0) local_services_report + account_overview's checks
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -3471,6 +3472,38 @@ describe("OAuth + MCP end to end", () => {
     expect(logo.headers.get("content-type")).toContain("image/png");
   });
 
+  it("performance_trend is Plus and above: a Free call stops before the account gate, the demo answers anyone, ChatGPT names no plan", async () => {
+    googleUser.sub = "google-sub-trend"; googleUser.email = "trend@example.com";
+    const t = await connect(undefined, "xyz", "203.0.113.8");
+    const uid = (db.prepare("SELECT id FROM users WHERE google_sub = ?").get("google-sub-trend") as { id: string }).id;
+    // Free, real account: a normal result offering Plus, nothing read, and the account not taken.
+    const stop = await call(t, "performance_trend", { customer_id: "1112223333" });
+    expect(stop.isError).toBe(false);
+    expect(stop.json.notice).toMatch(/^Plan feature: nothing was read\. performance_trend is part of Plus and above/);
+    expect(stop.json).toMatchObject({ stop: "plus_feature", tool: "performance_trend", demo_account: "000-000-0001",
+      upgrade: { plan: "plus", upgrade_url: expect.stringContaining("http") }, or_pro: { plan: "pro" } });
+    expect(db.prepare("SELECT ok, customer_id, error FROM tool_calls WHERE user_id = ? AND tool = 'performance_trend'").get(uid))
+      .toMatchObject({ ok: 1, customer_id: null, error: expect.stringMatching(/^Plan feature:/) });
+    expect((await call(t, "billing")).json.accounts_in_use).toEqual([]);
+    // The demo answers Free.
+    const demo = await call(t, "performance_trend", { customer_id: "0000000001", days: 14 });
+    expect(demo.json).toMatchObject({ window: { days: 14 }, note: expect.any(String) });
+    expect(demo.json.daily).toHaveLength(14);
+    // ChatGPT: the same stop with only the plans page, and no plan names, prices or upgrade wording.
+    const client = (db.prepare("SELECT client_id FROM tokens WHERE user_id = ? LIMIT 1").get(uid) as { client_id: string }).client_id;
+    const info = (db.prepare("SELECT info FROM clients WHERE client_id = ?").get(client) as { info: string }).info;
+    db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(info), redirect_uris: ["https://chatgpt.com/connector/oauth/trend"] }), client);
+    const gpt = await call(t, "performance_trend", { customer_id: "1112223333" });
+    expect(gpt.json).toMatchObject({ stop: "plus_feature", plans_page: expect.stringContaining("/plans") });
+    expect(gpt.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bFree plan\b|\bPro\b|\bPlus\b|\$|upgrade/i);
+    db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(info, client);
+    // Plus reads the account.
+    db.prepare("UPDATE users SET plan = 'plus' WHERE id = ?").run(uid);
+    const paid = await call(t, "performance_trend", { customer_id: "1112223333", days: 7 });
+    expect(paid.isError).toBe(false);
+    expect(paid.json).toMatchObject({ account: expect.any(Object), window: { days: 7 }, totals: expect.any(Object) });
+  });
+
   it("with FREE_CHANGE_CAP, stops Free's applies past the cap: the proposal stays open, undo and the demo don't count", async () => {
     googleUser.sub = "google-sub-change-cap"; googleUser.email = "changecap@example.com";
     setChangeCap(2);
@@ -3746,10 +3779,10 @@ describe("OAuth + MCP end to end", () => {
     expect(off).toContain("on <strong>1 Google Ads account</strong> at a time");
     expect(off).toContain("Search Console, Google Analytics and Tag Manager are included and don't use up the Google Ads account. Merchant Center is included too, on 1 Merchant Center account.</p>");
     expect(on).toContain("Search Console, Google Analytics and Tag Manager are included and don't use up the Google Ads account; their applied changes count toward the same allowance.");
-    expect(off).toContain("Everything in Free, on <strong>up to 5 Google Ads accounts</strong>");
-    expect(on).toContain("Every tool, with 10 applied changes every 30 days and undo, on <strong>1 Google Ads account</strong> at a time");
+    expect(off).toContain("Everything in Free with the trend report, on <strong>up to 5 Google Ads accounts</strong>");
+    expect(on).toContain("Every tool but the trend report, with 10 applied changes every 30 days and undo, on <strong>1 Google Ads account</strong> at a time");
     expect(on).toContain("<h2>Plus · $7/month</h2>");
-    expect(on).toContain("Everything in Free with unlimited applied changes, on <strong>up to 5 Google Ads accounts</strong>");
+    expect(on).toContain("Everything in Free with unlimited applied changes and the trend report, on <strong>up to 5 Google Ads accounts</strong>");
     // The body (the site header's nav is every page's): nothing that starts an upgrade or links the account page.
     for (const h of [off, on]) expect(h.slice(h.indexOf('<div class="legal">'))).not.toMatch(/upgrade=|Upgrade to|href="\/account/i);
   });
@@ -3779,7 +3812,7 @@ describe("OAuth + MCP end to end", () => {
     expect(on).toContain('<a class="btn btn-ghost" href="/account?upgrade=1">Upgrade to Pro</a>');
     expect(off).toContain('<div class="plan plan-pro"><h3>Pro</h3>');
     expect(on).toContain("<h2>Plus · $7/month</h2>");
-    expect(on).toContain("Plus $7/month has unlimited applied changes on 1 Google Ads account");
+    expect(on).toContain("Plus $7/month has unlimited applied changes and the trend report (what moved, on what day, and what changed around then) on 1 Google Ads account");
     expect(on).toContain('"name":"Plus","price":"7"');
   });
 

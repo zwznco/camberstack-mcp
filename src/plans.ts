@@ -50,6 +50,20 @@ export const freeChangesShort = () => (changeCapValue ? `${changeCapValue} chang
 /** Text of the change cap's stop. Not PLAN_LIMIT_PREFIX: lifecycle.ts's limit_reached email is about Ads accounts. */
 export const CHANGE_LIMIT_PREFIX = "Change limit:";
 
+/**
+ * Tools on Plus and above only (operator, 2026-11-23): listed for everyone, a Free call on a real account stops with the
+ * plan offer (session.ts requirePlus), and the demo answers anyone. The gap audit's biggest read without a tool was results
+ * over time (70 of 86 users split campaign metrics by date, 30 days to 11-23); run_gaql still answers a plain daily
+ * table, so the paid tool is what a query doesn't do: what moved, on what day, and what changed around then.
+ */
+export const PLUS_TOOLS = new Set(["performance_trend"]);
+/** Text of the stop a Free call to a PLUS_TOOLS tool gets. */
+export const PLUS_FEATURE_PREFIX = "Plan feature:";  // no plan name: ChatGPT sees it too
+/** What Free lacks, for every page, email and tool result that describes the plans. */
+export const FREE_TOOLS = "every tool but the trend report";
+/** What Plus and above add besides changes and accounts. */
+export const TREND_REPORT = "the trend report (what moved, on what day, and what changed around then)";
+
 /** The Google services a call can use (tools.ts servicesOf), logged per call in tool_calls.service for the reports. */
 export type Service = "ads" | "search_console" | "analytics" | "merchant" | "tag_manager";
 export const SERVICE_LABELS: Record<Service, string> = { ads: "Google Ads", search_console: "Search Console", analytics: "Google Analytics", merchant: "Merchant Center", tag_manager: "Tag Manager" };

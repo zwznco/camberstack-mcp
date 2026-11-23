@@ -141,7 +141,7 @@ describe("lifecycle emails", () => {
       db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES ('pl', 'g-pl', 'pl@example.com', 'plus', 'sub_pl', ?)").run(now());
       expect(await lc.transactional()).toBe(1);
       expect(sent.at(-1).subject).toBe("You're on Camberstack Plus");
-      expect(sent.at(-1).text).toContain("What Plus adds: unlimited applied changes on one Google Ads account, where Free stops at 10 every 30 days.");
+      expect(sent.at(-1).text).toContain("What Plus adds: unlimited applied changes on one Google Ads account (Free stops at 10 every 30 days), and the trend report: ask what changed lately");
       expect(sent.at(-1).text).toContain("$7/month, renewing monthly");
     } finally { setChangeCap(null); }
   });

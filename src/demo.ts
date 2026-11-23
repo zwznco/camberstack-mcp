@@ -275,6 +275,7 @@ export class DemoAds {
     const q = parse(query);
     const s = this.load();
     let rows = this.rows(q.from, s, q.days).filter((r) => q.where.every((w) => w(r)));
+    if (q.byDate && q.range && q.from === "campaign") rows = byDay(rows, q.range);
     if (q.orderBy) {
       const { path, desc } = q.orderBy;
       rows = rows.sort((a, b) => cmp(get(a, path), get(b, path)) * (desc ? -1 : 1));
@@ -419,13 +420,15 @@ function parse(query: string) {
   const orderBy = /\bORDER BY\s+([\w.]+)(?:\s+(ASC|DESC))?/i.exec(q);
   const limit = Number(/\bLIMIT\s+(\d+)/i.exec(q)?.[1] ?? 0) || undefined;
   let days = HISTORY_DAYS;
+  let range: [string, string] | undefined;
+  const byDate = /^\s*SELECT\b.*\bsegments\.date\b.*\bFROM\b/i.test(q);
   const conds: ((r: any) => boolean)[] = [];
   // Split on AND outside quotes and outside BETWEEN … AND …
   const parts = where ? where.replace(/BETWEEN\s+('[^']*')\s+AND\s+('[^']*')/gi, "BETWEEN $1 && $2").split(/\s+AND\s+(?=(?:[^']*'[^']*')*[^']*$)/i) : [];
   for (const part of parts) {
     const p = part.trim();
     const dr = /^segments\.date\s+BETWEEN\s+'([\d-]+)'\s+&&\s+'([\d-]+)'$/i.exec(p);
-    if (dr) { days = Math.round((Date.parse(dr[2]!) - Date.parse(dr[1]!)) / 86_400_000) + 1; continue; }
+    if (dr) { days = Math.round((Date.parse(dr[2]!) - Date.parse(dr[1]!)) / 86_400_000) + 1; range = [dr[1]!, dr[2]!]; continue; }
     const during = /^segments\.date\s+DURING\s+LAST_(\d+)_DAYS$/i.exec(p);
     if (during) { days = Number(during[1]); continue; }
     if (/^segments\./i.test(p)) continue;
@@ -448,7 +451,29 @@ function parse(query: string) {
       });
     }
   }
-  return { from, where: conds, orderBy: orderBy ? { path: orderBy[1]!.split(".").map(camel), desc: orderBy[2]?.toUpperCase() === "DESC" } : undefined, limit, days };
+  return { from, byDate, range, where: conds, orderBy: orderBy ? { path: orderBy[1]!.split(".").map(camel), desc: orderBy[2]?.toUpperCase() === "DESC" } : undefined, limit, days };
+}
+
+/**
+ * A campaign query that selects segments.date (performance_trend, or run_gaql by day): each campaign's window totals spread
+ * over the days, weekends lighter, and one story so a trend has something to find: Drain Cleaning's spend and conversions
+ * double from 9 days ago (as after a budget raise). Totals over the window stay close to the undivided figures.
+ */
+function byDay(rows: any[], [from, to]: [string, string]): any[] {
+  const days: string[] = [];
+  for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += 86_400_000) days.push(new Date(t).toISOString().slice(0, 10));
+  const step = new Date(Date.now() - 9 * 86_400_000).toISOString().slice(0, 10);
+  const weight = (d: string, id: string) => ([0, 6].includes(new Date(`${d}T00:00:00Z`).getUTCDay()) ? 0.7 : 1.12) * (id === "2003" && d >= step ? 2 : 1);
+  return rows.flatMap((r) => {
+    const total = days.reduce((a, d) => a + weight(d, String(r.campaign?.id)), 0);
+    return days.map((d) => {
+      const k = weight(d, String(r.campaign?.id)) / total;
+      const m = r.metrics ?? {};
+      return { ...r, segments: { date: d }, metrics: { ...m, costMicros: String(Math.round(Number(m.costMicros ?? 0) * k)),
+        clicks: String(Math.round(Number(m.clicks ?? 0) * k)), impressions: String(Math.round(Number(m.impressions ?? 0) * k)),
+        conversions: Math.round(Number(m.conversions ?? 0) * k * 100) / 100, conversionsValue: 0 } };
+    });
+  });
 }
 
 // ---------------------------------------------------------------- Search Console: the demo's website

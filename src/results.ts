@@ -187,6 +187,20 @@ export const BY: Record<string, string> = {
 // Enhanced CPC on its own is a setting, not a strategy change.
 export const BIDDING = /biddingStrategy|targetCpa|targetRoas|maximizeConversion|manualCpc(?!\.enhancedCpcEnabled)|targetSpend|targetImpressionShare|percentCpc/;
 
+/** A change_event row worth naming (status, budget, bidding), or null for the rest. Shared with trend.ts. */
+export function notableChange(e: any): string | null {
+  const fields = String(e.changedFields ?? ""), type = e.changeResourceType, op = e.resourceChangeOperation;
+  const status = e.newResource?.campaign?.status ?? e.newResource?.adGroup?.status;
+  return type === "CAMPAIGN" && op === "UPDATE" && /\bstatus\b/.test(fields) && status ? `campaign ${String(status).toLowerCase() === "enabled" ? "enabled" : String(status).toLowerCase()}`
+    : type === "CAMPAIGN" && op === "UPDATE" && BIDDING.test(fields) ? "bid strategy changed"
+    : type === "CAMPAIGN" && op === "UPDATE" && /campaignBudget/.test(fields) ? "budget changed"
+    : type === "CAMPAIGN_BUDGET" && op === "UPDATE" ? "budget changed"
+    : type === "AD_GROUP" && op === "UPDATE" && /\bstatus\b/.test(fields) && status ? `an ad group ${String(status).toLowerCase()}`
+    : null;
+}
+/** Who made a change_event change, in words. */
+export const changedBy = (e: any) => BY[e.clientType] ?? String(e.clientType ?? "unknown").toLowerCase().replace(/_/g, " ");
+
 /** Changes to these campaigns, the notable ones spelled out (status, budget, bidding), the rest counted. */
 export function overlaps(rows: any[], campaigns: Set<string>, window: [string, string]): { notable: Overlap[]; other: number } {
   const notable: Overlap[] = [];
@@ -195,15 +209,8 @@ export function overlaps(rows: any[], campaigns: Set<string>, window: [string, s
     const e = r.changeEvent ?? {};
     const date = String(e.changeDateTime ?? "").slice(0, 10);
     if (!campaigns.has(String(e.campaign ?? "").split("/").at(-1) ?? "") || date < window[0] || date > window[1]) continue;
-    const fields = String(e.changedFields ?? ""), type = e.changeResourceType, op = e.resourceChangeOperation;
-    const status = e.newResource?.campaign?.status ?? e.newResource?.adGroup?.status;
-    const what = type === "CAMPAIGN" && op === "UPDATE" && /\bstatus\b/.test(fields) && status ? `campaign ${String(status).toLowerCase() === "enabled" ? "enabled" : String(status).toLowerCase()}`
-      : type === "CAMPAIGN" && op === "UPDATE" && BIDDING.test(fields) ? "bid strategy changed"
-      : type === "CAMPAIGN" && op === "UPDATE" && /campaignBudget/.test(fields) ? "budget changed"
-      : type === "CAMPAIGN_BUDGET" && op === "UPDATE" ? "budget changed"
-      : type === "AD_GROUP" && op === "UPDATE" && /\bstatus\b/.test(fields) && status ? `an ad group ${String(status).toLowerCase()}`
-      : null;
-    if (what) notable.push({ date, what, by: BY[e.clientType] ?? String(e.clientType ?? "unknown").toLowerCase().replace(/_/g, " ") });
+    const what = notableChange(e);
+    if (what) notable.push({ date, what, by: changedBy(e) });
     else other++;
   }
   return { notable, other };

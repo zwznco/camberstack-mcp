@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.48.0", date: "2026-11-23",
+    summary: "New on Plus and above: ask what changed lately, and see which campaigns moved, on what day, and what was changed in the account around then.",
+    items: [
+      "**`performance_trend`**: the last 7 to 90 days against the same length before, for the account or one campaign. It lists the campaigns that moved (spend, conversions, cost per conversion), finds the day each one shifted, shows impression share lost to budget and rank before and after, and lines that day up against Google's change log: every change, whether made in Google Ads, through Camberstack, by another tool, a rule or an auto-applied recommendation. Where the numbers point one way it says what to look at next, such as a budget that started limiting a campaign. Plus the day-by-day line.",
+      "It's on Plus, Pro and Agency, and works on the demo account for anyone. On Free, it says it's part of a paid plan and the other read tools keep working.",
+    ],
+  },
+  {
     version: "0.47.2", date: "2026-11-22",
     summary: "Asking for your account-level negative keywords now gets them, instead of a dead end.",
     items: [

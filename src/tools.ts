@@ -9,7 +9,7 @@ import { fieldQuery, queryShape } from "./gaql.js";
 import { GA_TARGET, PUBLIC_GA_CHANGES, PublicGaChangeSchema, gaSetup } from "./ga4-changes.js";
 import { PUBLIC_SC_CHANGES, SC_TARGET, ScChangeSchema } from "./search-console-changes.js";
 import { FEEDBACK_KINDS, type FeedbackKind } from "./feedback.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice, type Service } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, PLUS_TOOLS, PRO_ACCOUNTS, PlanLimitError, SwitchNotice, type Service } from "./plans.js";
 import { DEMO_SITE } from "./demo.js";
 import { isDemo, type Account, type ScWindowOpts, type UserSession } from "./session.js";
 import { isUnexpected, reportError } from "./sentry.js";
@@ -20,10 +20,10 @@ import { NotGrantedError, grantName } from "./google.js";
 import { adsReport, campaignDetails, conversionTracking, keywordsReport, searchTerms } from "./reads.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.47.2";
+export const SERVER_VERSION = "0.48.0";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
-Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
+Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; performance_trend (Plus and above) for what changed lately and why; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
 Never call apply_changes unless the user has explicitly approved that specific proposal in this conversation. Applied proposals can be reversed with undo_changes, except deletions Google can't reverse: their summary says so with a ⚠, so tell the user before they approve.
 Each Google service is added separately: when a result says one isn't part of the connection, give the user its grant_url (one click adds it); never tell them to reconnect.
 For keyword_ideas and keyword_metrics, leave out location_ids to count searches where the account's campaigns target; pass them (a country, a place or an id) to research another market, or "worldwide" for every location. Each result's target says which market was counted.
@@ -33,7 +33,9 @@ Account 000-000-0001 is a demo with sample data: anyone can try every tool on it
 /** ChatGPT's connections have no propose_changes or undo_changes: one propose_<operation> tool per change, and propose_undo. */
 const CHATGPT_INSTRUCTIONS = INSTRUCTIONS
   .replace("propose_changes → show", "the propose_<operation> tool for that change (propose_pause_campaign, propose_set_daily_budget, …) → show")
-  .replace("reversed with undo_changes", "reversed with propose_undo (a proposal like any other: approve, then apply_changes)");
+  .replace("reversed with undo_changes", "reversed with propose_undo (a proposal like any other: approve, then apply_changes)")
+  // OpenAI's guidelines: no plan names or upgrade pitches in ChatGPT (session.ts plansPage).
+  .replace("performance_trend (Plus and above)", "performance_trend (not on every plan)");
 
 /** Added where the Merchant Center tools are listed: a store owner may have no Google Ads account at all. */
 const MERCHANT_INSTRUCTIONS = `
@@ -48,7 +50,7 @@ For a site's tags and conversion tracking, start with tag_manager_containers, th
 const PICK_TOOLS = new Set(["switch_account", "choose_account"]);
 
 /** The read tools in reads.ts (0.45.0), for what users most often wrote run_gaql for. */
-const READ_TOOLS = ["campaign_details", "conversion_tracking", "search_terms_report", "ads_report", "keywords_report"];
+const READ_TOOLS = ["campaign_details", "conversion_tracking", "search_terms_report", "ads_report", "keywords_report", "performance_trend"];
 
 /** Tools that read or propose on one Google Ads account, so count toward the plan's accounts (session.ts checkAccount). */
 const GATED = new Set(["merchant_ad_spend", "account_overview", "local_services_report", ...READ_TOOLS, "change_results", "run_gaql", "keyword_ideas", "keyword_metrics", "propose_changes", "paid_organic_overlap", "switch_account", "choose_account",
@@ -203,6 +205,8 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       let offered: string | null = null;
       const services = servicesOf(name, a);
       try {
+        // A Plus tool stops a Free user before the account gate, so the stop never takes Free's one account (session.ts requirePlus).
+        if (PLUS_TOOLS.has(name) && typeof cid === "string") session().requirePlus(name, cid);
         if ((GATED.has(name) || MC_GATED.has(name)) && typeof cid === "string") {
           // switch_account/choose_account is the user's pick after an "Account choice:" notice: it takes the account without asking again.
           const done = await session().checkAccount(cid, PICK_TOOLS.has(name), name === "account_overview");
@@ -392,6 +396,19 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     annotations: read,
   }, (a: { customer_id: string; campaign_id?: string; ad_group_id?: string; days: number; include_paused: boolean; limit: number }) =>
     session().readOn(a.customer_id, (r) => keywordsReport(r, a)));
+
+  tool("performance_trend", {
+    title: "Performance trend: what changed and why",
+    description: `${o.chatgpt ? "Not on every plan" : "Plus and above"} (works on the demo account for anyone). `
+      + "What changed lately: the last `days` against the same length before, "
+      + "for the account or one campaign. Lists the campaigns that moved (spend, conversions, cost per conversion), the day each one shifted, "
+      + "budget- and rank-lost impression share before and after, and what was changed in the account around that day, from Google's change log "
+      + "(made anywhere: Google Ads, Camberstack, other tools, rules, auto-applied recommendations), and the day-by-day line. "
+      + "Use it for \"why did conversions drop\", \"what changed this month\", \"is this campaign getting worse\".",
+    inputSchema: { customer_id: customerId, campaign_id: z.string().regex(/^\d+$/, "digits only").optional().describe("Only this campaign (campaign_id from account_overview)"),
+      days: z.number().int().min(7).max(90).default(28).describe("Days in each period, ending yesterday; compared with the same number of days before") },
+    annotations: read,
+  }, (a: { customer_id: string; campaign_id?: string; days: number }) => session().trend(a.customer_id, a));
 
   tool("run_gaql", {
     title: "Run a read-only GAQL query",

@@ -15,7 +15,7 @@ import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
 import { SC_TARGET } from "./search-console-changes.js";
 import { GTM_TARGET } from "./gtm-changes.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, freeChanges, planLabel } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, PLUS_PRICE_LABEL, PRO_ACCOUNTS, PRO_PRICE_LABEL, FREE_TOOLS, freeChanges, planLabel } from "./plans.js";
 
 interface AccountDeps {
   db: DB;
@@ -208,7 +208,7 @@ ${!by && "agency_upgrade_url" in plan && plan.agency_upgrade_url ? `<a class="bt
       : (() => {
         const used = plan.accounts_in_use;
         return `<div class="card"><p class="label">Plan</p><p class="big">Free</p>
-<p class="muted">Every tool, with ${freeChanges()}, on ${plan.accounts_included} Google Ads account.
+<p class="muted">${FREE_TOOLS[0]!.toUpperCase() + FREE_TOOLS.slice(1)}, with ${freeChanges()}, on ${plan.accounts_included} Google Ads account.
 ${"changes_included" in plan && plan.changes_included ? `Changes applied (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${plan.changes_applied} of ${plan.changes_included}</strong>.` : ""}
 ${used.length ? `Google Ads accounts in use (last ${ACCOUNT_WINDOW_DAYS} days): <strong style="color:var(--fg)">${used.map((c) => esc(fmtCid(c))).join(", ")}</strong>.` : "Not used on a Google Ads account yet."}
 ${"plus_upgrade_url" in plan && plan.plus_upgrade_url ? `Plus has unlimited changes on 1 account; ` : ""}Pro covers up to ${PRO_ACCOUNTS}${"agency_upgrade_url" in plan && plan.agency_upgrade_url ? `, Agency up to ${AGENCY_ACCOUNTS}` : ""}.</p>

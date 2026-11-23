@@ -42,7 +42,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, CHANGE_LIMIT_PREFIX, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, freeChanges, freeChangesShort, PRO_ACCOUNTS, PRO_PRICE_LABEL, dateLabel, payingSql } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, CHANGE_LIMIT_PREFIX, FREE_TOOLS, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, freeChanges, freeChangesShort, PRO_ACCOUNTS, PRO_PRICE_LABEL, dateLabel, payingSql } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { capCounted } from "./session.js";
 import { DEMO_MERCHANT } from "./merchant.js";
@@ -410,7 +410,7 @@ function limitReached(base: string, upgrade: string | null, opens?: string) {
     + `and another opens once your current one has gone ${ACCOUNT_WINDOW_DAYS} days unused${when ? `: on ${when}, if you don't use it before then` : ""}.`;
   const pro = `If you're working on more than one account, Camberstack Pro covers up to ${PRO_ACCOUNTS} accounts, for ${PRO_PRICE_LABEL}, `
     + `and Agency up to ${AGENCY_ACCOUNTS}, for ${AGENCY_PRICE_LABEL}; cancel any time.`;
-  const free = `On Free, every tool and ${freeChangesShort()} keep working on your active account, and undo and history always work.`;
+  const free = `On Free, ${FREE_TOOLS} and ${freeChangesShort()} keep working on your active account, and undo and history always work.`;
   return upgradeEmail({ subject: "Using Camberstack on more than one Google Ads account", stopped, pitch: pro, link: upgrade, cta: "Upgrade to Pro", free, base });
 }
 
@@ -435,7 +435,7 @@ function changeLimit(base: string, plus: string | null, upgrade: string | null, 
   const pitch = plus
     ? `Camberstack Plus has unlimited changes on one Google Ads account, for ${PLUS_PRICE_LABEL}; cancel any time. Pro (${PRO_PRICE_LABEL}) does the same on up to ${PRO_ACCOUNTS} accounts.`
     : `Camberstack Pro has unlimited changes on up to ${PRO_ACCOUNTS} Google Ads accounts, for ${PRO_PRICE_LABEL}; cancel any time.`;
-  const free = "On Free, every tool keeps working: asking, reading and proposing are never limited, and undo and history always work.";
+  const free = `On Free, ${FREE_TOOLS} keeps working: asking, reading and proposing are never limited, and undo and history always work.`;
   return upgradeEmail({ subject: "Your free Camberstack changes for this month", stopped, pitch, link: plus ?? upgrade, cta: plus ? "Get Plus" : "Upgrade to Pro", free, base });
 }
 
@@ -524,7 +524,7 @@ Camberstack`,
 
 /** Plus adds changes, not accounts: unlimited applied changes on the one account. */
 function plusWelcome(base: string) {
-  const adds = `unlimited applied changes on one Google Ads account${changeCap() ? `, where Free stops at ${changeCap()} every 30 days` : ""}. `
+  const adds = `unlimited applied changes on one Google Ads account${changeCap() ? ` (Free stops at ${changeCap()} every 30 days)` : ""}, and the trend report: ask what changed lately, and it shows which campaigns moved, on what day, and what was changed around then. `
     + "Nothing else changes: every proposal still waits for your approval.";
   const billing = `${PLUS_PRICE_LABEL}, renewing monthly. You can see invoices, change your card, move to Pro for more accounts or cancel any time from`;
   return paidWelcome({ base, name: "Plus", adds, addsHtml: adds,
