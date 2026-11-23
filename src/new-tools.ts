@@ -1,38 +1,50 @@
 /**
- * The admin overview's New tools card: is a tool we just shipped getting used? One row per tool in NEW_TOOLS for
- * NEW_FOR_DAYS after its release (its date comes from the changelog, so the two can't disagree). Add a tool here when
- * it ships; it drops off the card on its own.
+ * The admin overview's New tools card: is a tool we just shipped getting used? One row per tool that first booted here
+ * in the last NEW_FOR_DAYS, from tool_releases, which recordReleases fills at every boot. Nothing to maintain: a tool
+ * shows up the day the deploy that adds it goes live (whether or not anyone calls it), and drops off 30 days later.
+ * Only the catalog /tools lists (tools.ts toolCatalog): ChatGPT's per-change propose_* tools stay out, or every new
+ * change type would read as a tool used on ChatGPT alone. A renamed tool counts as new.
  *
  * Counts real use only: a call that ran on the user's own data (ok, no notice text, not the demo account). Demo calls,
  * plan stops (a Plus tool on Free: plans.ts PLUS_FEATURE_PREFIX, logged ok with the stop's text in `error`) and
  * errors are their own columns. The predictions these feed are in ~/scripts/gap-audit/README.md §Predictions.
  */
-import { CHANGELOG } from "./changelog.js";
-import type { Q } from "./db.js";
+import type { DB, Q } from "./db.js";
+import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { PLUS_FEATURE_PREFIX, PLUS_TOOLS } from "./plans.js";
 
-/** Tools by the release that added them, newest first. */
-export const NEW_TOOLS: { tool: string; version: string }[] = [
-  { tool: "performance_trend", version: "0.48.0" },
-  { tool: "search_console_site_audit", version: "0.46.0" },
-  { tool: "campaign_details", version: "0.45.0" },
-  { tool: "conversion_tracking", version: "0.45.0" },
-  { tool: "search_terms_report", version: "0.45.0" },
-  { tool: "ads_report", version: "0.45.0" },
-  { tool: "keywords_report", version: "0.45.0" },
-];
 export const NEW_FOR_DAYS = 30;
 
-/** A release's date as unix seconds (UTC midnight), from the changelog. */
-const shipped = (version: string) => {
-  const d = CHANGELOG.find((r) => r.version === version)?.date;
-  return d ? Date.parse(`${d}T00:00:00Z`) / 1000 : null;
+/**
+ * The tools shipped before tool_releases existed (2026-11-23), with their releases' dates: the first boot seeds these
+ * and dates every other tool in the catalog at 0, so the table's first boot doesn't make the whole catalog look new.
+ */
+const SEED: Record<string, [version: string, date: string]> = {
+  performance_trend: ["0.48.0", "2026-11-23"],
+  search_console_site_audit: ["0.46.0", "2026-11-18"],
+  campaign_details: ["0.45.0", "2026-11-18"],
+  conversion_tracking: ["0.45.0", "2026-11-18"],
+  search_terms_report: ["0.45.0", "2026-11-18"],
+  ads_report: ["0.45.0", "2026-11-18"],
+  keywords_report: ["0.45.0", "2026-11-18"],
 };
 
+/** At boot: date every tool in the catalog not seen before to now, with the version booting. Idempotent (both colors run it). */
+export function recordReleases(db: DB, tools: string[], version: string, at = now()): void {
+  const ins = db.prepare("INSERT OR IGNORE INTO tool_releases (tool, version, at) VALUES (?, ?, ?)");
+  db.transaction(() => {
+    const first = !(db.prepare("SELECT 1 FROM tool_releases LIMIT 1").get());
+    for (const t of tools) {
+      const seed = first ? SEED[t] : undefined;
+      ins.run(t, seed?.[0] ?? (first ? "earlier" : version), seed ? Date.parse(`${seed[1]}T00:00:00Z`) / 1000 : first ? 0 : at);
+    }
+  })();
+}
+
 export function newToolsReport(q: Q, since: number, nowSec: number) {
-  const tools = NEW_TOOLS.map((t) => ({ ...t, at: shipped(t.version) }))
-    .filter((t): t is typeof t & { at: number } => t.at != null && nowSec - t.at < NEW_FOR_DAYS * 86400);
+  const tools = q<{ tool: string; version: string; at: number }>(
+    "SELECT tool, version, at FROM tool_releases WHERE at > ? ORDER BY at DESC, tool", nowSec - NEW_FOR_DAYS * 86400);
   const rows = tools.map((t) => {
     const real = `c.tool = ? AND c.ok = 1 AND c.error IS NULL AND coalesce(c.customer_id, '') != '${DEMO_CID}'`;
     const one = <T>(sql: string, ...p: unknown[]) => q<T>(sql, ...p)[0]!;

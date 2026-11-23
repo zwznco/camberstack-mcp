@@ -144,6 +144,14 @@ CREATE TABLE IF NOT EXISTS email_log (
 -- The paywall funnel past the stop itself (billing.ts track; PRICING-TEST.md): a click on a personal upgrade link
 -- (src = where the link was handed out), a view of /plans through a personal link, a paid checkout. The stops are
 -- tool_calls rows already (error 'Change limit:' etc.), and the emails are email_log.
+-- When each tool in the catalog (tools.ts toolCatalog) first booted here, and the version that shipped it (new-tools.ts
+-- recordReleases, 2026-11-23): the admin's New tools card shows the ones from the last 30 days.
+CREATE TABLE IF NOT EXISTS tool_releases (
+  tool     TEXT PRIMARY KEY,
+  version  TEXT NOT NULL,
+  at       INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS plan_events (
   user_id  TEXT NOT NULL,
   kind     TEXT NOT NULL CHECK (kind IN ('upgrade_click','plans_view','paid')),

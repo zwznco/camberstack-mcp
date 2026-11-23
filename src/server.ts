@@ -14,6 +14,7 @@ import { CamberstackProvider, MCP_SCOPE, consentCookie } from "./provider.js";
 import { UserSession, clearGoogleCache, type SessionDeps } from "./session.js";
 import { Grants } from "./grant.js";
 import { buildServer, SERVER_VERSION, toolCatalog } from "./tools.js";
+import { recordReleases } from "./new-tools.js";
 import { Analytics, BEACON_JS, gtagJs, parseBeacon } from "./analytics.js";
 import { mountAdmin } from "./admin.js";
 import { mountAccount } from "./account.js";
@@ -353,6 +354,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
 
   // Each page rendered once at boot (FREE_CHANGE_CAP is read then too).
   const tools = toolCatalog();
+  recordReleases(db, tools.map((t) => t.name), SERVER_VERSION);
   const pages: Record<string, string> = {
     "/": homePage(cfg.baseUrl),
     "/google-ads-claude": claudeGuidePage(cfg.baseUrl),
