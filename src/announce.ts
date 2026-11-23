@@ -108,6 +108,28 @@ More on what it can do: https://camberstack.io/google-tag-manager-mcp
 Adam`,
   },
   {
+    id: "trend-report",
+    plan: "performance_trend went live 2026-11-23 (0.48.0; Plus and above, demo for anyone). Everyone, no postal address (operator, "
+      + "2026-11-23); no price in the text, as every preset (announce.test.ts). ~200 recipients at 50 a day, so about four days.",
+    audience: "all",
+    subject: "Ask Camberstack what changed in your ads, and why",
+    body: `Hi,
+
+When results move, the first question is "what changed?" Camberstack can now answer that in one go. In Claude or ChatGPT, ask things like:
+
+- Why did my conversions drop this month?
+- What changed in my account in the last two weeks?
+- Is this campaign getting worse?
+
+It compares the last few weeks with the weeks before, finds the campaigns that moved and the day each one shifted, and lines that day up with what was changed in your account around then. That covers a budget change, a paused campaign or a new bid strategy, whether it was made in Google Ads, through Camberstack, by another tool, or by one of Google's auto-applied recommendations. When the numbers point one way, it says what to look at next, such as a budget that started holding a campaign back.
+
+It's part of Plus and above. On Free, you can try it on the demo account first: ask your AI what changed in Camberstack's demo account. What each plan covers: https://camberstack.io/plans
+
+If your AI can't see it yet, reload Camberstack's tools. In Claude: start a new chat. In ChatGPT, only if you added Camberstack as a custom connector: Settings → Connectors → Camberstack → Refresh.
+
+Adam`,
+  },
+  {
     id: SURVEY_ID,
     plan: "One-click survey (projects/camberstack/SURVEY-EMAIL.md): each answer is a signed link, so a click is the answer. "
       + "In the recipient's language by their Google Ads time zone (8 languages, English otherwise). Results on this page.",
