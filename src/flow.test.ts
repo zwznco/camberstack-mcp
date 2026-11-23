@@ -2469,13 +2469,11 @@ describe("OAuth + MCP end to end", () => {
     const page = await fetch(`${admin}/?days=30`, { headers: { cookie } });
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("Top tools");
+    // Cut 2026-11-23 (operator reads this on a phone): charts, funnel, permissions, use by service, top tools.
+    for (const gone of ["Top tools", "Use by service", "Funnel", "Google permissions", "Calls per", 'href="/feedback', 'href="/activity']) expect(html).not.toContain(gone);
     expect(html).toMatch(/Checks<[\s\S]*Conversions stopped/);
     expect(html).not.toContain("<code>conversions_stopped</code>");  // the label alone, not the flag name beside it
     expect(html).toMatch(/Account previews[\s\S]*plan full \(locked\)/);
-    expect(html).toContain("Use by service");
-    expect(html).toMatch(/Use by service[\s\S]*Tag Manager/);
-    expect(html).toMatch(/Google permissions[\s\S]*Tag Manager/);   // which tools make its top 6 depends on the whole run; /activity (below) lists them all
     expect(html).toContain("customer@example.com");
     expect(html).not.toContain("owner@example.com</a>");   // only as the signed-in admin, never as a user
     expect(html).not.toContain("internal=1");
@@ -2499,7 +2497,15 @@ describe("OAuth + MCP end to end", () => {
     expect(detail).toContain(`<span class="chip on">Google Ads</span>`);  // recorded from the scopes Google granted at sign-in
     expect(detail).toContain("account_overview");
     expect((await fetch(`${admin}/users/nope`, { headers: { cookie } })).status).toBe(404);
-    expect(await (await fetch(`${admin}/activity?days=30`, { headers: { cookie } })).text()).toContain("account_overview");
+    // Errors tab (was Activity): only failed calls, grouped and one by one with who hit it; the old path redirects.
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, ms, bytes, error) VALUES (unixepoch(), 'u_cust', 'run_gaql', '1112223333', 0, 5, 10, 'boom <b>')").run();
+    const errors = await (await fetch(`${admin}/errors?days=30`, { headers: { cookie } })).text();
+    expect(errors).toMatch(/Errors by message[\s\S]*boom &lt;b&gt;/);
+    expect(errors).toMatch(/Each error[\s\S]*customer@example\.com/);
+    expect(errors).not.toContain("<code>account_overview</code>");  // successful calls aren't listed
+    const moved = await fetch(`${admin}/activity?days=30`, { headers: { cookie }, redirect: "manual" });
+    expect(moved.headers.get("location")).toBe("/errors?days=30");
+    expect((await fetch(`${admin}/feedback`, { headers: { cookie } })).status).toBe(404);
     const revenue = await fetch(`${admin}/revenue`, { headers: { cookie } });
     expect(revenue.status).toBe(200);
     expect(await revenue.text()).toContain("Cancelled");
@@ -2651,7 +2657,7 @@ describe("OAuth + MCP end to end", () => {
     db.exec("DELETE FROM feedback");
   });
 
-  it("takes feedback at /feedback from a signed-in Google account, and lists it on the admin site", async () => {
+  it("takes feedback at /feedback from a signed-in Google account", async () => {
     // Public page; sending needs a sign-in, and a POST without one stores nothing.
     const open = await (await fetch(`${base}/feedback`)).text();
     expect(open).toContain('href="/feedback/login"');
@@ -2677,13 +2683,8 @@ describe("OAuth + MCP end to end", () => {
     for (let i = 0; i < 4; i++) expect((await post(cookie, { kind: "other", message: `more ${i}` })).status).toBe(303);
     expect((await post(cookie, { kind: "other", message: "one too many" })).status).toBe(429);
 
-    // The admin site lists it, escaped.
-    const admin = base.replace("localhost", "127.0.0.1");
-    const alogin = await fetch(`${admin}/login`, { redirect: "manual" });
-    const acookie = await signIn(new URL(alogin.headers.get("location")!), stateCookie(alogin));
-    const list = await (await fetch(`${admin}/feedback`, { headers: { cookie: acookie } })).text();
-    expect(list).toContain("Please add &lt;b&gt;Microsoft Ads&lt;/b&gt;");
-    expect(list).toContain("An idea or request");
+    // Stored (and emailed); the admin site no longer lists it (2026-11-23).
+    expect(db.prepare("SELECT kind FROM feedback WHERE message = ?").get("Please add <b>Microsoft Ads</b>")).toEqual({ kind: "idea" });
     db.prepare("DELETE FROM feedback").run();
   });
 

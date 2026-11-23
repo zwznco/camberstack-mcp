@@ -282,6 +282,11 @@ export function buildReport(db: DB, o: ReportOptions) {
       `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client, c.flags
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id
        ORDER BY c.id DESC LIMIT 50`),
+    /** The admin's Errors tab: the latest failed calls in the window, one per row. */
+    recentErrors: q<{ at: number; id: string; email: string; tool: string; customer_id: string | null; error: string | null; client: string }>(
+      `SELECT c.at, u.id, u.email, c.tool, c.customer_id, substr(c.error, 1, 300) error, ${client} client
+       FROM tool_calls c JOIN {U} u ON u.id = c.user_id LEFT JOIN clients cl ON cl.client_id = c.client_id
+       WHERE c.at >= ? AND c.ok = 0 ORDER BY c.id DESC LIMIT 50`, since),
   };
 }
 
