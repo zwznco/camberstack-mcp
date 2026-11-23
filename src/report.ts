@@ -5,6 +5,7 @@
  */
 import { notesFunnel } from "./result-notes.js";
 import { checksReport, previewsReport } from "./checks.js";
+import { newToolsReport } from "./new-tools.js";
 import type { DB, Q } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
@@ -218,6 +219,7 @@ export function buildReport(db: DB, o: ReportOptions) {
     /** Results-ready notes (result-notes.ts): raised, and followed by change_results within the hour. */
     resultNotes: notesFunnel(q, since),
     checks: checksReport(q, since),
+    newTools: newToolsReport(q, since, now()),
     previews: previewsReport(q, since),
     /** Connects split by the AI app they came from (each directory listing is a channel). Real-account stages only, as in the funnel. */
     sources: byApp(q<{ app: string | null; connected: number; in_window: number; used_real: number; applied: number }>(

@@ -2472,6 +2472,8 @@ describe("OAuth + MCP end to end", () => {
     // Cut 2026-11-23 (operator reads this on a phone): charts, funnel, permissions, use by service, top tools.
     for (const gone of ["Top tools", "Connects by app", "Use by service", "Funnel", "Google permissions", "Calls per", 'href="/feedback', 'href="/activity']) expect(html).not.toContain(gone);
     expect(html).toMatch(/Checks<[\s\S]*Conversions stopped/);
+    // New tools (2026-11-23): each tool shipped in the last 30 days, real use only.
+    expect(html).toMatch(/New tools<[\s\S]*<code>performance_trend<\/code>/);
     expect(html).not.toContain("<code>conversions_stopped</code>");  // the label alone, not the flag name beside it
     expect(html).toMatch(/Account previews[\s\S]*plan full \(locked\)/);
     expect(html).toContain("customer@example.com");
