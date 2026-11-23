@@ -728,8 +728,8 @@ describe("OAuth + MCP end to end", () => {
     // +1K (0.44.0): local_services_report, and account_overview naming its new checks.
     // +5.3K (0.45.0): campaign_details, conversion_tracking, search_terms_report, ads_report, keywords_report (the gap audit's top run_gaql reads).
     // +1.25K (0.46.0): search_console_site_audit.
-    // +1.3K (0.48.0): performance_trend.
-    expectToolBudget(tools, { total: 134_000, perTool: 6_000, except: { propose_changes: 57_200, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
+    // +1.3K (0.48.0): performance_trend. +0.55K (0.48.1): place names in location_ids, campaign_details' conversions by action.
+    expectToolBudget(tools, { total: 134_600, perTool: 6_000, except: { propose_changes: 57_700, propose_merchant_changes: 11_000, propose_tag_manager_changes: 6_800, propose_analytics_changes: 9_200 } });
     const propose = JSON.stringify(tools.find((t: any) => t.name === "propose_changes").inputSchema);
     expect(propose).toContain("not micros");
     expect(propose).toContain("campaign_id from account_overview");
@@ -1347,7 +1347,7 @@ describe("OAuth + MCP end to end", () => {
       // landing_page_speed (2026-11-04): +0.9K. Tag Manager (gtm branch, 2026-11-05): +9.3K, two reads and eight propose tools;
       // +1.1K for propose_create_container and propose_delete_container. apply_changes' proposal_ids, keyword text without quotes (2026-11-12): +0.8K.
       // change_results (2026-11-12): +1.2K. propose_register_custom_dimension (2026-11-16): +1.3K; propose_register_custom_metric: +1.5K; propose_set_custom_metric_unit: +1.1K; propose_archive_custom_dimension / _metric: +2.2K.
-      expectToolBudget(tools, { total: 175_800, perTool: 6_000 });  // +1.35K (0.48.0) performance_trend, +1.25K (0.46.0) search_console_site_audit, +5.3K (0.45.0) the five read tools, +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid, +0.9K (0.44.0) local_services_report + account_overview's checks
+      expectToolBudget(tools, { total: 176_350, perTool: 6_000 });  // +0.5K (0.48.1) place names, conversions by action, +1.35K (0.48.0) performance_trend, +1.25K (0.46.0) search_console_site_audit, +5.3K (0.45.0) the five read tools, +200 (0.40.0) keyword `months`, +300 (0.41.0) `site`, `by_location`, +1.35K (0.43.0) propose_set_product_group_bid, +0.9K (0.44.0) local_services_report + account_overview's checks
       expect(names).not.toContain("propose_changes");
       expect(names).not.toContain("propose_tag_manager_changes");
       expect(names).not.toContain("propose_analytics_changes");
@@ -1404,6 +1404,24 @@ describe("OAuth + MCP end to end", () => {
     expect(third.isError).toBe(true);
     expect(third.text).toContain("already been undone");
     expect(ads.campaignStatus).toBe("ENABLED");
+  });
+
+  it("takes place names in a change's location_ids, stores ids, names them in the summary", async () => {
+    const p = await call(token, "propose_changes", { customer_id: "0000000001", changes: [
+      { type: "add_campaign_targeting", campaign_id: "2003", location_ids: ["United Kingdom", "AT", "Chicago", "2124"] },
+    ] });
+    if (p.isError) throw new Error(p.text);
+    expect(p.json.summary).toMatch(/United Kingdom/);
+    expect(p.json.summary).toMatch(/Chicago/);
+    const stored = JSON.parse((db.prepare("SELECT changes FROM proposals WHERE id = ?").get(p.json.proposal_id) as { changes: string }).changes);
+    expect(stored[0].location_ids.every((x: string) => /^\d+$/.test(x))).toBe(true);
+    expect(stored[0].location_ids).toEqual(expect.arrayContaining(["2826", "2040", "2124"]));
+    await call(token, "discard_proposal", { proposal_id: p.json.proposal_id });
+    const world = await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "add_campaign_targeting", campaign_id: "2003", location_ids: ["worldwide"] }] });
+    expect(world.text).toMatch(/already shows everywhere.*Nothing was proposed/);
+    const none = await call(token, "propose_changes", { customer_id: "0000000001", changes: [{ type: "add_campaign_targeting", campaign_id: "2003", location_ids: ["Zzyzxland"] }] });
+    expect(none.text).toMatch(/no location named "Zzyzxland".*Nothing was proposed/);
+    expect(none.text).not.toMatch(/Keyword Planner/);
   });
 
   it("keeps the demo's statuses through bid, suffix and location-mode changes", async () => {

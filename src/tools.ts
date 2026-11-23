@@ -20,7 +20,7 @@ import { NotGrantedError, grantName } from "./google.js";
 import { adsReport, campaignDetails, conversionTracking, keywordsReport, searchTerms } from "./reads.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.48.0";
+export const SERVER_VERSION = "0.48.1";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; performance_trend (Plus and above) for what changed lately and why; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -349,11 +349,11 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
     title: "Campaign details",
     description: "One campaign's setup and results in one call: status and why it isn't serving, budget, bid strategy and targets, networks, "
       + "start/end, locations by name (with radius and exclusions), languages, ad schedule, location mode, negative keywords and shared negative "
-      + "lists, sitelinks/callouts/call assets, conversion goals it bids on, its ad groups with results, and search impression share lost to budget and rank.",
+      + "lists, sitelinks/callouts/call assets, conversion goals it bids on and its conversions per conversion action, its ad groups with results, and search impression share lost to budget and rank.",
     inputSchema: { customer_id: customerId, campaign_id: z.string().regex(/^\d+$/, "digits only").describe("campaign_id from account_overview"), days },
     annotations: read,
   }, ({ customer_id, campaign_id, days }: { customer_id: string; campaign_id: string; days: number }) =>
-    session().readOn(customer_id, (r) => campaignDetails(r, campaign_id, days)));
+    session().readOn(customer_id, (r, demo) => campaignDetails(r, campaign_id, days, demo)));
 
   tool("conversion_tracking", {
     title: "Conversion tracking",

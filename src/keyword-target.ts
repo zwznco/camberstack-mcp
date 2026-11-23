@@ -122,9 +122,14 @@ const words = (s: string) => new Set(s.normalize("NFD").replace(/\p{M}/gu, "").t
  * 2026-11-19, ranks by reach and takes translations ("Nueva York"), but gets "TW" (UK postcodes) and "Worldwide" (Tai Wai,
  * Hong Kong) wrong: those stay ours.
  */
-export async function resolveLocations(inputs: string[], search: Search, suggest: Suggest, notes: string[] = []): Promise<string[]> {
+/** `use`: "keywords" (Keyword Planner, where worldwide counts everywhere) or "targeting" (a campaign change, 0.48.1: names in location_ids). */
+export async function resolveLocations(inputs: string[], search: Search, suggest: Suggest, notes: string[] = [], use: "keywords" | "targeting" = "keywords"): Promise<string[]> {
+  const targeting = use === "targeting";
+  const nothing = targeting ? "Nothing was proposed." : "Nothing was looked up in Keyword Planner.";
   const world = inputs.filter((i) => WORLDWIDE.has(i.trim().toLowerCase()));
   if (world.length) {
+    if (targeting) throw new Error(`"${world[0].trim()}" isn't a place a campaign can target: a campaign with no location targeting already shows everywhere `
+      + `(remove_campaign_targeting removes its locations). ${nothing}`);
     if (world.length < inputs.length) {
       throw new Error(`"${world[0].trim()}" counts every location, so it can't be combined with other locations. Pass it alone for `
         + "worldwide numbers, or leave it out to count only the places named. Nothing was looked up in Keyword Planner.");
@@ -155,17 +160,17 @@ export async function resolveLocations(inputs: string[], search: Search, suggest
     const [top, ...rest] = matches;
     const odd = ![...words(o.place)].some((w) => words(top.canonicalName).has(w));
     if (rest.length || odd) {
-      notes.push(`"${o.place}" was counted as ${top.id} ${top.canonicalName} (${top.targetType}), Google's best match`
+      notes.push(`"${o.place}" was ${targeting ? "matched to" : "counted as"} ${top.id} ${top.canonicalName} (${top.targetType}), Google's best match`
         + (rest.length ? `; others: ${rest.slice(0, 3).map((g) => `${g.id} ${g.canonicalName} (${g.targetType})`).join("; ")}` : "")
         + "." + (odd ? ` It shares no word with "${o.place}", so check it's the place meant.` : "")
-        + " Pass an id in location_ids to count another.");
+        + ` Pass an id in location_ids to ${targeting ? "target" : "count"} another.`);
     }
     return [top.id];
   });
   if (problems.length) {
     throw new Error(`Couldn't tell which location: ${problems.join(". ")}. `
       + "location_ids takes a Google geo target id, a country name or two-letter code (\"Austria\", \"AT\"), or a place name, "
-      + "narrowed after a comma when needed (\"Springfield, Illinois\"), or \"worldwide\" alone. Nothing was looked up in Keyword Planner.");
+      + `narrowed after a comma when needed ("Springfield, Illinois")${targeting ? "" : ', or "worldwide" alone'}. ${nothing}`);
   }
   return [...new Set(ids)];
 }

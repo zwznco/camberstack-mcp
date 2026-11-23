@@ -250,7 +250,7 @@ type AnyResolved = ResolvedChange | GaResolved | McResolved | ScResolved | GtmRe
 type Outcome = { describe: string; ok: boolean; error?: string; note?: string; inverse?: AnyChange };
 /** What the plan gate returns: call it when the tool's call ends. `preview` = a read-only look that took no account. */
 type Release = (() => void) & { preview?: string };
-type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[]; wording_review?: { items: unknown[]; note: string } };
+type Proposed = { proposal_id: string; summary: string; changes: number; skipped: string[]; wording_review?: { items: unknown[]; note: string }; location_notes?: string[] };
 type AlreadyInPlace = { status: "already in place"; changes: 0; skipped: string[]; note: string };
 /** What the AI (and the account page) sees of an applied proposal's outcomes. */
 const publicResults = (outcomes: Outcome[]) => outcomes.map(({ describe, ok, error, note }) =>
@@ -1584,6 +1584,26 @@ export class UserSession {
 
   // ---------------------------------------------------------------- write
 
+  /**
+   * Place names in a change's location_ids (or a Demand Gen ad group's) become Google geo target ids, through the keyword
+   * tools' resolver (keyword-target.ts resolveLocations: countries by name or code, the rest by Google's lookup). Ids pass
+   * through untouched, so an undo or a replay never looks anything up. A best match that might not be the place meant adds
+   * a note; the summary the user approves names every place either way.
+   */
+  private async placesToIds(a: { customerId: string; loginCustomerId: string | null }, changes: Change[], notes: string[]): Promise<Change[]> {
+    const named = (xs: unknown) => Array.isArray(xs) && xs.some((x) => !/^\d+$/.test(String(x)));
+    const q: Search = (query) => this.ads.search(a.customerId, query, a.loginCustomerId);
+    const ids = (xs: string[]) => resolveLocations(xs, q, (names) => this.ads.suggestGeoTargets(names, a.customerId), notes, "targeting");
+    return Promise.all(changes.map(async (c: any) => {
+      let out = c;
+      if (named(c.location_ids)) out = { ...out, location_ids: await ids(c.location_ids) };
+      if (Array.isArray(c.ad_groups) && c.ad_groups.some((g: any) => named(g.location_ids))) {
+        out = { ...out, ad_groups: await Promise.all(c.ad_groups.map(async (g: any) => (named(g.location_ids) ? { ...g, location_ids: await ids(g.location_ids) } : g))) };
+      }
+      return out;
+    }));
+  }
+
   async propose(customerId: string, rawChanges: unknown[], undoOf?: string): Promise<Proposed | AlreadyInPlace> {
     const ga = customerId === GA_TARGET, mc = isMcTarget(customerId), sc = customerId === SC_TARGET, gtm = customerId === GTM_TARGET;
     const a = ga || mc || sc || gtm ? { customerId, loginCustomerId: null } : await this.account(customerId);
@@ -1603,6 +1623,8 @@ export class UserSession {
     }
     let changes: AnyChange[] = rawChanges.map((c) => (ga ? GaChangeSchema : mc ? McChangeSchema : sc ? ScChangeSchema : gtm ? GtmChangeSchema : ChangeSchema).parse(c));
     if (gtm) changes = orderGtmChanges(changes as GtmChange[]);
+    const location_notes: string[] = [];
+    if (!ga && !mc && !sc && !gtm) changes = await this.placesToIds(a, changes as Change[], location_notes);
     // Connections from before 0.25.0 can only read, and Search Console has no dry run: ask for the scope now, not after the
     // user approved something that can't run. Scopes not on record yet (null) go through: the write itself returns the same link.
     if (sc && (changes as ScChange[]).some((c) => c.site_url !== DEMO_SITE)
@@ -1653,7 +1675,8 @@ export class UserSession {
       .run(id, this.user.id, a.customerId, a.loginCustomerId, JSON.stringify(live.map((r) => r.change)), summary, undoOf ?? null, now());
     const skipped = resolved.filter((r) => !r.operations.length).map((r) => r.describe);
     const wording = ga || mc || sc || gtm || undoOf !== undefined ? null : await this.wordingReview(a as Account, live.flatMap((r) => adCopyOf(r.change)));
-    return { proposal_id: id, summary, changes: live.length, skipped, ...(wording ? { wording_review: wording } : {}) };
+    return { proposal_id: id, summary, changes: live.length, skipped, ...(wording ? { wording_review: wording } : {}),
+      ...(location_notes.length ? { location_notes } : {}) };
   }
 
   /**

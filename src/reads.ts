@@ -64,9 +64,13 @@ const NEGATIVES_SHOWN = 200;
 
 // ---------------------------------------------------------------- campaign_details
 
-export async function campaignDetails(read: Read, campaignId: string, days: number) {
+export async function campaignDetails(read: Read, campaignId: string, days: number, demo = false) {
   const id = digits(campaignId);
   const soft = (q: string) => read(q).catch(() => null);  // a failed section drops itself, never the answer
+  // Conversions per conversion action (0.48.1): 62 users split a campaign's conversions by segments.conversion_action with
+  // run_gaql (2026-10-16 → 11-23). The demo has no per-action split, as conversion_tracking skips it there.
+  const byAction = demo ? Promise.resolve(null) : soft(`SELECT campaign.id, segments.conversion_action_name, metrics.conversions, metrics.all_conversions,
+        metrics.conversions_value FROM campaign WHERE campaign.id = ${id} AND ${dateRange(days)}`);
   const [settings, perf, criteria, shared, assets, goals, groups, groupPerf] = await Promise.all([
     read(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons, campaign.serving_status,
         campaign.advertising_channel_type, campaign.advertising_channel_sub_type, campaign.bidding_strategy_type,
@@ -101,6 +105,11 @@ export async function campaignDetails(read: Read, campaignId: string, days: numb
     soft(`SELECT campaign.id, ad_group.id, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, metrics.conversions_value
         FROM ad_group WHERE campaign.id = ${id} AND ad_group.status != 'REMOVED' AND ${dateRange(days)}`),
   ]);
+  // Primary actions count in `conversions`; secondary ones only in `all_conversions`, so both are kept.
+  const actions = ((await byAction) ?? []).map((r) => ({ action: r.segments?.conversionActionName,
+    conversions: round(Number(r.metrics?.conversions ?? 0)), all_conversions: round(Number(r.metrics?.allConversions ?? 0)),
+    ...(Number(r.metrics?.conversionsValue ?? 0) ? { value: round(Number(r.metrics.conversionsValue)) } : {}) }))
+    .filter((x) => x.action && (x.conversions || x.all_conversions)).sort((a, b) => b.all_conversions - a.all_conversions);
   const row = settings[0];
   if (!row) throw new Error(`Campaign ${campaignId} isn't in this account. account_overview lists its campaigns with their ids.`);
   const c = row.campaign;
@@ -224,6 +233,7 @@ export async function campaignDetails(read: Read, campaignId: string, days: numb
     conversion_goals: (goals ?? []).map((r) => ({
       category: r.campaignConversionGoal.category, origin: r.campaignConversionGoal.origin, bids_on_it: !!r.campaignConversionGoal.biddable,
     })),
+    ...(actions.length ? { conversions_by_action: actions } : {}),
     ad_groups: (groups ?? []).map((r) => ({
       ad_group_id: String(r.adGroup.id), name: r.adGroup.name, status: r.adGroup.status, primary_status: r.adGroup.primaryStatus,
       ...(r.adGroup.cpcBidMicros && Number(r.adGroup.cpcBidMicros) > 10_000 ? { max_cpc: micros(r.adGroup.cpcBidMicros) } : {}),

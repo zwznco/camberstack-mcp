@@ -48,6 +48,21 @@ describe("read tools on the demo account", () => {
   });
 });
 
+describe("campaign_details conversions by action", () => {
+  it("lists each action's conversions and all conversions, secondary ones too, and none on the demo", async () => {
+    const stub = async (q: string) => {
+      if (/segments\.conversion_action_name/.test(q)) return [
+        { segments: { conversionActionName: "Calls" }, metrics: { conversions: 4, allConversions: 6, conversionsValue: 0 } },
+        { segments: { conversionActionName: "14 day trial" }, metrics: { conversions: 0, allConversions: 28, conversionsValue: 0 } },
+        { segments: { conversionActionName: "Nothing" }, metrics: { conversions: 0, allConversions: 0 } }];
+      return read(q);
+    };
+    const r = await campaignDetails(stub, "2001", 30);
+    expect(r.conversions_by_action).toEqual([{ action: "14 day trial", conversions: 0, all_conversions: 28 }, { action: "Calls", conversions: 4, all_conversions: 6 }]);
+    expect((await campaignDetails(read, "2001", 30, true)).conversions_by_action).toBeUndefined();
+  });
+});
+
 describe("campaign_details on a campaign with shared negative lists", () => {
   it("lists each list's keywords, capped across lists", async () => {
     const stub = async (q: string) => {

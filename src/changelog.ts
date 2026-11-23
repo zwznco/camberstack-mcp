@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.48.1", date: "2026-11-23",
+    summary: "Target a campaign by place name, and see a campaign's conversions per conversion action.",
+    items: [
+      "**Place names in targeting**: creating a campaign or changing its locations takes names (\"Austin, Texas\", \"Germany\", \"AT\") as well as Google's ids, matched with Google's own location lookup, as the keyword tools already do. The proposal's summary names every place before you approve it, and a match that might not be the place meant is pointed out.",
+      "**`campaign_details`** now lists the campaign's conversions per conversion action in the window, with all conversions too, so secondary actions show up.",
+    ],
+  },
+  {
     version: "0.48.0", date: "2026-11-23",
     summary: "New on Plus and above: ask what changed lately, and see which campaigns moved, on what day, and what was changed in the account around then.",
     items: [

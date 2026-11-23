@@ -36,6 +36,13 @@ const ANALYTICS_IMPORT = /^(GOOGLE_ANALYTICS_4|FIREBASE_|THIRD_PARTY_APP_ANALYTI
 const READ_ONLY_CONVERSION = /^(ANDROID_APP_PRE_REGISTRATION|ANDROID_INSTALLS_ALL_OTHER_APPS|FLOODLIGHT_(ACTION|TRANSACTION)|GOOGLE_HOSTED|LEAD_FORM_SUBMIT|SEARCH_ADS_360|SMART_CAMPAIGN_\w+|STORE_SALES|STORE_VISITS|WEBPAGE_CODELESS)$/;
 
 const id = z.string().regex(/^\d+$/, "numeric id");
+/**
+ * A location as a Google geo target id or a place name ("Austin, Texas", "Germany", "AT"). Names resolve to ids when the
+ * proposal is made (session.ts placesToIds, Google's own lookup as the keyword tools use), and the summary the user approves
+ * names each place. 0.48.1: 36 users looked up geo_target_constant by name before creating or retargeting a campaign.
+ */
+const place = z.string().trim().min(1).max(120);
+const PLACES = "Google geo target ids (2840) or place names (\"Austin, Texas\", \"Germany\"), matched with Google's location lookup";
 const campaignId = id.describe("Digits only (campaign_id from account_overview or run_gaql)");
 const adGroupId = id.describe("Digits only (ad_group.id from run_gaql)");
 const criterionId = id.describe("Keyword criterion id, digits only (ad_group_criterion.criterion_id from run_gaql)");
@@ -144,8 +151,8 @@ const demandGenVideoAdSpec = z.object({
 }).describe("A Demand Gen video ad: runs on YouTube (in-stream, in-feed and Shorts), Discover and Gmail");
 const demandGenAdGroupSpec = z.object({
   name: z.string().min(1).max(255),
-  location_ids: z.array(id).min(1).max(50).default(["2840"])
-    .describe("Google geo target ids, e.g. 2840 United States (Demand Gen targets locations per ad group, not per campaign)"),
+  location_ids: z.array(place).min(1).max(50).default(["2840"])
+    .describe(`${PLACES} (Demand Gen targets locations per ad group, not per campaign)`),
   language_ids: z.array(id).min(1).max(20).default(["1000"]).describe("Google language ids, e.g. 1000 English"),
   ads: z.array(demandGenVideoAdSpec).min(1).max(3),
 });
@@ -222,8 +229,8 @@ export const PUBLIC_CHANGES = [
     bidding: z.enum(["MANUAL_CPC", "MAXIMIZE_CLICKS", "MAXIMIZE_CONVERSIONS"]).default("MANUAL_CPC")
       .describe("MANUAL_CPC uses the ad group and keyword max CPCs; MAXIMIZE_CLICKS and MAXIMIZE_CONVERSIONS let Google bid within the budget"),
     max_cpc_ceiling: bid.optional().describe("MAXIMIZE_CLICKS only: the most Google may bid per click"),
-    location_ids: z.array(id).min(1).max(50).default(["2840"])
-      .describe("Google geo target ids, e.g. 2840 United States, 2826 United Kingdom, 2124 Canada (look others up in geo_target_constant)"),
+    location_ids: z.array(place).min(1).max(50).default(["2840"])
+      .describe(PLACES),
     language_ids: z.array(id).min(1).max(20).default(["1000"]).describe("Google language ids, e.g. 1000 English, 1003 Spanish"),
     presence_only: z.boolean().default(true).describe("Show ads only to people IN the locations (true), not merely interested in them"),
     search_partners: z.boolean().default(false).describe("Also show on Google's search partner sites"),
@@ -238,7 +245,7 @@ export const PUBLIC_CHANGES = [
     bidding: z.enum(["MANUAL_CPC", "MAXIMIZE_CLICKS", "MAXIMIZE_CONVERSIONS"]).default("MAXIMIZE_CLICKS")
       .describe("MANUAL_CPC uses the ad groups' max CPCs; MAXIMIZE_CLICKS and MAXIMIZE_CONVERSIONS let Google bid within the budget"),
     max_cpc_ceiling: bid.optional().describe("MAXIMIZE_CLICKS only: the most Google may bid per click"),
-    location_ids: z.array(id).min(1).max(50).default(["2840"]).describe("Google geo target ids, e.g. 2840 United States"),
+    location_ids: z.array(place).min(1).max(50).default(["2840"]).describe(PLACES),
     language_ids: z.array(id).min(1).max(20).default(["1000"]).describe("Google language ids, e.g. 1000 English"),
     presence_only: z.boolean().default(true).describe("Show ads only to people IN the locations (true), not merely interested in them"),
     ad_groups: z.array(displayAdGroupSpec).min(1).max(5),
@@ -256,7 +263,7 @@ export const PUBLIC_CHANGES = [
     bidding: z.enum(["MAXIMIZE_CONVERSIONS", "MAXIMIZE_CONVERSION_VALUE"]).default("MAXIMIZE_CONVERSIONS")
       .describe("Performance Max bids for conversions only: MAXIMIZE_CONVERSIONS, or MAXIMIZE_CONVERSION_VALUE when conversions carry values"),
     target_cpa: bid.optional().describe("MAXIMIZE_CONVERSIONS only: target cost per conversion"),
-    location_ids: z.array(id).min(1).max(50).default(["2840"]).describe("Google geo target ids, e.g. 2840 United States"),
+    location_ids: z.array(place).min(1).max(50).default(["2840"]).describe(PLACES),
     language_ids: z.array(id).min(1).max(20).default(["1000"]).describe("Google language ids, e.g. 1000 English"),
     business_name: z.string().min(1).max(25).describe("The advertiser's name, at most 25 characters (linked to the campaign, per Google's brand guidelines)"),
     logo_images: images("1 to 5 square logos, 1:1 (e.g. 1200×1200, at least 128×128), linked to the campaign", 1, 5),
@@ -286,11 +293,11 @@ export const PUBLIC_CHANGES = [
   z.object({ type: z.literal("pause_ad"), ad_group_id: adGroupId, ad_id: id.describe("Ad id, digits only (ad_group_ad.ad.id from run_gaql)") }).describe("Pause one ad"),
   z.object({ type: z.literal("enable_ad"), ad_group_id: adGroupId, ad_id: id.describe("Ad id, digits only (ad_group_ad.ad.id from run_gaql)") }).describe("Re-enable one paused ad"),
   z.object({ type: z.literal("add_campaign_targeting"), campaign_id: campaignId,
-    location_ids: z.array(id).max(50).default([]).describe("Geo target ids to add, e.g. 2840 United States"),
+    location_ids: z.array(place).max(50).default([]).describe(`Locations to add: ${PLACES}`),
     language_ids: z.array(id).max(20).default([]).describe("Language ids to add, e.g. 1000 English") })
     .describe("Add locations and/or languages a campaign targets"),
   z.object({ type: z.literal("remove_campaign_targeting"), campaign_id: campaignId,
-    location_ids: z.array(id).max(50).default([]), language_ids: z.array(id).max(20).default([]) })
+    location_ids: z.array(place).max(50).default([]).describe(`Locations to stop targeting: ${PLACES}`), language_ids: z.array(id).max(20).default([]) })
     .describe("Stop targeting some of a campaign's locations and/or languages"),
   z.object({ type: z.literal("set_location_mode"), campaign_id: campaignId,
     presence_only: z.boolean().describe("true: only people IN the locations; false: also people interested in them") })

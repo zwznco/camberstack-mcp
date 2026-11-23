@@ -259,7 +259,9 @@ export class DemoAds {
       case "geo_target_constant":
         return Object.entries(GEOS).map(([id, [canonicalName, countryCode]]) =>
           ({ geoTargetConstant: { resourceName: `geoTargetConstants/${id}`, id, name: canonicalName.split(",")[0], canonicalName, countryCode,
-            targetType: canonicalName.includes(",") ? "City" : "Country", status: "ENABLED" } }));
+            targetType: canonicalName.includes(",") ? "City" : "Country", status: "ENABLED",
+            // Countries have no parent (keyword-target.ts COUNTRIES_QUERY); the demo's one city sits under the United States.
+            ...(canonicalName.includes(",") ? { parentGeoTarget: "geoTargetConstants/2840" } : {}) } }));
       case "language_constant":
         return Object.entries(LANGUAGES).map(([id, [name, code]]) => ({ languageConstant: { resourceName: `languageConstants/${id}`, id, name, code, targetable: true } }));
       default:
@@ -432,6 +434,12 @@ function parse(query: string) {
     const during = /^segments\.date\s+DURING\s+LAST_(\d+)_DAYS$/i.exec(p);
     if (during) { days = Number(during[1]); continue; }
     if (/^segments\./i.test(p)) continue;
+    const isNull = /^([\w.]+)\s+IS\s+(NOT\s+)?NULL$/i.exec(p);
+    if (isNull) {
+      const path = isNull[1]!.split(".").map(camel), not = !!isNull[2];
+      conds.push((r) => (get(r, path) == null) !== not);
+      continue;
+    }
     const m = /^([\w.]+)\s*(=|!=|<=|>=|<|>|NOT IN|IN|LIKE|NOT LIKE)\s*(.+)$/i.exec(p);
     if (!m) throw new Error(`The demo account can't read this condition: ${p}`);
     const path = m[1]!.split(".").map(camel);
