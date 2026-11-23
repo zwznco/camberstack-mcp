@@ -304,9 +304,6 @@ ${stat("Paying", num(paying), `$${mrr(r)} MRR`)}
 ${stat(`Tool errors · ${w}`, errs ? `<span class="n bad">${errs}</span>` : num(0), callsInWindow ? `${((100 * errs) / callsInWindow).toFixed(1)}% of calls` : "")}
 </div>
 ${sharingCard(v)}
-${card("Connects by app", table(["app", ["users", "r"], [`new · ${w}`, "r"], ["used real", "r"], ["applied", "r"]],
-    r.sources.map((x) => [x.app ? esc(x.app) : `<span class="dim">unknown</span>`,
-      num(x.connected), num(x.in_window), num(x.used_real), num(x.applied)]), "No users yet."), `<small>app of first call, else token</small>`)}
 ${resultsCard(v)}
 <div class="grid2">
 ${checksCard(v)}

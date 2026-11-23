@@ -2470,7 +2470,7 @@ describe("OAuth + MCP end to end", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     // Cut 2026-11-23 (operator reads this on a phone): charts, funnel, permissions, use by service, top tools.
-    for (const gone of ["Top tools", "Use by service", "Funnel", "Google permissions", "Calls per", 'href="/feedback', 'href="/activity']) expect(html).not.toContain(gone);
+    for (const gone of ["Top tools", "Connects by app", "Use by service", "Funnel", "Google permissions", "Calls per", 'href="/feedback', 'href="/activity']) expect(html).not.toContain(gone);
     expect(html).toMatch(/Checks<[\s\S]*Conversions stopped/);
     expect(html).not.toContain("<code>conversions_stopped</code>");  // the label alone, not the flag name beside it
     expect(html).toMatch(/Account previews[\s\S]*plan full \(locked\)/);
