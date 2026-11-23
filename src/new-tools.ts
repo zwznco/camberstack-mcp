@@ -62,7 +62,9 @@ export function newToolsReport(q: Q, since: number, nowSec: number) {
            AND p.kind IN ('plans_view', 'upgrade_click', 'paid') AND p.at BETWEEN c.at AND c.at + 86400) THEN c.user_id END) to_plans
        FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.tool = ? AND c.at >= ? AND c.error LIKE ?`, t.tool, since, `${PLUS_FEATURE_PREFIX}%`) : null;
     return { tool: t.tool, version: t.version, shipped: t.at, ...w, ever: ever.users, repeat: ever.repeat, stops };
-  });
+  })
+    // Most used in the window first (users, then calls); ties keep newest release first.
+    .sort((a, b) => b.users - a.users || b.calls - a.calls);
   // What the 0.45.0 tools were built to shrink: run_gaql's share of all calls in the window.
   const g = q<{ gaql: number; all: number }>(`SELECT coalesce(sum(c.tool = 'run_gaql'), 0) gaql, count(*) "all"
     FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.at >= ?`, since)[0]!;

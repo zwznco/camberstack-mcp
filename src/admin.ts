@@ -317,21 +317,21 @@ ${card("Latest signups", table(["user", "plan", ["signed up", "r"]], [...r.users
 
 /**
  * New tools (new-tools.ts): real use of each tool shipped in the last 30 days. users = on their own data in the window
- * (% of active users); since release = all of it, and how many came back on another day. Stacks on a phone.
+ * (% of active users); returned = of everyone who used it since release, those back on another day. Stacks on a phone.
  */
 function newToolsCard(v: View): string {
   const t = v.report.newTools, active = v.report.activeInWindow;
   const pct = (n: number) => (active && n ? ` <span class="dim">${Math.round((100 * n) / active)}%</span>` : "");
   const day = (s: number) => new Date(s * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-  return card("New tools", table(["tool", ["users", "r"], ["calls", "r"], ["since release", "r"], ""], t.rows.map((x) => [
-    `<code>${esc(x.tool)}</code> <span class="dim">${x.version} · ${day(x.shipped)}</span>`,
+  return card("New tools", table(["tool", ["users", "r"], ["calls", "r"], ["returned", "r"], ""], t.rows.map((x) => [
+    `<code>${esc(x.tool)}</code> <span class="dim">${day(x.shipped)}</span>`,
     `${num(x.users)} users${pct(x.users)}`, `${num(x.calls)} calls`,
-    `${num(x.ever)} ever · ${num(x.repeat)} came back`,
-    [x.stops ? `Free stops ${num(x.stops.users)} → plans ${num(x.stops.to_plans)}` : "", x.demo ? `demo ${num(x.demo)}` : "",
+    `${num(x.repeat)} of ${num(x.ever)} returned`,
+    [x.stops ? `paywall ${num(x.stops.users)} → plans ${num(x.stops.to_plans)}` : "", x.demo ? `demo ${num(x.demo)}` : "",
       x.errors ? `<b class="bad">${x.errors} errors</b>` : ""].filter(Boolean).join(" · "),
-  ]), "Nothing shipped in the last 30 days.", "stack").replaceAll("<td><code>", '<td class="wrap"><code>'),
-    `<small title="users/calls: own data only, % of active users; came back = used it on 2+ days; Free stops → plans = hit the Plus stop, then opened plans or upgrade within a day">${lastW(v.days)}${
-      t.gaqlShare == null ? "" : ` · run_gaql ${Math.round(100 * t.gaqlShare)}% of calls`}</small>`);
+  ]), "Nothing new in 30 days.", "stack").replaceAll("<td><code>", '<td class="wrap"><code>'),
+    `<small title="Own data only. %: of active users. Returned: used it on 2+ days since release. Paywall → plans: Free users stopped, then opened plans within a day.">${lastW(v.days)}${
+      t.gaqlShare == null ? "" : ` · run_gaql ${Math.round(100 * t.gaqlShare)}%`}</small>`);
 }
 
 /** The account a preview looked at, from tool_calls.flags (tools.ts flagsOf). */

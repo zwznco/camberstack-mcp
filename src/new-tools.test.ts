@@ -39,6 +39,12 @@ describe("new tools card", () => {
       // A later boot picks up a tool it hasn't seen, with the version booting, and leaves the others' dates alone.
       recordReleases(db, ["performance_trend", "campaign_details", "run_gaql", "brand_new"], "0.49.0", at("2026-12-01"));
       recordReleases(db, ["performance_trend", "brand_new"], "0.49.1", at("2026-12-02"));  // the other color, or the next deploy
+      // Ordered by use in the window: a newer tool with more users goes below an older one with more.
+      call.run(at("2026-12-11"), "a", "brand_new", "1112223333", 1, null);
+      call.run(at("2026-12-11"), "b", "campaign_details", "1112223333", 1, null);
+      call.run(at("2026-12-11"), "c", "campaign_details", "1112223333", 1, null);
+      Date.now = () => at("2026-12-12") * 1000;
+      expect(buildReport(db, { days: 7, exclude: [] }).newTools.rows.map((x) => x.tool)).toEqual(["campaign_details", "brand_new", "performance_trend"]);
       // 30 days on, the 0.45.0 tools (2026-11-18) have aged off the card.
       Date.now = () => at("2026-12-20") * 1000;
       expect(buildReport(db, { days: 7, exclude: [] }).newTools.rows.map((x) => [x.tool, x.version]))
