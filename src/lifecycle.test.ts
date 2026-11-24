@@ -165,11 +165,18 @@ describe("lifecycle emails", () => {
       };
       capped("open", "p_open1", "proposed");
       capped("gone", "p_gone1", "discarded");
-      expect(await lc.run()).toBe(2);
+      // Merged proposals stopped together (0.33.0): "Proposals p_…, p_… stay open". Counts add up; one still open = waiting.
+      capped("merged", "p_mrg1", "proposed");
+      db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at) VALUES ('p_mrg2', 'merged', '1112223333', ?, 's', 'discarded', ?)`)
+        .run(JSON.stringify([{ type: "update_campaign_budget" }]), now() - DAY);
+      db.prepare("UPDATE tool_calls SET error = replace(error, 'Proposal p_mrg1 stays open', 'Proposals p_mrg1, p_mrg2 stay open') WHERE user_id = 'merged'").run();
+      expect(await lc.run()).toBe(3);
+      expect(sent.find((m) => m.to[0] === "merged@example.com").text)
+        .toContain("You approved 4 changes (pause keywords, add negative keywords, update campaign budget) in Camberstack, but they weren't applied: Free includes 10 applied changes every 30 days and you've used them. They're still waiting");
       const open = sent.find((m) => m.to[0] === "open@example.com"), gone = sent.find((m) => m.to[0] === "gone@example.com");
-      expect(open.text).toContain("You approved a proposal of 3 changes (pause keywords, add negative keywords) in Camberstack, but it wasn't applied");
-      expect(open.text).toContain("It's still waiting, ready to go.");
-      expect(open.html).toContain(">Apply it with Pro</a>");
+      expect(open.text).toContain("You approved 3 changes (pause keywords, add negative keywords) in Camberstack, but they weren't applied");
+      expect(open.text).toContain("They're still waiting, ready to go.");
+      expect(open.html).toContain(">Apply them with Pro</a>");
       // Discarded since the stop: not "waiting", and no "applies it now".
       expect(gone.text).not.toContain("still waiting");
       expect(gone.text).toContain("Pro has unlimited changes on up to 5 Google Ads accounts");

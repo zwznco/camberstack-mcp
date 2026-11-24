@@ -294,18 +294,23 @@ export class Lifecycle {
 
   /** Operator check: send one sample of each email to `to`, with placeholder links. */
   /**
-   * The proposal the change cap stopped (its id is in the stop: "Proposal p_… stays open"), as a count and change types only:
-   * never its summary, which holds Google Ads data the privacy policy keeps out of other services (email goes through Resend).
+   * The proposals the change cap stopped (named in the stop: "Proposal p_… stays open", or "Proposals p_…, p_… stay open" when
+   * merged), as a count and change types only: never their summaries, which hold Google Ads data the privacy policy keeps out of
+   * other services (email goes through Resend).
    */
   private stoppedProposal(userId: string, error?: string): Stopped | null {
-    const id = /Proposal (\S+) stays open/.exec(error ?? "")?.[1];
-    if (!id) return null;
-    const row = this.d.db.prepare("SELECT changes, status FROM proposals WHERE id = ? AND user_id = ?").get(id, userId) as { changes: string; status: string } | undefined;
-    if (!row) return null;
-    let types: string[] = [];
-    try { types = (JSON.parse(row.changes) as { type?: string }[]).map((c) => c.type ?? ""); } catch { return null; }
+    const ids = /Proposals? ((?:p_[\w-]+(?:, )?)+) stays? open/.exec(error ?? "")?.[1]?.split(", ") ?? [];
+    const get = this.d.db.prepare("SELECT changes, status FROM proposals WHERE id = ? AND user_id = ?");
+    const types: string[] = [];
+    let open = false;
+    for (const id of ids) {
+      const row = get.get(id, userId) as { changes: string; status: string } | undefined;
+      if (!row) continue;
+      try { types.push(...(JSON.parse(row.changes) as { type?: string }[]).map((c) => c.type ?? "")); } catch { continue; }
+      if (row.status === "proposed") open = true;
+    }
     if (!types.length) return null;
-    return { changes: types.length, kinds: [...new Set(types.filter(Boolean).map((t) => t.replaceAll("_", " ")))].slice(0, 3), open: row.status === "proposed" };
+    return { changes: types.length, kinds: [...new Set(types.filter(Boolean).map((t) => t.replaceAll("_", " ")))].slice(0, 3), open };
   }
 
   async preview(to: string): Promise<void> {
@@ -451,15 +456,16 @@ type Stopped = { changes: number; kinds: string[]; open: boolean };
  */
 function changeLimit(base: string, plus: string | null, upgrade: string | null, opens?: string, afterAccountEmail = false, stopped: Stopped | null = null) {
   const when = whenLabel(opens);
-  const what = stopped ? `a proposal of ${stopped.changes} change${stopped.changes === 1 ? "" : "s"}${stopped.kinds.length ? ` (${stopped.kinds.join(", ")})` : ""}` : "a change";
+  const many = (stopped?.changes ?? 1) > 1;
+  const what = stopped ? `${many ? `${stopped.changes} changes` : "a change"}${stopped.kinds.length ? ` (${stopped.kinds.join(", ")})` : ""}` : "a change";
   const waiting = !stopped || stopped.open;
   const head = `${afterAccountEmail ? "This is a different limit from the one-account one I wrote about before. " : ""}You approved ${what} in Camberstack, `
-    + `but it wasn't applied: Free includes ${freeChanges()} and you've used them.${waiting ? " It's still waiting, ready to go." : ""}`;
-  const now = waiting ? "applies it now" : "has";
+    + `but ${many ? "they weren't" : "it wasn't"} applied: Free includes ${freeChanges()} and you've used them.${waiting ? ` ${many ? "They're" : "It's"} still waiting, ready to go.` : ""}`;
+  const now = waiting ? `applies ${many ? "them" : "it"} now` : "has";
   const pitch = plus
     ? `Plus ${now}${waiting ? ", with" : ""} unlimited changes on one Google Ads account, for ${PLUS_PRICE_LABEL}. Cancel any time.`
     : `Pro ${now}${waiting ? ", with" : ""} unlimited changes on up to ${PRO_ACCOUNTS} Google Ads accounts, for ${PRO_PRICE_LABEL}. Cancel any time.`;
-  const cta = plus ? (waiting ? "Apply it with Plus" : "Get Plus") : (waiting ? "Apply it with Pro" : "Upgrade to Pro");
+  const cta = plus ? (waiting ? `Apply ${many ? "them" : "it"} with Plus` : "Get Plus") : (waiting ? `Apply ${many ? "them" : "it"} with Pro` : "Upgrade to Pro");
   const link = plus ?? upgrade;
   const wait = `${when ? `If you'd rather wait, your next free change opens on ${when}. ` : ""}Questions? Just reply.`;
   return {
