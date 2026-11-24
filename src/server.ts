@@ -21,7 +21,7 @@ import { mountAccount } from "./account.js";
 import { mountFeedback, submitFeedback } from "./feedback.js";
 import { Billing } from "./billing.js";
 import { AdConversions } from "./adconversions.js";
-import { Lifecycle, lifecycleSigningKey } from "./lifecycle.js";
+import { Lifecycle, RUN_EVERY, lifecycleSigningKey } from "./lifecycle.js";
 import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { Survey } from "./survey.js";
@@ -453,7 +453,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
   const startJobs = () => {
     every(10 * 60_000, "db sweep", () => sweep(db));
     void every(HOUR, "billing sweep", () => billing.sweep())();  // also at boot: a restart mustn't delay a downgrade an hour
-    every(HOUR, "lifecycle", () => lifecycle.run());
+    every(RUN_EVERY, "lifecycle", () => lifecycle.run());  // upgrade emails go when a session ends, not on the hour
     every(HOUR, "announcements", () => announcements.resume());
     every(60_000, "transactional mail", () => lifecycle.transactional());
     every(15 * 60_000, "error alerts", () => errorAlerts.run());

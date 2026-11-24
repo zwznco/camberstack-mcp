@@ -4,19 +4,19 @@
  *                  If their login has no Google Ads account (ads_accounts = 0, no manager), the same slot says so instead:
  *                  reconnect with the login that has one, or create one; Camberstack can't. Added 2026-11-16: a user with
  *                  no account got "ask about your campaigns" and replied he'd try it
- *   limit_reached  a tool refused a second Google Ads account (the Free plan's limit), still free the next morning (6+ hours later) → one note:
+ *   limit_reached  a tool refused a second Google Ads account (the Free plan's limit), still free once the session ends → one note:
  *                  when another account opens, what Pro covers, the upgrade link
  *   (switch_wanted, sent when a Free user was stopped before spending the account switch, went with the switch on 2026-11-06;
  *                  its email_log rows still count as an upgrade email already sent)
  *   (service_limit, for the one-service gate, was removed with it on 2026-11-11 before it ever sent)
  *   change_limit   the change cap (FREE_CHANGE_CAP) stopped a Free user's apply, still free and still at the cap the next
- *                  morning (6+ hours later) →
+ *                  once the session ends →
  *                  when the next change opens, Plus's unlimited changes, the upgrade link. Once per user, but sent even after
  *                  another upgrade email: the cap is the main paywall, and this email is how ChatGPT users see the offer (2026-11-11)
  *                  limit_reached isn't sent after any upgrade email (limit_reached, switch_wanted or change_limit), nor
  *                  in the same run as change_limit
  *   paid_limit     a paying Plus or Pro user (Stripe, not complimentary) was refused another Google Ads account on that plan,
- *                  the next morning (6+ hours later) → one note: when another account opens, and the plan above (Plus → Pro,
+ *                  once the session ends → one note: when another account opens, and the plan above (Plus → Pro,
  *                  Pro → Agency) with a personal link to switch. Once per user. Added 2026-11-12: a Pro user with 16 accounts was
  *                  refused, clicked Agency twice and got no email, since every other upgrade email is for Free only
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
@@ -26,8 +26,10 @@
  *                  pro_welcome → what the new plan covers, where billing lives. Once per plan switched to. Added 2026-11-24: a
  *                  Pro user moved to Agency and got no email, since pro_welcome goes once per user
  * Those three are transactional: sent within a minute (transactional(), every minute), not held for the morning.
- * The first five go out in the user's morning (SEND_HOURS in the time zone of their Google Ads account, or FALLBACK_TZ),
- * so being due only holds it until the next hourly run inside that window.
+ * The three upgrade emails (limit_reached, paid_limit, change_limit) answer a stop, so they go when the session ends: QUIET
+ * after the user's last tool call, in their daytime (DAY_HOURS), within a run (every RUN_EVERY). Held for the next morning
+ * they arrived up to a day late and read as out of sync (operator, 2026-11-24). first_steps and check_in are nudges, not
+ * replies: they go out in the user's morning (SEND_HOURS). Both in the time zone of their Google Ads account, or FALLBACK_TZ.
  * Never sent to internal accounts (ADMIN_EMAILS, PRO_EMAILS) or anyone who unsubscribed.
  * Spacing across kinds (2026-11-13: a Free user got limit_reached, then change_limit and check_in in the same minute, two
  * days later): at most one of these five per user per run, none within GAP_DAYS of any other email but the two transactional
@@ -88,8 +90,15 @@ export interface LifecycleDeps {
 export const lifecycleSigningKey = (encryptionKey: Buffer) => deriveKey(encryptionKey, "email-links");
 
 const DAY = 86400;
-/** Local hours an email may go out in: three hourly runs, so one always lands. */
+/** Local hours first_steps and check_in may go out in. */
 const SEND_HOURS = { from: 9, to: 12 };
+/** Local hours an upgrade email may go out in: never overnight. */
+const DAY_HOURS = { from: 8, to: 21 };
+/** An upgrade email waits this long after the user's last tool call: the session has ended. */
+const QUIET = 3600;
+/** How often server.ts runs run(), in ms. */
+export const RUN_EVERY = 5 * 60_000;
+const UPGRADE = new Set(["limit_reached", "paid_limit", "change_limit"]);
 /** No lifecycle email within this many days of another email (transactional ones aside). */
 const GAP_DAYS = 3;
 /** check_in waits this long after an upgrade email. */
@@ -125,9 +134,9 @@ function spaced(due: Due[], lastEmail: Map<string, number>, lastSales: Map<strin
   const out = new Map<string, Due>();
   for (const u of [...due].sort((a, b) => PRIORITY[a.kind]! - PRIORITY[b.kind]!)) {
     if (out.has(u.id)) continue;
-    // change_limit answers something the user just did, so another email doesn't hold it: an announcement sent 5 hours
-    // after a stop held one 3 days, and a "your change wasn't applied" email days late reads as out of sync (2026-11-24).
-    if (u.kind !== "change_limit" && (lastEmail.get(u.id) ?? 0) > t - GAP_DAYS * DAY) continue;
+    // An upgrade email answers something the user just did, so another email doesn't hold it: an announcement sent 5 hours
+    // after a stop held change_limit 3 days, and a "your change wasn't applied" email days late reads as out of sync (2026-11-24).
+    if (!UPGRADE.has(u.kind) && (lastEmail.get(u.id) ?? 0) > t - GAP_DAYS * DAY) continue;
     if (u.kind === "check_in" && (lastSales.get(u.id) ?? 0) > t - CHECK_IN_AFTER_SALES_DAYS * DAY) continue;
     out.set(u.id, u);
   }
@@ -147,12 +156,12 @@ export class Lifecycle {
   }
 
   /**
-   * Who is due each email right now. `only`: one user, sent by hand (sendNow): their morning and the 6 hours after a stop
-   * don't apply; every other rule does.
+   * Who is due each email right now. `only`: one user, sent by hand (sendNow): the time of day and the quiet hour after their
+   * session don't apply; every other rule does.
    */
   private due(only?: string): Due[] {
     const t = now();
-    const settle = only ? 0 : 6 * 3600;
+    const settle = only ? 0 : QUIET;
     const eligible = `u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan = 'free'`;
     const notSent = (k: string) => `NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = '${k}')`;
     const first = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.created_at,
@@ -161,27 +170,28 @@ export class Lifecycle {
       AND NOT EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.ok = 1 AND c.error IS NULL AND c.tool NOT IN ${NOT_USE}
         AND NOT (c.tool = 'run_gaql' AND c.customer_id IS NULL))`)  // a run_gaql field lookup reads no account; error set = a notice or grant link, not use
       .all(t - (15 + GAP_DAYS) * DAY, t - 2 * DAY) as { id: string; email: string; time_zone: string | null; created_at: number; no_ads: number | null }[];
-    // Refused a second account by the plan gate (session.ts checkAccount), the last refusal 6 hours to 30 days ago. A refusal
+    // Refused a second account by the plan gate (session.ts checkAccount), the last refusal an hour to 30 days ago. A refusal
     // logs as ok since it became a notice (it was ok = 0 before), so it's matched on the text; Merchant ones by their wording.
     // A refusal means they're working on more than one account now (there is no switch since 2026-11-06): the next
-    // morning, not days later. The 6 hours keep it from landing minutes after a refusal inside the
-    // send window. `error` is the latest refusal's (SQLite takes bare columns from the max() row). A reset by hand cancels
+    // session's end, not days later. The quiet hour keeps it from landing mid-session. `error` is the latest refusal's (SQLite takes bare columns from the max() row). A reset by hand cancels
     // the refusals before it: this email would say the account is still locked (sent minutes after one, 2026-10-16).
     /**
-     * Each user's latest stop whose message starts with `prefix`, 6 hours to 31 days ago and since any reset of their plan.
+     * Each user's latest stop whose message starts with `prefix`, QUIET to 31 days ago and since any reset of their plan, and no
+     * tool call of theirs since QUIET ago (the session has ended).
      * `cols` adds user columns, `on` narrows the stops, `where` the users. `error` is the latest stop's (SQLite takes bare
      * columns from the max() row).
      */
     const lastStops = <R>(prefix: string, o: { cols?: string; on?: string; where: string }) => this.d.db.prepare(`SELECT u.id, u.email, u.time_zone${o.cols ?? ""}, max(c.at) last, c.error
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)${o.on ?? ""}
       WHERE ${o.where}
-      GROUP BY u.id HAVING last BETWEEN ? AND ?`)
-      .all(`${prefix}%`, t - 31 * DAY, t - settle) as ({ id: string; email: string; time_zone: string | null; last: number; error: string } & R)[];
+      GROUP BY u.id HAVING last BETWEEN ? AND ?
+        AND NOT EXISTS (SELECT 1 FROM tool_calls q WHERE q.user_id = u.id AND q.at > ?)`)
+      .all(`${prefix}%`, t - 31 * DAY, t - settle, t - settle) as ({ id: string; email: string; time_zone: string | null; last: number; error: string } & R)[];
     const notMerchant = `
         AND coalesce(c.customer_id, '') NOT LIKE 'mc:%' AND c.error NOT LIKE '%Merchant Center account%'`;
     const limit = lastStops<object>(PLAN_LIMIT_PREFIX, { on: notMerchant,
       where: `${eligible} AND ${notSent("limit_reached")} AND ${notSent("switch_wanted")} AND ${notSent("change_limit")}` });
-    // Stopped by the change cap (session.ts checkChangeCap), the last stop 6 hours to 30 days ago. Always on request: the
+    // Stopped by the change cap (session.ts checkChangeCap), the last stop an hour to 30 days ago. Always on request: the
     // user approved the change that was stopped. `error` is the latest stop's, which names the date the next change opens.
     // Not held back by an earlier upgrade email (limit_reached etc.): only by its own.
     const changes = lastStops<{ plan_reset_at: number | null }>(CHANGE_LIMIT_PREFIX, { cols: ", u.plan_reset_at",
@@ -211,8 +221,11 @@ export class Lifecycle {
     // spacing hold below, so a held email still goes.
     const at = this.d.clock?.() ?? new Date();
     const morning = (u: { time_zone: string | null }) => { const h = localHour(at, u.time_zone); return h >= SEND_HOURS.from && h < SEND_HOURS.to; };
+    const daytime = (u: { time_zone: string | null }) => { const h = localHour(at, u.time_zone); return h >= DAY_HOURS.from && h < DAY_HOURS.to; };
     const ok = (u: { id: string; email: string; time_zone: string | null }) => !this.d.internalEmails.has(u.email.toLowerCase())
       && (only ? u.id === only : morning(u));
+    const okNow = (u: { id: string; email: string; time_zone: string | null }) => !this.d.internalEmails.has(u.email.toLowerCase())
+      && (only ? u.id === only : daytime(u));
     const latest = (where: string) => new Map((this.d.db.prepare(`SELECT user_id, max(sent_at) at FROM email_log WHERE ${where} GROUP BY user_id`)
       .all() as { user_id: string; at: number }[]).map((r) => [r.user_id, r.at]));
     const lastEmail = latest("kind NOT IN ('welcome','pro_welcome') AND kind NOT LIKE 'plan_switch:%'");
@@ -221,19 +234,19 @@ export class Lifecycle {
     const due = [
       ...first.filter(ok).map((u) => ({ kind: "first_steps" as const, id: u.id, email: u.email, days: Math.floor((t - u.created_at) / DAY), noAds: u.no_ads === 1 })),
       // Every refusal's text names when another account opens (session.ts refuse: "opens on YYYY-MM-DD"; before 0.29.0 "the next opens YYYY-MM-DD").
-      // Both stops by the same morning: change_limit only, so one upgrade email, not two.
-      ...limit.filter((u) => ok(u) && !atCap.some((c) => c.id === u.id)).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
+      // Both stops by the time it goes: change_limit only, so one upgrade email, not two.
+      ...limit.filter((u) => okNow(u) && !atCap.some((c) => c.id === u.id)).map((u) => ({ kind: "limit_reached" as const, id: u.id, email: u.email, days: 0,
         opens: /opens (?:again )?(?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
-      ...paid.filter(ok).filter((u) => u.plan === "plus" || this.d.agencyLink?.(u.id)).map((u) => ({ kind: "paid_limit" as const, id: u.id, email: u.email, days: 0, plan: u.plan,
+      ...paid.filter(okNow).filter((u) => u.plan === "plus" || this.d.agencyLink?.(u.id)).map((u) => ({ kind: "paid_limit" as const, id: u.id, email: u.email, days: 0, plan: u.plan,
         opens: /opens (?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
-      ...atCap.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0, opens: u.opens,
+      ...atCap.filter(okNow).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0, opens: u.opens,
         afterAccountEmail: accountEmailed.has(u.id), stopped: this.stoppedProposal(u.id, u.error) })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];
     return spaced(due, lastEmail, lastSales, t);
   }
 
-  /** Hourly. */
+  /** Every RUN_EVERY (server.ts). */
   async run(): Promise<number> {
     if (!this.d.mail) return 0;
     return this.deliver(this.due(), (u) => this.render(u));
@@ -244,7 +257,7 @@ export class Lifecycle {
     return this.due(userId).map((u) => ({ kind: u.kind, email: this.render(u) }));
   }
 
-  /** Send the one email this user is due now, outside their morning and the 6 hours after a stop (lifecycle-send.ts). */
+  /** Send the one email this user is due now, at any hour and mid-session (lifecycle-send.ts). */
   async sendNow(userId: string): Promise<number> {
     if (!this.d.mail) return 0;
     return this.deliver(this.due(userId), (u) => this.render(u));

@@ -23,8 +23,9 @@ function setup(clock = () => MORNING) {
   const user = (id: string, email: string, ageDays: number, extra = "") =>
     db.prepare(`INSERT INTO users (id, google_sub, email, enc_refresh, created_at${extra ? ", plan" : ""}) VALUES (?, ?, ?, 'x', ?${extra ? ", ?" : ""})`)
       .run(...[id, `sub-${id}`, email, now() - ageDays * DAY, ...(extra ? [extra] : [])]);
-  const call = (userId: string, tool: string) =>
-    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, ms, bytes) VALUES (?, ?, ?, 1, 10, 10)").run(now(), userId, tool);
+  // Two hours ago: their session has ended (an upgrade email waits for that). `ago` in seconds.
+  const call = (userId: string, tool: string, ago = 7200) =>
+    db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, ms, bytes) VALUES (?, ?, ?, 1, 10, 10)").run(now() - ago, userId, tool);
   const applied = (userId: string, daysAgo: number, cid = "1112223333", undoOf: string | null = null) =>
     db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, undo_of, created_at, applied_at)
       VALUES (?, ?, ?, '[{"type":"pause_campaign"}]', 's', 'applied', ?, ?, ?)`).run(`p${Math.random()}`, userId, cid, undoOf, now() - daysAgo * DAY, now() - daysAgo * DAY);
@@ -96,7 +97,7 @@ describe("lifecycle emails", () => {
         .run(now() - daysAgo * DAY, userId, "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days, "
           + "and this login has used them; the next opens on 2026-12-02. Proposal p1 stays open.");
     user("capped", "capped@example.com", 10); stopped("capped", 0.3); atCap("capped");
-    user("recent", "recent@example.com", 10); stopped("recent", 0.2); atCap("recent");   // under 6 hours ago
+    user("recent", "recent@example.com", 10); stopped("recent", 0.3); atCap("recent"); call("recent", "account_overview", 1800);  // still in the session
     user("pro", "pro@example.com", 10, "pro"); stopped("pro", 0.3); atCap("pro");
     // No longer at the cap (the window rolled, or a paid plan ended since): nothing.
     user("rolled", "rolled@example.com", 10); stopped("rolled", 0.3);
@@ -213,7 +214,7 @@ describe("lifecycle emails", () => {
       db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'account_overview', 1, ?, 10, 10)")
         .run(now() - daysAgo * DAY, userId, error);
     user("capped", "capped@example.com", 10); call("capped", "propose_changes"); refused("capped", 0.3);
-    user("recent", "recent@example.com", 10); call("recent", "propose_changes"); refused("recent", 0.2);  // under 6 hours ago
+    user("recent", "recent@example.com", 10); call("recent", "propose_changes"); refused("recent", 0.3); call("recent", "account_overview", 1800);  // still in the session
     user("other", "other@example.com", 10); call("other", "propose_changes"); refused("other", 0.3, "Google said no");  // not the gate
     user("pro", "pro@example.com", 10, "pro"); call("pro", "propose_changes"); refused("pro", 0.3);
     user("reset", "reset@example.com", 10); call("reset", "propose_changes"); refused("reset", 0.3);  // a reset by hand cancels it
@@ -243,7 +244,7 @@ describe("lifecycle emails", () => {
       db.prepare("UPDATE users SET stripe_sub = ? WHERE id = ?").run(`sub_${id}`, id); };
     paying("pro", "pro"); refused("pro", 0.3, "Pro", 5);
     paying("plus", "plus"); refused("plus", 0.4, "Plus", 1);
-    paying("soon", "pro"); refused("soon", 0.2, "Pro", 5);                  // under 6 hours ago
+    paying("soon", "pro"); refused("soon", 0.3, "Pro", 5); call("soon", "account_overview", 1800);  // still in the session
     paying("upgraded", "pro"); refused("upgraded", 0.3, "Free", 1);        // refused on Free, before paying: not this email
     paying("agency", "agency"); refused("agency", 0.3, "Agency", 25);       // nothing above Agency
     user("comp", "comp@example.com", 20, "pro"); call("comp", "account_overview"); refused("comp", 0.3, "Pro", 5);  // complimentary
@@ -315,7 +316,32 @@ describe("lifecycle emails", () => {
     expect(sent.map((m) => m.to[0]).sort()).toEqual(["bogus@example.com", "none@example.com", "ny@example.com", "uk@example.com"]);
   });
 
-  it("sendNow sends one user's due email outside their morning and within 6 hours of the stop, once", async () => {
+  it("sends an upgrade email an hour after the session ends, in the user's daytime, not their morning (2026-11-24)", async () => {
+    const at = { now: new Date("2026-10-13T22:00:00Z") };  // 5pm in Chicago: daytime, not morning
+    const { db, lc, sent, user, call, applied } = setup(() => at.now);
+    setChangeCap(10);
+    try {
+    const capped = (id: string, stopAgo: number) => {
+      for (let i = 0; i < 10; i++) applied(id, 3 - i * 0.1);
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'apply_changes', 1, ?, 10, 10)")
+        .run(now() - stopAgo, id, "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days; the next opens on 2026-12-02.");
+    };
+    user("ended", "ended@example.com", 8); call("ended", "account_overview", 5000); capped("ended", 4000);   // quiet 66 minutes
+    user("going", "going@example.com", 8); call("going", "account_overview", 5000); capped("going", 4000); call("going", "keywords_report", 600);
+    user("quiet", "quiet@example.com", 3);   // first_steps is due, but only in their morning
+    expect(await lc.run()).toBe(1);
+    expect(sent.map((m) => `${m.to[0]} ${m.subject}`)).toEqual(["ended@example.com Your Google Ads change wasn't applied"]);
+    // Night in Chicago: the session has ended, but it waits for 8am.
+    db.prepare("DELETE FROM tool_calls WHERE user_id = 'going' AND tool = 'keywords_report'").run();
+    at.now = new Date("2026-10-14T04:00:00Z");  // 11pm
+    expect(await lc.run()).toBe(0);
+    at.now = new Date("2026-10-14T13:00:00Z");  // 8am
+    expect(await lc.run()).toBe(1);
+    expect(sent.at(-1).to).toEqual(["going@example.com"]);
+    } finally { setChangeCap(null); }
+  });
+
+  it("sendNow sends one user's due email at any hour and mid-session, once", async () => {
     const { db, lc, sent, user, call, applied } = setup(() => new Date("2026-10-13T05:00:00Z"));  // midnight in Chicago
     setChangeCap(10);
     try {
