@@ -459,7 +459,7 @@ function userPage(x: UserDetail, v: View): string {
   return `<div class="stats">
 ${stat(`Calls · ${w}`, num(x.totals.calls), `avg ${x.totals.avg_ms} ms`)}
 ${stat(`Errors · ${w}`, x.totals.errors ? `<span class="n bad">${x.totals.errors}</span>` : num(0), x.totals.calls ? `${((100 * x.totals.errors) / x.totals.calls).toFixed(1)}%` : "")}
-${stat("Changes applied · 30 days", num(x.applied), `${x.proposals.length} proposals`)}
+${stat("Changes applied · 30 days", num(x.applied), `${x.proposals.length} proposal${x.proposals.length === 1 ? "" : "s"} ${inW(v.days)}`)}
 ${stat("Ads accounts used", num(x.accounts.filter((a) => a.ok_calls > 0 && a.customer_id !== DEMO_CID && a.customer_id !== GA_TARGET && a.customer_id !== SC_TARGET && a.customer_id !== GTM_TARGET && !a.customer_id.startsWith("mc:")).length),
     u.ads_accounts === null ? `${w} · visible not recorded yet`
       : `${w} · of ${u.ads_accounts} visible${u.ads_managers ? ` + ${u.ads_managers} manager${u.ads_managers > 1 ? "s" : ""}` : ""} (${ago(u.ads_accounts_at!)})`)}
@@ -488,7 +488,7 @@ ${card("Tools", table(["tool", ["calls", "r"], ["errors", "r"]], x.tools.map((t)
 </div>
 ${card("Proposals", table(["id", "account", "status", "summary", "created"], x.proposals.map((p) => [`<code>${esc(p.id)}</code>`, cid(p.customer_id),
     `<span class="chip ${p.status === "applied" ? "okc" : p.status === "failed" ? "badc" : ""}">${esc(p.status)}${p.undo_of ? " · undo" : ""}</span>`,
-    `<span class="muted">${esc(p.summary).replace(/\n/g, "<br>")}</span>`, when(p.created_at)]), "No proposals.").replaceAll("<td><span class=\"muted\">", "<td class=\"wrap\"><span class=\"muted\">"))}
+    `<span class="muted">${esc(p.summary).replace(/\n/g, "<br>")}</span>`, when(p.created_at)]), "No proposals in this window.").replaceAll("<td><span class=\"muted\">", "<td class=\"wrap\"><span class=\"muted\">"), `<small>${w}</small>`)}
 ${card("Emails sent", table(["email", "sent"], x.emails.map((e) => [`<code>${esc(e.kind)}</code>`, `${date(e.sent_at)} UTC`]), "None sent."))}
 ${card("Recent calls", callsTable(x.recent.map((c) => ({ ...c, email: null }))), `<small>${w} · last ${x.recent.length}</small>`)}`;
 }

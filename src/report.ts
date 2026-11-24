@@ -480,8 +480,9 @@ export function userDetail(db: DB, id: string, since = 0) {
       "SELECT tool, count(*) calls, sum(ok = 0) errors FROM tool_calls WHERE user_id = ? AND at >= ? GROUP BY 1 ORDER BY calls DESC"),
     // Applied changes as the cap counts them, the same number as the Cap tab, the Users table and the user's account page.
     applied: capCounted(db, id, (db.prepare("SELECT plan_reset_at FROM users WHERE id = ?").get(id) as { plan_reset_at: number | null } | undefined)?.plan_reset_at ?? null).length,
-    proposals: all<{ id: string; customer_id: string; summary: string; status: string; undo_of: string | null; created_at: number; applied_at: number | null }>(
-      "SELECT id, customer_id, summary, status, undo_of, created_at, applied_at FROM proposals WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
+    // In the page's window, like the call tables (?days); newest 50.
+    proposals: calls<{ id: string; customer_id: string; summary: string; status: string; undo_of: string | null; created_at: number; applied_at: number | null }>(
+      "SELECT id, customer_id, summary, status, undo_of, created_at, applied_at FROM proposals WHERE user_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 50"),
     emails: all<{ kind: string; sent_at: number }>("SELECT kind, sent_at FROM email_log WHERE user_id = ? ORDER BY sent_at"),
     recent: calls<{ at: number; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string; flags: string | null }>(
       `SELECT c.at, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client, c.flags
