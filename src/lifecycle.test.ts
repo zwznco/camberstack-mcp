@@ -427,6 +427,43 @@ describe("pro_welcome (transactional)", () => {
   });
 });
 
+describe("plan_switch (transactional)", () => {
+  const paying = (db: any, id: string, email: string, plan: string) =>
+    db.prepare("INSERT INTO users (id, google_sub, email, enc_refresh, created_at, plan, stripe_sub) VALUES (?, ?, ?, 'x', ?, ?, ?)")
+      .run(id, `sub-${id}`, email, now() - 30 * DAY, plan, `sub_${id}`);
+  const welcomed = (db: any, id: string, ago = 20 * DAY) =>
+    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES (?, 'pro_welcome', ?)").run(id, now() - ago);
+  const switched = (db: any, id: string, src: string, ago = 60) =>
+    db.prepare("INSERT INTO plan_events (user_id, kind, src, at) VALUES (?, 'switch', ?, ?)").run(id, src, now() - ago);
+
+  it("tells a paying user who moved Pro → Agency in the portal, once per plan, at any hour, without holding back other email", async () => {
+    const { db, lc, sent } = setup(() => new Date("2026-10-14T03:00:00Z"));
+    paying(db, "up", "up@example.com", "agency"); welcomed(db, "up"); switched(db, "up", "pro>agency");
+    paying(db, "down", "down@example.com", "pro"); welcomed(db, "down"); switched(db, "down", "agency>pro");
+    paying(db, "stale", "stale@example.com", "agency"); welcomed(db, "stale"); switched(db, "stale", "pro>agency", 2 * DAY);  // mail down a day: dropped
+    paying(db, "back", "back@example.com", "pro"); welcomed(db, "back"); switched(db, "back", "pro>agency");                  // switched back since
+    paying(db, "me", "me@example.com", "agency"); welcomed(db, "me"); switched(db, "me", "pro>agency");                      // internal
+    expect(await lc.transactional()).toBe(2);
+    const up = sent.find((m) => m.to[0] === "up@example.com");
+    expect(up.subject).toBe("You're now on Camberstack Agency");
+    expect(up.text).toContain("changed from Pro to Agency");
+    expect(up.text).toContain("up to 25 Google Ads accounts");
+    expect(up.text).toContain("$49/month");
+    expect(sent.find((m) => m.to[0] === "down@example.com").text).toContain("up to 5 Google Ads accounts");
+    expect(await lc.transactional()).toBe(0);  // never twice
+    // A transactional email doesn't hold a lifecycle email back (lastEmail ignores it).
+    expect(db.prepare("SELECT kind FROM email_log WHERE user_id = 'up' AND kind LIKE 'plan_switch:%'").all()).toEqual([{ kind: "plan_switch:agency" }]);
+  });
+
+  it("waits for pro_welcome, and a switch that came before it is covered by it", async () => {
+    const { db, lc, sent } = setup();
+    paying(db, "new", "new@example.com", "agency"); switched(db, "new", "pro>agency", 120);
+    expect(await lc.transactional()).toBe(1);  // pro_welcome, on Agency; no plan_switch too
+    expect(sent.map((m) => m.subject)).toEqual(["You're on Camberstack Agency"]);
+    expect(await lc.transactional()).toBe(0);
+  });
+});
+
 describe("welcome (transactional)", () => {
   it("goes once to a Free user who just signed up, never to earlier signups, Pro, internal or disconnected users", async () => {
     const { db, lc, sent, user } = setup(() => new Date("2026-10-14T03:00:00Z"));  // any hour

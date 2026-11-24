@@ -69,7 +69,7 @@ export class Billing {
   }
 
   /** One paywall funnel step (db.ts plan_events). Never throws: tracking must not break a page. */
-  track(userId: string, kind: "upgrade_click" | "plans_view" | "paid", src: string | null = null): void {
+  track(userId: string, kind: "upgrade_click" | "plans_view" | "paid" | "switch", src: string | null = null): void {
     try {
       this.d.db.prepare("INSERT INTO plan_events (user_id, kind, src, at) VALUES (?, ?, ?, ?)").run(userId, kind, src, now());
     } catch { /* best effort */ }
@@ -167,6 +167,8 @@ export class Billing {
       }
       const plan = LIVE.has(sub.status) ? this.planOf(sub) : "free";
       // Back on Free: approvals made while paid were unlimited, so the change cap counts from now (session.ts capCounted).
+      // A move between paid plans (the billing portal) is a funnel event; lifecycle.ts's plan_switch email reads it.
+      if (plan !== p.plan && plan !== "free") this.track(p.id, "switch", `${p.plan}>${plan}`);
       if (plan !== p.plan) this.d.db.prepare(`UPDATE users SET plan = ?${plan === "free" ? ", paid_ended_at = ?" : ""} WHERE id = ?`)
         .run(...(plan === "free" ? [plan, now(), p.id] : [plan, p.id]));
     }

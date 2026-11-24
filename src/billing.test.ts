@@ -142,6 +142,10 @@ describe("Agency plan billing", () => {
     stripe.subs.set("sub_c", { status: "canceled", price: PRO });
     await billing.sweep();
     expect(plan("c")).toBe("free");
+    // Each paid-to-paid move is a funnel event (lifecycle.ts plan_switch reads it); ending isn't, and nothing repeats.
+    await billing.sweep();
+    expect(db.prepare("SELECT src FROM plan_events WHERE user_id = 'c' AND kind = 'switch' ORDER BY rowid").all().map((r: any) => r.src))
+      .toEqual(["pro>agency", "agency>pro"]);
   });
 
   it("sends a paying user who wants the other plan to the billing portal, never a second checkout", async () => {

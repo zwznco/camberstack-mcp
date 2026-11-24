@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS tool_releases (
 
 CREATE TABLE IF NOT EXISTS plan_events (
   user_id  TEXT NOT NULL,
-  kind     TEXT NOT NULL CHECK (kind IN ('upgrade_click','plans_view','paid')),
+  kind     TEXT NOT NULL CHECK (kind IN ('upgrade_click','plans_view','paid','switch')),
   src      TEXT,
   at       INTEGER NOT NULL
 );
@@ -325,6 +325,23 @@ export function openDb(dataDir: string): DB {
         SELECT user_id, kind, click_id, at, uploaded_at, error, attempts FROM ad_conversions;
       DROP TABLE ad_conversions;
       ALTER TABLE ad_conversions_new RENAME TO ad_conversions;
+      COMMIT;`);
+  }
+  // plan_events.kind gained 'switch' (2026-11-24: a move between paid plans in Stripe's portal, src '<from>><to>'). Rebuilt
+  // like ad_conversions above, since SQLite can't alter a CHECK.
+  const pe = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'plan_events'").get() as { sql: string } | undefined)?.sql ?? "";
+  if (pe && !pe.includes("'switch'")) {
+    db.exec(`BEGIN;
+      CREATE TABLE plan_events_new (
+        user_id  TEXT NOT NULL,
+        kind     TEXT NOT NULL CHECK (kind IN ('upgrade_click','plans_view','paid','switch')),
+        src      TEXT,
+        at       INTEGER NOT NULL
+      );
+      INSERT INTO plan_events_new (user_id, kind, src, at) SELECT user_id, kind, src, at FROM plan_events;
+      DROP TABLE plan_events;
+      ALTER TABLE plan_events_new RENAME TO plan_events;
+      CREATE INDEX IF NOT EXISTS plan_events_user ON plan_events (user_id, kind);
       COMMIT;`);
   }
   // First-touch utm source (2026-10-16 → 10-22) tagged 2 of 34 users; the AI app a user connected from (report.ts) replaced it.

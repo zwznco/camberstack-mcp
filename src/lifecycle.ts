@@ -22,7 +22,10 @@
  *   check_in       first applied a change to a real account 2–14 days ago → a personal note from Adam asking how it went (replies go to him)
  *   welcome        signed up (still Free) and their AI app finished connecting → the first question to ask, the demo, the plans
  *   pro_welcome    on a paid plan (Plus, Pro, Agency) with a Stripe subscription → what it adds, where billing lives
- * Those two are transactional: sent within a minute (transactional(), every minute), not held for the morning.
+ *   plan_switch:<plan>  moved between paid plans in Stripe's billing portal (billing.ts sweep, a plan_events 'switch') after
+ *                  pro_welcome → what the new plan covers, where billing lives. Once per plan switched to. Added 2026-11-24: a
+ *                  Pro user moved to Agency and got no email, since pro_welcome goes once per user
+ * Those three are transactional: sent within a minute (transactional(), every minute), not held for the morning.
  * The first five go out in the user's morning (SEND_HOURS in the time zone of their Google Ads account, or FALLBACK_TZ),
  * so being due only holds it until the next hourly run inside that window.
  * Never sent to internal accounts (ADMIN_EMAILS, PRO_EMAILS) or anyone who unsubscribed.
@@ -42,7 +45,7 @@ import express, { type Express } from "express";
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { deriveKey, safeEqual, sign } from "./crypto.js";
-import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, CHANGE_LIMIT_PREFIX, FREE_TOOLS, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, freeChanges, freeChangesShort, PRO_ACCOUNTS, PRO_PRICE_LABEL, dateLabel, payingSql } from "./plans.js";
+import { ACCOUNT_WINDOW_DAYS, AGENCY_ACCOUNTS, AGENCY_PRICE_LABEL, CHANGE_LIMIT_PREFIX, FREE_TOOLS, PLAN_LIMIT_PREFIX, PLUS_PRICE_LABEL, changeCap, freeChanges, freeChangesShort, PRO_ACCOUNTS, PRO_PRICE_LABEL, PLUS_ACCOUNTS, dateLabel, payingSql, planLabel } from "./plans.js";
 import { DEMO_CID } from "./demo.js";
 import { capCounted } from "./session.js";
 import { DEMO_MERCHANT } from "./merchant.js";
@@ -102,7 +105,7 @@ function localHour(at: Date, tz: string | null | undefined): number {
   const fmt = (zone: string) => Number(new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hourCycle: "h23" }).format(at));
   try { return fmt(tz || FALLBACK_TZ); } catch { return fmt(FALLBACK_TZ); }
 }
-type Kind = "first_steps" | "limit_reached" | "paid_limit" | "change_limit" | "check_in" | "welcome" | "pro_welcome";
+type Kind = "first_steps" | "limit_reached" | "paid_limit" | "change_limit" | "check_in" | "welcome" | "pro_welcome" | `plan_switch:${string}`;
 /** welcome shipped at this time (2026-10-14); everyone who signed up before it never gets one. */
 const WELCOME_SINCE = 1792001873;
 /** A welcome that hasn't gone out a day after signup (mail down that long) is dropped, not sent late. */
@@ -205,7 +208,7 @@ export class Lifecycle {
     const ok = (u: { email: string; time_zone: string | null }) => !this.d.internalEmails.has(u.email.toLowerCase()) && morning(u);
     const latest = (where: string) => new Map((this.d.db.prepare(`SELECT user_id, max(sent_at) at FROM email_log WHERE ${where} GROUP BY user_id`)
       .all() as { user_id: string; at: number }[]).map((r) => [r.user_id, r.at]));
-    const lastEmail = latest("kind NOT IN ('welcome','pro_welcome')");
+    const lastEmail = latest("kind NOT IN ('welcome','pro_welcome') AND kind NOT LIKE 'plan_switch:%'");
     const lastSales = latest(SALES_SQL);
     const accountEmailed = new Set(latest("kind IN ('limit_reached','switch_wanted')").keys());
     const due = [
@@ -252,8 +255,20 @@ export class Lifecycle {
       AND (EXISTS (SELECT 1 FROM tokens t WHERE t.user_id = u.id) OR EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id))`)
       .all(Math.max(WELCOME_SINCE, now() - WELCOME_WITHIN)) as { id: string; email: string }[])
       .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
+    // A switch made after their pro_welcome went (one in the same minute as the first purchase is covered by it), to the plan
+    // they're on now, at most a day ago (mail down that long: dropped, not sent late). Latest switch first, so it's the one claimed.
+    const switched = (this.d.db.prepare(`SELECT u.id, u.email, u.plan, e.src FROM users u
+      JOIN plan_events e ON e.user_id = u.id AND e.kind = 'switch' AND e.at >= ? AND e.src LIKE '%>' || u.plan
+      WHERE ${payingSql("u.")} AND u.email_opt_out = 0
+        AND EXISTS (SELECT 1 FROM email_log w WHERE w.user_id = u.id AND w.kind = 'pro_welcome' AND w.sent_at <= e.at)
+        AND NOT EXISTS (SELECT 1 FROM email_log s WHERE s.user_id = u.id AND s.kind = 'plan_switch:' || u.plan)
+      ORDER BY e.at DESC`)
+      .all(now() - DAY) as { id: string; email: string; plan: string; src: string }[])
+      .filter((u) => !this.d.internalEmails.has(u.email.toLowerCase()));
     return await this.deliver(fresh.map((u) => ({ ...u, kind: "welcome" as const, days: 0 })), () => welcome(this.d.baseUrl))
-      + await this.deliver(pros.map((u) => ({ ...u, kind: "pro_welcome" as const, days: 0 })), (u) => proWelcome(this.d.baseUrl, u.plan));
+      + await this.deliver(pros.map((u) => ({ ...u, kind: "pro_welcome" as const, days: 0 })), (u) => proWelcome(this.d.baseUrl, u.plan))
+      + await this.deliver(switched.map((u) => ({ ...u, kind: `plan_switch:${u.plan}` as const, days: 0 })),
+        (u) => planSwitch(this.d.baseUrl, u.src.split(">")[0]!, u.plan));
   }
 
   /** Logs before sending (at most once, even if a send is retried by a crash); a failed send is unlogged to retry. */
@@ -321,6 +336,7 @@ export class Lifecycle {
     await this.send(to, welcome(this.d.baseUrl), "preview");
     await this.send(to, proWelcome(this.d.baseUrl, "pro"), "preview");
     await this.send(to, proWelcome(this.d.baseUrl, "plus"), "preview");
+    await this.send(to, planSwitch(this.d.baseUrl, "pro", "agency"), "preview");
   }
 
   mount(app: Express, page: (title: string, body: string) => string): void {
@@ -592,4 +608,39 @@ function proWelcome(base: string, plan: string) {
     adds: `${changeCap() ? "unlimited applied changes, on " : ""}up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.`,
     addsHtml: `${changeCap() ? "unlimited applied changes, on " : ""}up to ${accounts} Google Ads accounts instead of 1. To use another one, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`,
     billing: `${billing} your account page`, billingHtml: `${billing} <a href="${base}/account">your account page</a>.` });
+}
+
+/**
+ * A move between paid plans in Stripe's billing portal (plan_switch:<plan>): what the plan now covers, and where billing lives.
+ * Transactional, like pro_welcome. Says nothing about proration or charges: those follow the portal's settings, and Stripe sends the invoice.
+ */
+function planSwitch(base: string, from: string, to: string) {
+  const name = planLabel(to), was = planLabel(from);
+  const [price, covers] = to === "plus" ? [PLUS_PRICE_LABEL, `unlimited applied changes on ${PLUS_ACCOUNTS} Google Ads account`]
+    : [to === "agency" ? AGENCY_PRICE_LABEL : PRO_PRICE_LABEL,
+      `${changeCap() ? "unlimited applied changes, on " : ""}up to ${to === "agency" ? AGENCY_ACCOUNTS : PRO_ACCOUNTS} Google Ads accounts`];
+  const ask = "List my Google Ads accounts";
+  const use = to === "plus" ? "" : ` To use another account, ask in Claude or ChatGPT, e.g. "${ask}", then name the one you want.`;
+  const useHtml = to === "plus" ? "" : ` To use another account, ask in Claude or ChatGPT, e.g. <em>“${ask}”</em>, then name the one you want.`;
+  const billing = `${price}, renewing monthly. You can see invoices, change your card or plan, or cancel any time from`;
+  return {
+    subject: `You're now on Camberstack ${name}`,
+    text: `Hi,
+
+Your Camberstack plan changed from ${was} to ${name}. It's active now.
+
+${name} covers: ${covers}.${use}
+
+Billing: ${billing} your account page:
+${base}/account
+
+If anything doesn't work the way you expected, just reply. I read every email.
+
+Adam
+Camberstack`,
+    html: wrap(p("Hi,") + p(`Your Camberstack plan changed from ${was} to ${name}. It's active now.`)
+      + p(`<strong>${name} covers:</strong> ${covers}.${useHtml}`)
+      + p(`<strong>Billing:</strong> ${billing} <a href="${base}/account">your account page</a>.`)
+      + p("If anything doesn't work the way you expected, just reply. I read every email.") + p("Adam<br>Camberstack")),
+  };
 }
