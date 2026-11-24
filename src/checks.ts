@@ -115,7 +115,7 @@ export function stoppedConversions(actionRows: any[], countRows: any[], today: s
     conversions_last_90_days: Math.round((counts.get(String(r.conversionAction.id)) ?? 0) * 10) / 10 }));
   if (!found.length) return { names: new Set<string>(), out: {} };
   return { names: new Set(found.map((f) => f.name)), out: { conversions_stopped: { actions: found,
-    note: `Each was recording conversions, then none for ${STOPPED_DAYS}+ days. Check the form, tag or import behind it before blaming the ads.` } } };
+    note: `Each was recording conversions, then none for ${STOPPED_DAYS}+ days. Check the form, tag or import behind it before blaming the ads: conversion_tracking gives the steps that fix each one.` } } };
 }
 
 // ---------------------------------------------------------------- short calls

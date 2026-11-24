@@ -245,6 +245,75 @@ export async function campaignDetails(read: Read, campaignId: string, days: numb
 
 // ---------------------------------------------------------------- conversion_tracking
 
+const RETIRE = "If the user no longer uses it (an old product, a test), propose set_conversion_goal or remove_conversion_action so bidding stops waiting on it.";
+const WEBPAGE_TYPES = new Set(["WEBPAGE", "WEBPAGE_CODELESS"]);
+const GA4_TYPE = /^GOOGLE_ANALYTICS_4/;
+const IMPORT_TYPE = /^(UPLOAD|SALESFORCE|FIREBASE|THIRD_PARTY|STORE_SALES)/;
+const CALL_TYPE = /^(AD_CALL|WEBSITE_CALL|SMART_CAMPAIGN_TRACKED_CALLS|SMART_CAMPAIGN_AD_CLICKS_TO_CALL|CLICK_TO_CALL)$/;
+
+/** "AW-123/label" from a conversion action's tag_snippets (the event snippet's send_to), or null. */
+export function sendToOf(snippets: unknown): { conversion_id: string; conversion_label: string } | null {
+  for (const s of Array.isArray(snippets) ? snippets : []) {
+    const m = /send_to['"]?\s*:\s*['"]AW-(\d+)\/([\w-]+)/.exec(String((s as any)?.eventSnippet ?? ""));
+    if (m) return { conversion_id: `AW-${m[1]}`, conversion_label: m[2]! };
+  }
+  return null;
+}
+
+/**
+ * conversion_tracking's `fix`: for each problem, the steps that bring conversions back, naming the tool or change for each.
+ * Added 2026-11-24: prod showed 49% of checked accounts with a silent primary action, and users who ran this tool then
+ * drifted back to reports; 7 in 57 ever proposed a fix (~/scripts/pain-points/README.md).
+ */
+export function conversionFixes(o: { autoTaggingOff: boolean; noPrimary: boolean;
+  silent: { id: string; name: string; type: string; ga4_event?: string; ga4_property?: string | null; send_to: { conversion_id: string; conversion_label: string } | null }[] }) {
+  const out: { problem: string; steps: string[] }[] = [];
+  if (o.noPrimary) out.push({ problem: "No enabled primary conversion action, so bidding has nothing to optimize for", steps: [
+    "Ask the user what a conversion is for this business (a lead form, a call, a booking, a purchase) and which page or event marks it.",
+    "If the site has GA4 and that event is a key event, propose import_ga4_key_event; otherwise propose create_conversion_action.",
+    "For a new site-tag action: tag_manager_containers → the site's container, then propose add_ads_conversion_tag (send_to from this tool once the action exists) "
+      + "firing on the thank-you page or the lead event, add_conversion_linker if tag_manager_setup lists none, and publish_container.",
+  ] });
+  for (const a of o.silent) {
+    const t = String(a.type);
+    if (WEBPAGE_TYPES.has(t)) {
+      const st = a.send_to;
+      out.push({ problem: `"${a.name}" is a site tag that recorded nothing: the tag is missing, paused, unpublished or firing on a page that changed`, steps: [
+        "tag_manager_containers, then tag_manager_setup on the site's container.",
+        `Look for a Google Ads conversion tag whose sends_to is ${st ? `${st.conversion_id}/${st.conversion_label}` : "this action's send_to (run_gaql: SELECT conversion_action.tag_snippets FROM conversion_action WHERE conversion_action.id = " + a.id + ")"}.`,
+        `None there → propose add_ads_conversion_tag${st ? ` with conversion_id ${st.conversion_id} and conversion_label ${st.conversion_label}` : ""}, firing on the page or event the user confirms (never All Pages). `
+          + "Paused → unpause_tag. Firing on a page or event that no longer happens → ask the user what the thank-you page or form event is now, and add a tag on it.",
+        "Propose add_conversion_linker if tag_manager_setup reports none, and publish_container last: nothing reaches the site until it's published.",
+        "If the site doesn't use Tag Manager (no container), the tag is in the site's own code: tell the user which send_to the thank-you page must load.",
+        RETIRE,
+      ] });
+    } else if (GA4_TYPE.test(t)) {
+      out.push({ problem: `"${a.name}" is imported from GA4${a.ga4_event ? ` (event ${a.ga4_event})` : ""} and recorded nothing`, steps: [
+        `analytics_report on property ${a.ga4_property ?? "(the linked one)"} with eventName and eventCount over the same window${a.ga4_event ? `, filtered to ${a.ga4_event}` : ""}.`,
+        "GA4 still records the event → the import broke: analytics_setup to check the Ads link and that the event is still a key event (mark_key_event if not).",
+        "GA4 doesn't record it either → the site stopped sending it: tag_manager_setup, then propose add_ga4_event_tag on the form or thank-you page, and publish_container.",
+      ] });
+    } else if (IMPORT_TYPE.test(t)) {
+      out.push({ problem: `"${a.name}" is an import (${t.toLowerCase().replace(/_/g, " ")}) that recorded nothing`, steps: [
+        "run_gaql: SELECT offline_conversion_upload_conversion_action_summary.conversion_action_name, offline_conversion_upload_conversion_action_summary.status, "
+          + "offline_conversion_upload_conversion_action_summary.daily_summaries FROM offline_conversion_upload_conversion_action_summary: whether Google got uploads lately, and their errors. No rows = nothing arrived.",
+        "Whatever uploads it (a CRM, Zapier, a script) has stopped or is failing; Camberstack can't see that system. Ask the user to check it.",
+        RETIRE,
+      ] });
+    } else if (CALL_TYPE.test(t)) {
+      out.push({ problem: `"${a.name}" counts calls and recorded nothing`, steps: [
+        "campaign_details on the campaigns that should get calls: check their call assets are live and the ads are serving.",
+        "If calls happen but are short, this action's min_call_seconds may be too high for this business.",
+        RETIRE,
+      ] });
+    }
+  }
+  if (o.autoTaggingOff) out.push({ problem: "Auto-tagging is off", steps: [
+    "Ask the user to turn it on in Google Ads → Admin → Account settings → Auto-tagging (Camberstack can't change this setting).",
+  ] });
+  return out;
+}
+
 export async function conversionTracking(read: Read, days: number, demo: boolean) {
   const soft = (q: string) => read(q).catch(() => null);
   const [account, actions, counts, goals] = await Promise.all([
@@ -293,9 +362,15 @@ export async function conversionTracking(read: Read, days: number, demo: boolean
   const watch: string[] = [];
   if (c && c.autoTaggingEnabled === false) watch.push("Auto-tagging is off: Google Analytics and offline imports can't tie visits to ad clicks.");
   if (!list.some((a) => a.primary && a.status === "ENABLED")) watch.push("No enabled primary conversion action: bidding has nothing to optimize for.");
-  if (counts) for (const a of list) {
-    if (a.primary && a.status === "ENABLED" && !a.all_conversions) watch.push(`Primary action "${a.name}" recorded nothing in the window${a.last_conversion ? ` (last ${a.last_conversion})` : " and has never recorded"}.`);
-  }
+  const silent = counts ? list.filter((a) => a.primary && a.status === "ENABLED" && !a.all_conversions) : [];
+  for (const a of silent) watch.push(`Primary action "${a.name}" recorded nothing in the window${a.last_conversion ? ` (last ${a.last_conversion})` : " and has never recorded"}.`);
+  // The send_to a site tag needs, only for the silent site-tag actions: snippets are long, so they're read only when a fix needs them.
+  const tagged = silent.filter((a) => WEBPAGE_TYPES.has(String(a.type)));
+  const snippets = tagged.length ? await read(`SELECT conversion_action.id, conversion_action.tag_snippets FROM conversion_action
+      WHERE conversion_action.id IN (${tagged.map((a) => digits(a.id)).join(", ")})`).catch(() => []) : [];
+  const sendTo = new Map(snippets.map((r) => [String(r.conversionAction?.id), sendToOf(r.conversionAction?.tagSnippets)]));
+  const fix = conversionFixes({ autoTaggingOff: c?.autoTaggingEnabled === false, noPrimary: !list.some((a) => a.primary && a.status === "ENABLED"),
+    silent: silent.map((a) => ({ ...a, send_to: sendTo.get(a.id) ?? null })) });
   return {
     window: `last ${days} days`,
     ...(c ? { account: {
@@ -305,6 +380,8 @@ export async function conversionTracking(read: Read, days: number, demo: boolean
       call_reporting: !!c.callReportingSetting?.callReportingEnabled,
     } } : {}),
     ...(watch.length ? { watch } : {}),
+    ...(fix.length ? { fix, how_to_use_fix: "Each problem's steps, in order. Diagnosis alone doesn't bring conversions back: once the user agrees, "
+      + "run the steps and propose the changes they name, then show the summary for approval." } : {}),
     actions: list,
     account_goals: (goals ?? []).map((r) => ({ category: r.customerConversionGoal.category, origin: r.customerConversionGoal.origin, bids_on_it: !!r.customerConversionGoal.biddable })),
     note: (counts ? "conversions: counted in the Conversions column (primary actions); all_conversions: every action, by click date. " : "Per-action counts aren't in the demo's sample data. ")

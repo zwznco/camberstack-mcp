@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.49.0", date: "2026-11-24",
+    summary: "When conversions stop recording, conversion_tracking now says how to fix each one, so your AI can propose the fix, not just name the problem.",
+    items: [
+      "**`conversion_tracking` gives a `fix` for each problem**: a primary conversion action that recorded nothing, no primary action at all, or auto-tagging off. The steps depend on where the conversion comes from: a site tag (check Tag Manager for it, then add the conversion tag with its send_to filled in, a Conversion Linker, and publish), a GA4 import (is GA4 still recording the event?), an upload (did Google receive any?), or calls.",
+      "Each one also offers to stop bidding on an action you no longer use, such as an old product's.",
+    ],
+  },
+  {
     version: "0.48.1", date: "2026-11-23",
     summary: "Target a campaign by place name, and see a campaign's conversions per conversion action.",
     items: [
