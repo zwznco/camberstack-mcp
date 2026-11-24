@@ -138,3 +138,21 @@ describe("ChatGPT Ads conversions", () => {
     openDb(dir);  // a second boot leaves it alone
   });
 });
+
+describe("ref links", () => {
+  const withCookie = (v: string) => ({ headers: { cookie: v } }) as any;
+  it("keeps a ref slug and records it on the first connection only", () => {
+    const db = openDb(":memory:");
+    const ac = new AdConversions(db, undefined, true);
+    const r = res(); ac.captureClick({ query: { ref: "YouTube-1" } } as any, r);
+    expect(r.h[0]).toBe(`cs_ref=youtube-1; Path=/; Max-Age=${90 * 86400}; HttpOnly; SameSite=Lax; Secure`);
+    for (const bad of ["x", "a b", "<script>", "y".repeat(41)]) { const n = res(); ac.captureClick({ query: { ref: bad } } as any, n); expect(n.h).toEqual([]); }
+    user(db, "u1"); user(db, "u2");
+    const done = res(); ac.record(withCookie("cs_ref=youtube-1"), done, "u1", true);
+    expect(done.h[0]).toMatch(/^cs_ref=; Path=\/; Max-Age=0/);
+    ac.record(withCookie("cs_ref=youtube-1"), res(), "u2", false);
+    const ref = (id: string) => (db.prepare("SELECT signup_ref FROM users WHERE id = ?").get(id) as any).signup_ref;
+    expect(ref("u1")).toBe("youtube-1");
+    expect(ref("u2")).toBeNull();
+  });
+});

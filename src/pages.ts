@@ -1608,6 +1608,8 @@ Google services than the Free plan covers, and a confirmation if you upgrade. Ea
 about changes to your account or to Camberstack's features. All of them come from adam@camberstack.io, to the email address of the Google account
 you connected, and never contain your Google Ads data. Every email has an unsubscribe link, and replies reach a person.</p>
 
+<h2>Links we share</h2>
+<p>Some of our own links, such as the one under a video of ours, end in <code>?ref=</code> and a short word naming where it was posted. We keep that word in a cookie on this site for up to 90 days and save it with your account if you then connect Camberstack for the first time, so we know which posts bring people. It is never sent anywhere.</p>
 <h2>Our own ads</h2>
 <p>If you reach this site by clicking one of our Google ads, we keep the ad click identifier Google adds to the link in a cookie on
 this site for up to 90 days. If you then connect Camberstack for the first time, we report that click to our own Google Ads account

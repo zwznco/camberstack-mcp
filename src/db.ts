@@ -297,6 +297,8 @@ export function openDb(dataDir: string): DB {
   if (!cols.has("plan_reset_at")) db.exec("ALTER TABLE users ADD COLUMN plan_reset_at INTEGER");
   // When their paid plan last ended (billing.ts sweep): the change cap counts from then (session.ts capCounted). NULL = never.
   if (!cols.has("paid_ended_at")) db.exec("ALTER TABLE users ADD COLUMN paid_ended_at INTEGER");
+  // Where their first connection came from, from a ?ref= link (adconversions.ts REF_COOKIE, 2026-11-24). NULL = no ref.
+  if (!cols.has("signup_ref")) db.exec("ALTER TABLE users ADD COLUMN signup_ref TEXT");
   // What their Google login can reach, as of its last fresh account list (session.ts accounts(), 2026-10-22): ad accounts
   // (not managers, not the demo) and manager accounts. NULL = not listed since this was added.
   for (const c of ["ads_accounts", "ads_managers", "ads_accounts_at"]) if (!cols.has(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} INTEGER`);

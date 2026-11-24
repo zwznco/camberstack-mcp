@@ -43,6 +43,12 @@ export interface ConversionConfig {
 }
 
 const COOKIE = "cs_click";
+/**
+ * `?ref=<slug>` on any link we place for free (a YouTube description, a post): kept 90 days and written to
+ * users.signup_ref at the first connection from that browser (2026-11-24, for the YouTube test in
+ * ~/scripts/seo/audits/camberstack.md). Nothing is uploaded anywhere; it only answers "where did they come from".
+ */
+const REF_COOKIE = "cs_ref";
 const MAX_AGE = 90 * 86400;
 const GOOGLE_KINDS = ["gclid", "gbraid", "wbraid"] as const;
 const KINDS = [...GOOGLE_KINDS, "oppref"] as const;
@@ -57,8 +63,13 @@ const eventId = (what: string, userId: string) => `${what}_${createHash("sha256"
 export class AdConversions {
   constructor(private db: DB, private cfg: ConversionConfig | undefined, private secure: boolean, private f: typeof fetch = fetch) {}
 
-  /** On any page view: keep an ad click id if the URL carries one. */
+  /** On any page view: keep an ad click id if the URL carries one, and a `ref` (where an unpaid link came from). */
   captureClick(req: Request, res: Response): void {
+    const ref = req.query.ref;
+    if (typeof ref === "string" && /^[a-z0-9][a-z0-9_-]{1,39}$/i.test(ref)) {
+      res.append("Set-Cookie", `${REF_COOKIE}=${ref.toLowerCase()}; Path=/; Max-Age=${MAX_AGE}; HttpOnly; SameSite=Lax${this.secure ? "; Secure" : ""}`);
+      res.setHeader("Cache-Control", "private, no-store");
+    }
     const keep = (kind: Kind, v: string) => {
       res.append("Set-Cookie", `${COOKIE}=${kind}:${encodeURIComponent(v)}; Path=/; Max-Age=${MAX_AGE}; HttpOnly; SameSite=Lax${this.secure ? "; Secure" : ""}`);
       res.setHeader("Cache-Control", "private, no-store");  // a page that sets a per-visitor cookie must not be shared-cached
@@ -74,6 +85,13 @@ export class AdConversions {
 
   /** After a successful Google Ads connection: record the conversion for a first-time user, then try to upload it. */
   record(req: Request, res: Response, userId: string, firstConnection: boolean): void {
+    const ref = readCookie(req, REF_COOKIE);
+    if (ref) {
+      res.append("Set-Cookie", `${REF_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${this.secure ? "; Secure" : ""}`);
+      if (firstConnection && /^[a-z0-9][a-z0-9_-]{1,39}$/.test(ref)) {
+        this.db.prepare("UPDATE users SET signup_ref = ? WHERE id = ? AND signup_ref IS NULL").run(ref, userId);
+      }
+    }
     const raw = readCookie(req, COOKIE);
     if (!raw) return;
     res.append("Set-Cookie", `${COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${this.secure ? "; Secure" : ""}`);
