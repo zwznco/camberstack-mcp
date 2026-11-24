@@ -571,7 +571,7 @@ function revenuePage(v: View): string {
   const pros = r.users.filter((u) => u.plan !== "free" && u.paying);
   const paying = r.paying;
   return `<div class="stats">
-${stat("Paying", num(paying), "live Stripe subscriptions; complimentary plans not counted")}
+${stat("Paying", num(paying))}
 ${stat("MRR", `$${mrr(r)}`, byPlan(r) || "no paid plans")}
 ${stat("Cancelled", bad(r.cancelled.n), `${num(r.cancelled.in_window)} ${lastW(v.days)}`)}
 </div>
