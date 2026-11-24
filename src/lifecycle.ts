@@ -125,7 +125,9 @@ function spaced(due: Due[], lastEmail: Map<string, number>, lastSales: Map<strin
   const out = new Map<string, Due>();
   for (const u of [...due].sort((a, b) => PRIORITY[a.kind]! - PRIORITY[b.kind]!)) {
     if (out.has(u.id)) continue;
-    if ((lastEmail.get(u.id) ?? 0) > t - GAP_DAYS * DAY) continue;
+    // change_limit answers something the user just did, so another email doesn't hold it: an announcement sent 5 hours
+    // after a stop held one 3 days, and a "your change wasn't applied" email days late reads as out of sync (2026-11-24).
+    if (u.kind !== "change_limit" && (lastEmail.get(u.id) ?? 0) > t - GAP_DAYS * DAY) continue;
     if (u.kind === "check_in" && (lastSales.get(u.id) ?? 0) > t - CHECK_IN_AFTER_SALES_DAYS * DAY) continue;
     out.set(u.id, u);
   }
@@ -144,9 +146,13 @@ export class Lifecycle {
     return u && safeEqual(this.sig(u), String(s ?? "")) ? u : null;
   }
 
-  /** Who is due each email right now. */
-  private due(): Due[] {
+  /**
+   * Who is due each email right now. `only`: one user, sent by hand (sendNow): their morning and the 6 hours after a stop
+   * don't apply; every other rule does.
+   */
+  private due(only?: string): Due[] {
     const t = now();
+    const settle = only ? 0 : 6 * 3600;
     const eligible = `u.enc_refresh IS NOT NULL AND u.email_opt_out = 0 AND u.plan = 'free'`;
     const notSent = (k: string) => `NOT EXISTS (SELECT 1 FROM email_log e WHERE e.user_id = u.id AND e.kind = '${k}')`;
     const first = this.d.db.prepare(`SELECT u.id, u.email, u.time_zone, u.created_at,
@@ -170,7 +176,7 @@ export class Lifecycle {
       FROM users u JOIN tool_calls c ON c.user_id = u.id AND c.error LIKE ? AND c.at >= coalesce(u.plan_reset_at, 0)${o.on ?? ""}
       WHERE ${o.where}
       GROUP BY u.id HAVING last BETWEEN ? AND ?`)
-      .all(`${prefix}%`, t - 31 * DAY, t - 6 * 3600) as ({ id: string; email: string; time_zone: string | null; last: number; error: string } & R)[];
+      .all(`${prefix}%`, t - 31 * DAY, t - settle) as ({ id: string; email: string; time_zone: string | null; last: number; error: string } & R)[];
     const notMerchant = `
         AND coalesce(c.customer_id, '') NOT LIKE 'mc:%' AND c.error NOT LIKE '%Merchant Center account%'`;
     const limit = lastStops<object>(PLAN_LIMIT_PREFIX, { on: notMerchant,
@@ -205,7 +211,8 @@ export class Lifecycle {
     // spacing hold below, so a held email still goes.
     const at = this.d.clock?.() ?? new Date();
     const morning = (u: { time_zone: string | null }) => { const h = localHour(at, u.time_zone); return h >= SEND_HOURS.from && h < SEND_HOURS.to; };
-    const ok = (u: { email: string; time_zone: string | null }) => !this.d.internalEmails.has(u.email.toLowerCase()) && morning(u);
+    const ok = (u: { id: string; email: string; time_zone: string | null }) => !this.d.internalEmails.has(u.email.toLowerCase())
+      && (only ? u.id === only : morning(u));
     const latest = (where: string) => new Map((this.d.db.prepare(`SELECT user_id, max(sent_at) at FROM email_log WHERE ${where} GROUP BY user_id`)
       .all() as { user_id: string; at: number }[]).map((r) => [r.user_id, r.at]));
     const lastEmail = latest("kind NOT IN ('welcome','pro_welcome') AND kind NOT LIKE 'plan_switch:%'");
@@ -229,11 +236,26 @@ export class Lifecycle {
   /** Hourly. */
   async run(): Promise<number> {
     if (!this.d.mail) return 0;
-    return this.deliver(this.due(), (u) => u.kind === "first_steps" ? (u.noAds ? noAdsAccount(u.days) : firstSteps(u.days))
+    return this.deliver(this.due(), (u) => this.render(u));
+  }
+
+  /** What sendNow would send this user: kind and email, nothing logged or sent (lifecycle-send.ts's dry run). */
+  pending(userId: string): { kind: Kind; email: { subject: string; text: string; html: string } }[] {
+    return this.due(userId).map((u) => ({ kind: u.kind, email: this.render(u) }));
+  }
+
+  /** Send the one email this user is due now, outside their morning and the 6 hours after a stop (lifecycle-send.ts). */
+  async sendNow(userId: string): Promise<number> {
+    if (!this.d.mail) return 0;
+    return this.deliver(this.due(userId), (u) => this.render(u));
+  }
+
+  private render(u: Due): { subject: string; text: string; html: string } {
+    return u.kind === "first_steps" ? (u.noAds ? noAdsAccount(u.days) : firstSteps(u.days))
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
       : u.kind === "paid_limit" ? paidLimit(this.d.baseUrl, u.plan === "pro" ? "pro" : "plus",
         u.plan === "pro" ? this.d.agencyLink?.(u.id) ?? null : this.d.upgradeLink(u.id), u.opens)
-      : u.kind === "change_limit" ? changeLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.opens, u.afterAccountEmail, u.stopped) : checkInEmail());
+      : u.kind === "change_limit" ? changeLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.opens, u.afterAccountEmail, u.stopped) : checkInEmail();
   }
 
   /**

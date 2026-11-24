@@ -315,6 +315,28 @@ describe("lifecycle emails", () => {
     expect(sent.map((m) => m.to[0]).sort()).toEqual(["bogus@example.com", "none@example.com", "ny@example.com", "uk@example.com"]);
   });
 
+  it("sendNow sends one user's due email outside their morning and within 6 hours of the stop, once", async () => {
+    const { db, lc, sent, user, call, applied } = setup(() => new Date("2026-10-13T05:00:00Z"));  // midnight in Chicago
+    setChangeCap(10);
+    try {
+    const capped = (id: string) => {
+      for (let i = 0; i < 10; i++) applied(id, 3 - i * 0.1);
+      db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'apply_changes', 1, ?, 10, 10)")
+        .run(now() - 3600, id, "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days; the next opens on 2026-12-02.");
+    };
+    user("now", "now@example.com", 8); call("now", "account_overview"); capped("now");
+    user("other", "other@example.com", 8); call("other", "account_overview"); capped("other");
+    db.prepare("INSERT INTO email_log (user_id, kind, sent_at) VALUES ('now', 'check_in', ?)").run(now() - 5 * DAY);
+    expect(await lc.run()).toBe(0);  // not their morning, and the stop was an hour ago
+    expect(lc.pending("now").map((d) => d.kind)).toEqual(["change_limit"]);
+    expect(await lc.sendNow("now")).toBe(1);
+    expect(sent.map((m) => m.to[0])).toEqual(["now@example.com"]);  // only that user
+    expect(sent[0].subject).toBe("Your Google Ads change wasn't applied");
+    expect(await lc.sendNow("now")).toBe(0);  // once
+    expect(lc.pending("nobody")).toEqual([]);
+    } finally { setChangeCap(null); }
+  });
+
   it("sends one email per user per run, never within 3 days of another, and check_in not within 7 days of an upgrade email (2026-11-13)", async () => {
     const { db, lc, sent, user, call, applied } = setup();
     setChangeCap(10);
@@ -333,9 +355,12 @@ describe("lifecycle emails", () => {
     // check_in waits a week after an upgrade email, but not after an older one.
     user("pitched", "pitched@example.com", 8); call("pitched", "account_overview"); applied("pitched", 6); log("pitched", "limit_reached", 5);
     user("pitchedLong", "long@example.com", 12); call("pitchedLong", "account_overview"); applied("pitchedLong", 10); log("pitchedLong", "limit_reached", 8);
-    expect(await lc.run()).toBe(3);
+    // change_limit answers the user's own stop, so a recent announcement doesn't hold it (2026-11-24: held 3 days by one sent after the stop).
+    user("cappedAnnounced", "capann@example.com", 8); call("cappedAnnounced", "account_overview"); capped("cappedAnnounced"); log("cappedAnnounced", "announce:x", 1);
+    expect(await lc.run()).toBe(4);
     expect(sent.map((m) => `${m.to[0]} ${m.subject}`).sort()).toEqual([
       "both@example.com Your Google Ads change wasn't applied",
+      "capann@example.com Your Google Ads change wasn't applied",
       "long@example.com Camberstack: how did it go?",
       "welcomed@example.com Camberstack: how did it go?",
     ]);
