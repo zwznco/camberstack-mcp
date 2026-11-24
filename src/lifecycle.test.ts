@@ -109,14 +109,17 @@ describe("lifecycle emails", () => {
       .run(now() - 0.4 * DAY, "Plan limit: the Free plan covers 1 Google Ads account at a time. Another opens on 2026-12-01.");
     expect(await lc.run()).toBe(3);
     expect(sent.map((m) => m.to[0]).sort()).toEqual(["both@example.com", "capped@example.com", "had@example.com"]);
-    expect(sent.find((x) => x.to[0] === "both@example.com").subject).toBe("Your free Camberstack changes for this month");
+    expect(sent.find((x) => x.to[0] === "both@example.com").subject).toBe("Your Google Ads change wasn't applied");
     // After the account-limit email, it says this is a different limit; without one, it doesn't.
-    expect(sent.find((x) => x.to[0] === "had@example.com").text).toContain("This is a different limit from the one-account one I wrote about before. Camberstack stopped");
+    expect(sent.find((x) => x.to[0] === "had@example.com").text).toContain("This is a different limit from the one-account one I wrote about before. You approved");
     const m = sent.find((x) => x.to[0] === "capped@example.com");
     expect(m.text).not.toContain("different limit");
-    expect(m.text).toContain("I won't email you about this limit again.");
-    expect(m.subject).toBe("Your free Camberstack changes for this month");
-    expect(m.text).toContain(`The next one opens on ${opens}. The proposal is still open`);
+    // The stop named p1, which isn't in the db: the email falls back to "a change", still waiting.
+    expect(m.text).toContain("You approved a change in Camberstack, but it wasn't applied: Free includes 10 applied changes every 30 days and you've used them. It's still waiting, ready to go.");
+    // Against paying: no "nothing is lost", no "reading and proposing are never limited".
+    expect(m.text).not.toMatch(/nothing is lost|never limited/);
+    expect(m.subject).toBe("Your Google Ads change wasn't applied");
+    expect(m.text).toContain(`If you'd rather wait, your next free change opens on ${opens}. Questions? Just reply.`);
     expect(m.text).toContain("https://camberstack.io/upgrade?t=capped.sig");
     // Once per user: another stop sends nothing.
     stopped("capped", 0.25);
@@ -135,14 +138,44 @@ describe("lifecycle emails", () => {
       db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, 'cap', 'apply_changes', 1, ?, 10, 10)").run(now() - 0.3 * DAY,
         "Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days, and this login has used them; the next opens on 2026-12-02.");
       expect(await lc.run()).toBe(1);
-      expect(sent[0].text).toContain("Camberstack Plus has unlimited changes on one Google Ads account, for $7/month; cancel any time. Pro ($15/month) does the same on up to 5 accounts.");
+      expect(sent[0].text).toContain("Plus applies it now, with unlimited changes on one Google Ads account, for $7/month. Cancel any time.");
       expect(sent[0].text).toContain("https://camberstack.io/upgrade?t=cap.sig&plan=plus");
-      expect(sent[0].html).toContain(">Get Plus</a>");
+      expect(sent[0].html).toContain(">Apply it with Plus</a>");
       db.prepare("INSERT INTO users (id, google_sub, email, plan, stripe_sub, created_at) VALUES ('pl', 'g-pl', 'pl@example.com', 'plus', 'sub_pl', ?)").run(now());
       expect(await lc.transactional()).toBe(1);
       expect(sent.at(-1).subject).toBe("You're on Camberstack Plus");
       expect(sent.at(-1).text).toContain("What Plus adds: unlimited applied changes on one Google Ads account (Free stops at 10 every 30 days), and the trend report: ask what changed lately");
       expect(sent.at(-1).text).toContain("$7/month, renewing monthly");
+    } finally { setChangeCap(null); }
+  });
+
+  it("names the stopped proposal in change_limit by count and change types only, never its summary", async () => {
+    const { db, lc, sent, user, call } = setup();
+    setChangeCap(10);
+    try {
+      const capped = (uid: string, stoppedId: string, status: string) => {
+        user(uid, `${uid}@example.com`, 10); call(uid, "account_overview");
+        for (let i = 0; i < 10; i++) db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at, applied_at)
+          VALUES (?, ?, '1112223333', '[{"type":"pause_campaign"}]', 's', 'applied', ?, ?)`).run(`${uid}-${i}`, uid, now() - DAY, now() - DAY);
+        db.prepare(`INSERT INTO proposals (id, user_id, customer_id, changes, summary, status, created_at) VALUES (?, ?, '1112223333', ?, ?, ?, ?)`)
+          .run(stoppedId, uid, JSON.stringify([{ type: "pause_keywords" }, { type: "pause_keywords" }, { type: "add_negative_keywords" }]),
+            "Pause keyword 'secret plumber term' ($140/mo)", status, now() - DAY);
+        db.prepare("INSERT INTO tool_calls (at, user_id, tool, ok, error, ms, bytes) VALUES (?, ?, 'apply_changes', 1, ?, 10, 10)").run(now() - 0.3 * DAY, uid,
+          `Change limit: nothing was applied. The Free plan includes 10 applied changes every 30 days, and this login has used them; the next opens on 2026-12-02. Proposal ${stoppedId} stays open.`);
+      };
+      capped("open", "p_open1", "proposed");
+      capped("gone", "p_gone1", "discarded");
+      expect(await lc.run()).toBe(2);
+      const open = sent.find((m) => m.to[0] === "open@example.com"), gone = sent.find((m) => m.to[0] === "gone@example.com");
+      expect(open.text).toContain("You approved a proposal of 3 changes (pause keywords, add negative keywords) in Camberstack, but it wasn't applied");
+      expect(open.text).toContain("It's still waiting, ready to go.");
+      expect(open.html).toContain(">Apply it with Pro</a>");
+      // Discarded since the stop: not "waiting", and no "applies it now".
+      expect(gone.text).not.toContain("still waiting");
+      expect(gone.text).toContain("Pro has unlimited changes on up to 5 Google Ads accounts");
+      expect(gone.html).toContain(">Upgrade to Pro</a>");
+      // The summary (Google Ads data) never reaches the email.
+      for (const m of [open, gone]) expect(m.text + m.html).not.toMatch(/secret plumber|\$140/);
     } finally { setChangeCap(null); }
   });
 
@@ -295,7 +328,7 @@ describe("lifecycle emails", () => {
     user("pitchedLong", "long@example.com", 12); call("pitchedLong", "account_overview"); applied("pitchedLong", 10); log("pitchedLong", "limit_reached", 8);
     expect(await lc.run()).toBe(3);
     expect(sent.map((m) => `${m.to[0]} ${m.subject}`).sort()).toEqual([
-      "both@example.com Your free Camberstack changes for this month",
+      "both@example.com Your Google Ads change wasn't applied",
       "long@example.com Camberstack: how did it go?",
       "welcomed@example.com Camberstack: how did it go?",
     ]);

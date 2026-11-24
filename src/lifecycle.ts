@@ -115,7 +115,7 @@ const WELCOME_WITHIN = DAY;
 const NOT_USE = "('list_accounts','switch_account','choose_account','search_console_sites','analytics_properties','tag_manager_containers',"
   + "'merchant_accounts','billing','send_feedback','disconnect','change_history','discard_proposal')";
 
-type Due = { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string; plan?: string; afterAccountEmail?: boolean; noAds?: boolean };
+type Due = { kind: Kind; id: string; email: string; days: number; opens?: string; accounts?: number; error?: string; plan?: string; afterAccountEmail?: boolean; noAds?: boolean; stopped?: Stopped | null };
 
 /** At most one email per user, by PRIORITY, and none too soon after the user's last email (see the header). */
 function spaced(due: Due[], lastEmail: Map<string, number>, lastSales: Map<string, number>, t: number): Due[] {
@@ -217,7 +217,7 @@ export class Lifecycle {
       ...paid.filter(ok).filter((u) => u.plan === "plus" || this.d.agencyLink?.(u.id)).map((u) => ({ kind: "paid_limit" as const, id: u.id, email: u.email, days: 0, plan: u.plan,
         opens: /opens (?:on )?(\d{4}-\d{2}-\d{2})/.exec(u.error)?.[1] })),
       ...atCap.filter(ok).map((u) => ({ kind: "change_limit" as const, id: u.id, email: u.email, days: 0, opens: u.opens,
-        afterAccountEmail: accountEmailed.has(u.id) })),
+        afterAccountEmail: accountEmailed.has(u.id), stopped: this.stoppedProposal(u.id, u.error) })),
       ...checkIn.filter(ok).map((u) => ({ kind: "check_in" as const, id: u.id, email: u.email, days: 0 })),
     ];
     return spaced(due, lastEmail, lastSales, t);
@@ -230,7 +230,7 @@ export class Lifecycle {
       : u.kind === "limit_reached" ? limitReached(this.d.baseUrl, this.d.upgradeLink(u.id), u.opens)
       : u.kind === "paid_limit" ? paidLimit(this.d.baseUrl, u.plan === "pro" ? "pro" : "plus",
         u.plan === "pro" ? this.d.agencyLink?.(u.id) ?? null : this.d.upgradeLink(u.id), u.opens)
-      : u.kind === "change_limit" ? changeLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.opens, u.afterAccountEmail) : checkInEmail());
+      : u.kind === "change_limit" ? changeLimit(this.d.baseUrl, this.d.plusLink?.(u.id) ?? null, this.d.upgradeLink(u.id), u.opens, u.afterAccountEmail, u.stopped) : checkInEmail());
   }
 
   /**
@@ -293,6 +293,21 @@ export class Lifecycle {
   }
 
   /** Operator check: send one sample of each email to `to`, with placeholder links. */
+  /**
+   * The proposal the change cap stopped (its id is in the stop: "Proposal p_… stays open"), as a count and change types only:
+   * never its summary, which holds Google Ads data the privacy policy keeps out of other services (email goes through Resend).
+   */
+  private stoppedProposal(userId: string, error?: string): Stopped | null {
+    const id = /Proposal (\S+) stays open/.exec(error ?? "")?.[1];
+    if (!id) return null;
+    const row = this.d.db.prepare("SELECT changes, status FROM proposals WHERE id = ? AND user_id = ?").get(id, userId) as { changes: string; status: string } | undefined;
+    if (!row) return null;
+    let types: string[] = [];
+    try { types = (JSON.parse(row.changes) as { type?: string }[]).map((c) => c.type ?? ""); } catch { return null; }
+    if (!types.length) return null;
+    return { changes: types.length, kinds: [...new Set(types.filter(Boolean).map((t) => t.replaceAll("_", " ")))].slice(0, 3), open: row.status === "proposed" };
+  }
+
   async preview(to: string): Promise<void> {
     await this.send(to, firstSteps(3), "preview");
     await this.send(to, limitReached(this.d.baseUrl, `${this.d.baseUrl}/account?upgrade=1`, "2026-11-13"), "preview");
@@ -426,17 +441,44 @@ function paidLimit(base: string, plan: "plus" | "pro", link: string | null, open
   return upgradeEmail({ subject: "Using Camberstack on more Google Ads accounts", stopped, pitch: pitch, link, cta: `Switch to ${next}`, free: keep, base });
 }
 
-/** The change cap stopped an apply: when the next one opens (the date the stop named), and Plus's unlimited changes. `afterAccountEmail`: limit_reached (or switch_wanted) went earlier. */
-function changeLimit(base: string, plus: string | null, upgrade: string | null, opens?: string, afterAccountEmail = false) {
+/** What the cap stopped, without its Ads data: how many changes and of which types, and whether it's still waiting. */
+type Stopped = { changes: number; kinds: string[]; open: boolean };
+
+/**
+ * The change cap stopped an apply (copy: operator, 2026-11-23). Leads with what they approved and that it's waiting; waiting for
+ * the next free change is one line at the end. The old copy ("nothing is lost", "reading and proposing are never limited")
+ * argued against paying, and its 2 recipients didn't click. `afterAccountEmail`: limit_reached (or switch_wanted) went earlier.
+ */
+function changeLimit(base: string, plus: string | null, upgrade: string | null, opens?: string, afterAccountEmail = false, stopped: Stopped | null = null) {
   const when = whenLabel(opens);
-  // After the account-limit email, say this is a different limit: two upgrade emails otherwise read as the same one sent twice.
-  const stopped = `${afterAccountEmail ? "This is a different limit from the one-account one I wrote about before. " : ""}Camberstack stopped a change you approved: the Free plan includes ${freeChanges()}, and you've used them`
-    + `${when ? `. The next one opens on ${when}` : ""}. The proposal is still open, so nothing is lost.`;
+  const what = stopped ? `a proposal of ${stopped.changes} change${stopped.changes === 1 ? "" : "s"}${stopped.kinds.length ? ` (${stopped.kinds.join(", ")})` : ""}` : "a change";
+  const waiting = !stopped || stopped.open;
+  const head = `${afterAccountEmail ? "This is a different limit from the one-account one I wrote about before. " : ""}You approved ${what} in Camberstack, `
+    + `but it wasn't applied: Free includes ${freeChanges()} and you've used them.${waiting ? " It's still waiting, ready to go." : ""}`;
+  const now = waiting ? "applies it now" : "has";
   const pitch = plus
-    ? `Camberstack Plus has unlimited changes on one Google Ads account, for ${PLUS_PRICE_LABEL}; cancel any time. Pro (${PRO_PRICE_LABEL}) does the same on up to ${PRO_ACCOUNTS} accounts.`
-    : `Camberstack Pro has unlimited changes on up to ${PRO_ACCOUNTS} Google Ads accounts, for ${PRO_PRICE_LABEL}; cancel any time.`;
-  const free = `On Free, ${FREE_TOOLS} keeps working: asking, reading and proposing are never limited, and undo and history always work.`;
-  return upgradeEmail({ subject: "Your free Camberstack changes for this month", stopped, pitch, link: plus ?? upgrade, cta: plus ? "Get Plus" : "Upgrade to Pro", free, base });
+    ? `Plus ${now}${waiting ? ", with" : ""} unlimited changes on one Google Ads account, for ${PLUS_PRICE_LABEL}. Cancel any time.`
+    : `Pro ${now}${waiting ? ", with" : ""} unlimited changes on up to ${PRO_ACCOUNTS} Google Ads accounts, for ${PRO_PRICE_LABEL}. Cancel any time.`;
+  const cta = plus ? (waiting ? "Apply it with Plus" : "Get Plus") : (waiting ? "Apply it with Pro" : "Upgrade to Pro");
+  const link = plus ?? upgrade;
+  const wait = `${when ? `If you'd rather wait, your next free change opens on ${when}. ` : ""}Questions? Just reply.`;
+  return {
+    subject: "Your Google Ads change wasn't applied",
+    text: `Hi,
+
+${head}
+
+${pitch}
+${link ? `${link}\n(personal link, valid for 7 days)` : `${base}/account?upgrade=1`}
+
+${wait}
+
+Adam
+Camberstack`,
+    html: wrap(p("Hi,") + p(head) + p(pitch)
+      + `<p style="margin:0 0 18px"><a href="${link ?? `${base}/account?upgrade=1`}" style="display:inline-block;background:#1f5f4a;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600">${cta}</a></p>`
+      + p(wait) + p("Adam<br>Camberstack")),
+  };
 }
 
 /** Plain on purpose: it should read like Adam wrote it, and replies go straight to him. Never says how many users there are. */
