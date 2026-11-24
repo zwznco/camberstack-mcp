@@ -3577,6 +3577,7 @@ describe("OAuth + MCP end to end", () => {
       db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(JSON.stringify({ ...JSON.parse(gptInfo), redirect_uris: ["https://chatgpt.com/connector/oauth/cap"] }), gptClient);
       const gpt = await call(t, "apply_changes", { proposal_id: third });
       expect(gpt.json).toMatchObject({ stop: "change_limit", plans_page: expect.stringContaining("/plans") });
+      expect(gpt.text).toContain("give the user the plans_page link");
       expect(gpt.text.replace(/http:\/\/localhost:\d+\/plans\?t=[\w.-]+/g, "")).not.toMatch(/\bFree plan\b|\bPro\b|\bPlus\b|\$|upgrade/i);
       db.prepare("UPDATE clients SET info = ? WHERE client_id = ?").run(gptInfo, gptClient);
       // A retry while the same proposal's claim is still being written isn't stopped: it isn't over the cap, it's applying.

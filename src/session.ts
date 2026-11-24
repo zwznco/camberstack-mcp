@@ -1925,7 +1925,9 @@ export class UserSession {
     const head = `${CHANGE_LIMIT_PREFIX} nothing was applied. ${plan} includes ${cap} applied changes every `
       + `${ACCOUNT_WINDOW_DAYS} days (each change in a proposal counts), ${why} Proposal ${p.id} stays open. `
       + "Reading, proposing, undo and change history keep working. Tell the user, and don't retry the apply.";
-    if (this.chatgpt) throw new SwitchNotice(`${head} Unlimited changes need a different plan (plans_page).`, { ...common, plans_page: this.plansPage });
+    // Says to hand over the link, as requirePlus does: "(plans_page)" in passing reached no one (0 of 4 stopped ChatGPT users
+    // opened /plans, 2026-11-23; PRICING-TEST.md).
+    if (this.chatgpt) throw new SwitchNotice(`${head} Unlimited changes need a different plan: give the user the plans_page link, it describes the plans.`, { ...common, plans_page: this.plansPage });
     const plusUrl = this.plusOffered ? this.deps.billingLink?.("plus", this.user.id) ?? null : null;
     const proUrl = this.deps.billingLink?.("upgrade", this.user.id) ?? null;
     if (plusUrl) throw new SwitchNotice(`${head} Plus (${PLUS_PRICE_LABEL}) has unlimited changes on 1 Google Ads account, so this proposal can be applied right away; `
