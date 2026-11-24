@@ -57,10 +57,12 @@ describe("conversions that stopped", () => {
 
 describe("short calls", () => {
   const call = (s: number, status = "RECEIVED") => ({ callView: { callDurationSeconds: String(s), callStatus: status } });
-  const action = { conversionAction: { name: "Calls from ads", type: "AD_CALL", phoneCallDurationSeconds: "60" } };
-  it("counts answered calls under the action's call length", () => {
-    expect((shortCalls([action], [call(20), call(59), call(61), call(5, "MISSED")]) as any).short_calls_not_counted.actions)
-      .toEqual([{ conversion_action: "Calls from ads", counts_calls_of_at_least_seconds: 60, answered_calls_last_30_days: 3, shorter_so_not_counted: 2 }]);
+  const action = { conversionAction: { id: "71", name: "Calls from ads", type: "AD_CALL", phoneCallDurationSeconds: "60" } };
+  it("counts answered calls under the action's call length, and what each shorter length would count", () => {
+    const r = shortCalls([action], [call(20), call(59), call(61), call(5, "MISSED")]) as any;
+    expect(r.short_calls_not_counted.actions).toEqual([{ conversion_action: "Calls from ads", conversion_action_id: "71", counts_calls_of_at_least_seconds: 60,
+      answered_calls_last_30_days: 3, shorter_so_not_counted: 2, would_count_at: { "10s": 3, "20s": 3, "30s": 2, "45s": 2 } }]);
+    expect(r.short_calls_not_counted.note).toMatch(/set_conversion_settings with call_min_seconds/);
   });
   it("says nothing without call conversions or short calls", () => {
     expect(shortCalls([], [call(5)])).toEqual({});

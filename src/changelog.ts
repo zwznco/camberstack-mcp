@@ -7,6 +7,14 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.49.1", date: "2026-11-24",
+    summary: "When short answered calls from your ads aren't counted as conversions, your AI can now change the call length, with undo.",
+    items: [
+      "**Call length** (`set_conversion_settings`, new `call_min_seconds`): how long a call from your ads must last to count as a conversion, for call conversion actions. Undo puts the old length back.",
+      "**`account_overview`'s short-calls check** now names the conversion action and shows how many of last month's answered calls each shorter length would have counted, so you can pick one.",
+    ],
+  },
+  {
     version: "0.49.0", date: "2026-11-24",
     summary: "When conversions stop recording, conversion_tracking now says how to fix each one, so your AI can propose the fix, not just name the problem.",
     items: [

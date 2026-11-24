@@ -20,7 +20,7 @@ import { NotGrantedError, grantName } from "./google.js";
 import { adsReport, campaignDetails, conversionTracking, keywordsReport, searchTerms } from "./reads.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.49.0";
+export const SERVER_VERSION = "0.49.1";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; performance_trend (Plus and above) for what changed lately and why; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -357,9 +357,9 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
 
   tool("conversion_tracking", {
     title: "Conversion tracking",
-    description: "How the account counts conversions: every conversion action (primary or secondary, type, source, counting, value, lookback, "
-      + "attribution, GA4 event) with its conversions in the window and last conversion date, the account's auto-tagging and conversion "
-      + "settings, the goals bidding uses, a `watch` list (no primary action, primary actions that recorded nothing), and `fix`: steps per problem, naming the change to propose.",
+    description: "How the account counts conversions: every conversion action (primary or not, type, source, counting, value, lookback, "
+      + "attribution, GA4 event) with its conversions and last conversion date, auto-tagging and conversion "
+      + "settings, the goals bidding uses, a `watch` list of problems, and `fix`: steps for each, naming the change to propose.",
     inputSchema: { customer_id: customerId, days },
     annotations: read,
   }, ({ customer_id, days }: { customer_id: string; days: number }) =>

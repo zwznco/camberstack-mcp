@@ -124,20 +124,28 @@ export function stoppedConversions(actionRows: any[], countRows: any[], today: s
  * Calls from ads (call_view) shorter than the call conversion action's minimum length, so they never counted.
  * call_view covers calls from call ads and call assets only; website calls aren't in it.
  */
+/** Call lengths offered in would_count_at, below the action's own. */
+const CALL_LENGTHS = [10, 20, 30, 45, 60, 90];
+
 export function shortCalls(actionRows: any[], callRows: any[]) {
   const actions = actionRows.filter((r) => r.conversionAction?.type === "AD_CALL" && Number(r.conversionAction.phoneCallDurationSeconds) > 0);
   if (!actions.length) return {};
   const received = callRows.filter((r) => r.callView?.callStatus === "RECEIVED");
   if (!received.length) return {};
+  const secs = received.map((c) => Number(c.callView?.callDurationSeconds ?? 0));
   const out = actions.map((r) => {
     const min = Number(r.conversionAction.phoneCallDurationSeconds);
-    return { conversion_action: r.conversionAction.name, counts_calls_of_at_least_seconds: min, answered_calls_last_30_days: received.length,
-      shorter_so_not_counted: received.filter((c) => Number(c.callView?.callDurationSeconds ?? 0) < min).length };
+    // How many answered calls each shorter length would have counted, so the user can pick one (2026-11-24).
+    const would = Object.fromEntries(CALL_LENGTHS.filter((t) => t < min).map((t) => [`${t}s`, secs.filter((s) => s >= t).length]));
+    return { conversion_action: r.conversionAction.name, conversion_action_id: String(r.conversionAction.id ?? ""), counts_calls_of_at_least_seconds: min,
+      answered_calls_last_30_days: received.length, shorter_so_not_counted: secs.filter((s) => s < min).length,
+      ...(Object.keys(would).length ? { would_count_at: would } : {}) };
   }).filter((x) => x.shorter_so_not_counted > 0);
   if (!out.length) return {};
   return { short_calls_not_counted: { actions: out,
-    note: "Answered calls from ads shorter than the action's call length don't count as conversions. If short calls are real "
-      + "leads for this business, lower the call length in the conversion action's settings." } };
+    note: "Answered calls from ads shorter than the action's call length don't count as conversions. If short calls are real leads "
+      + "for this business (a booking, a quote), ask the user which length counts as a lead, then propose set_conversion_settings with "
+      + "call_min_seconds: would_count_at shows how many of these calls each length would have counted. Undo puts the old length back." } };
 }
 
 // ---------------------------------------------------------------- attorney advertising wording

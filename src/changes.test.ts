@@ -234,6 +234,15 @@ describe("schedules, devices, assets, AI Max, conversion settings", () => {
     expect(r.operations).toEqual([{ update: { resourceName: "customers/1/conversionActions/7", valueSettings: { defaultValue: 9 } }, updateMask: "value_settings.default_value" }]);
     expect(r.inverse).toEqual({ type: "set_conversion_settings", conversion_action_id: "7", default_value: 5 });
   });
+  it("set_conversion_settings changes a call action's length, undoes it, and refuses it on other types", async () => {
+    const row = (type: string) => ({ async search(): Promise<any[]> { return [{ conversionAction: { name: "Calls", type, phoneCallDurationSeconds: "60",
+      attributionModelSettings: { attributionModel: "GOOGLE_ADS_LAST_CLICK" } } }]; } });
+    const r = await resolveChange(row("AD_CALL"), "1", null, { type: "set_conversion_settings", conversion_action_id: "7", call_min_seconds: 30 });
+    expect(r.operations).toEqual([{ update: { resourceName: "customers/1/conversionActions/7", phoneCallDurationSeconds: "30" }, updateMask: "phone_call_duration_seconds" }]);
+    expect(r.describe).toMatch(/30s or more \(was 60s\)/);
+    expect(r.inverse).toEqual({ type: "set_conversion_settings", conversion_action_id: "7", call_min_seconds: 60 });
+    await expect(resolveChange(row("WEBPAGE"), "1", null, { type: "set_conversion_settings", conversion_action_id: "7", call_min_seconds: 30 })).rejects.toThrow("only for AD_CALL");
+  });
 });
 
 describe("remarketing, recommendations, review requests", () => {

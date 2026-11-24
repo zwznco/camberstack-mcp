@@ -249,14 +249,14 @@ export const PUBLIC_CHANGES = [
     language_ids: z.array(id).min(1).max(20).default(["1000"]).describe("Google language ids, e.g. 1000 English"),
     presence_only: z.boolean().default(true).describe("Show ads only to people IN the locations (true), not merely interested in them"),
     ad_groups: z.array(displayAdGroupSpec).min(1).max(5),
-  }).describe("Build a new Display campaign (image ads across Google's Display Network of sites and apps) with ad groups and responsive display ads. Google's optimized targeting finds the audience. It is created PAUSED: nothing spends until a separate enable_campaign"),
+  }).describe("Build a new Display campaign (image ads across Google's Display Network) with ad groups and responsive display ads. Google's optimized targeting finds the audience. It is created PAUSED: nothing spends until a separate enable_campaign"),
   z.object({
     type: z.literal("create_demand_gen_campaign"),
     ...shared,
     bidding: z.enum(["MAXIMIZE_CONVERSIONS", "MAXIMIZE_CLICKS"]).default("MAXIMIZE_CONVERSIONS")
       .describe("Demand Gen bids automatically: MAXIMIZE_CONVERSIONS (needs conversion tracking) or MAXIMIZE_CLICKS"),
     ad_groups: z.array(demandGenAdGroupSpec).min(1).max(5),
-  }).describe("Build a new Demand Gen campaign with YouTube video ads, which is how to advertise on YouTube through the API (Google doesn't allow creating Video campaigns there). It is created PAUSED: nothing spends until a separate enable_campaign"),
+  }).describe("Build a new Demand Gen campaign with YouTube video ads, the API's way onto YouTube (Google doesn't allow creating Video campaigns there). It is created PAUSED: nothing spends until a separate enable_campaign"),
   z.object({
     type: z.literal("create_performance_max_campaign"),
     ...shared,
@@ -342,7 +342,7 @@ export const PUBLIC_CHANGES = [
       .describe("UPLOAD_CLICKS: your server uploads ad click ids (no Google tag). WEBPAGE: Google gives you a tag to put on the page. "
         + "AD_CALL: calls from the phone number in ads (call assets). WEBSITE_CALL: calls to a Google forwarding number on the site (needs Google's tag)"),
     call_min_seconds: z.number().int().min(0).max(10000).optional()
-      .describe("AD_CALL and WEBSITE_CALL only: how long a call must last to count (default 60)"),
+      .describe("Call sources only: seconds a call must last (default 60)"),
     counting: z.enum(["ONE_PER_CLICK", "MANY_PER_CLICK"]).default("ONE_PER_CLICK").describe("ONE_PER_CLICK for sign-ups and leads; MANY_PER_CLICK for purchases"),
     primary: z.boolean().default(true).describe("Primary actions count in Conversions and can steer bidding"),
     default_value: z.number().min(0).max(1_000_000).optional().describe("Value per conversion when none is sent"),
@@ -412,8 +412,9 @@ export const PUBLIC_CHANGES = [
     .describe("Turn AI Max and automatically created text on or off for a campaign. Give only what changes"),
   z.object({ type: z.literal("set_conversion_settings"), conversion_action_id: id.describe("conversion_action.id from run_gaql"),
     default_value: z.number().min(0).max(1_000_000).optional(), click_window_days: z.number().int().min(1).max(90).optional().describe("Days after a click a conversion still counts"),
-    attribution: z.enum(["LAST_CLICK", "DATA_DRIVEN"]).optional() })
-    .describe("Change a conversion action's value, counting window or attribution. Give only what changes"),
+    attribution: z.enum(["LAST_CLICK", "DATA_DRIVEN"]).optional(),
+    call_min_seconds: z.number().int().min(0).optional() })
+    .describe("Change a conversion action's value, window, attribution or call length. Give only what changes"),
   z.object({ type: z.literal("create_remarketing_list"), name: z.string().min(1).max(255), url_contains: z.string().min(1).max(512).describe("Visitors to pages whose URL contains this join the list, e.g. example.com"),
     membership_days: z.number().int().min(1).max(540).default(30).describe("How long a visitor stays on the list") })
     .describe("Create a list of the site's visitors, from the Google tag on the site. No customer data is uploaded"),
@@ -1662,13 +1663,13 @@ export async function resolveChange(
         describe: `Put campaign ${change.campaign_id}'s AI Max and automation settings back` };
     case "set_conversion_settings": {
       const a = await one(`SELECT conversion_action.name, conversion_action.type, conversion_action.value_settings.default_value, conversion_action.click_through_lookback_window_days,
-          conversion_action.attribution_model_settings.attribution_model FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`, `Conversion action ${change.conversion_action_id} not found`);
+          conversion_action.attribution_model_settings.attribution_model, conversion_action.phone_call_duration_seconds FROM conversion_action WHERE conversion_action.id = ${change.conversion_action_id}`, `Conversion action ${change.conversion_action_id} not found`);
       const c = a.conversionAction;
       if (ANALYTICS_IMPORT.test(String(c.type))) throw new Error(`Conversion action "${c.name}" is imported (${c.type}), so its settings come from there, and Google won't change them through the API.`);
       const MODEL = { LAST_CLICK: "GOOGLE_ADS_LAST_CLICK", DATA_DRIVEN: "GOOGLE_SEARCH_ATTRIBUTION_DATA_DRIVEN" } as const;
       const model = c.attributionModelSettings?.attributionModel;
       const fields: Record<string, unknown> = {}, mask: string[] = [], said: string[] = [];
-      const undo: { default_value?: number; click_window_days?: number; attribution?: "LAST_CLICK" | "DATA_DRIVEN" } = {};
+      const undo: { default_value?: number; click_window_days?: number; attribution?: "LAST_CLICK" | "DATA_DRIVEN"; call_min_seconds?: number } = {};
       if (change.default_value !== undefined && change.default_value !== c.valueSettings?.defaultValue) {
         fields.valueSettings = { defaultValue: change.default_value }; mask.push("value_settings.default_value"); undo.default_value = c.valueSettings?.defaultValue ?? 0;
         said.push(`value ${c.valueSettings?.defaultValue ?? 0} to ${change.default_value}`);
@@ -1682,6 +1683,15 @@ export async function resolveChange(
         if (!old) throw new Error(`Conversion action "${c.name}" uses ${model}, which Camberstack can't put back on undo; change it in Google Ads.`);
         fields.attributionModelSettings = { attributionModel: MODEL[change.attribution] }; mask.push("attribution_model_settings.attribution_model"); undo.attribution = old;
         said.push(`attribution ${old} to ${change.attribution}`);
+      }
+      // Call length (2026-11-24): account_overview's short_calls_not_counted pointed here, but nothing could change it.
+      if (change.call_min_seconds !== undefined) {
+        if (!/^(AD_CALL|WEBSITE_CALL)$/.test(String(c.type))) throw new Error(`call_min_seconds is only for AD_CALL and WEBSITE_CALL conversion actions; "${c.name}" is ${c.type}.`);
+        const was = Number(c.phoneCallDurationSeconds ?? 60);
+        if (change.call_min_seconds !== was) {
+          fields.phoneCallDurationSeconds = String(change.call_min_seconds); mask.push("phone_call_duration_seconds"); undo.call_min_seconds = was;
+          said.push(`counts calls of ${change.call_min_seconds}s or more (was ${was}s)`);
+        }
       }
       return {
         change, service: "conversionActions", operations: mask.length ? [{ update: { resourceName: `customers/${customerId}/conversionActions/${change.conversion_action_id}`, ...fields }, updateMask: mask.join(",") }] : [],
