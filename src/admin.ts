@@ -8,7 +8,7 @@ import type { DB } from "./db.js";
 import type { GoogleCreds } from "./google.js";
 import { SignIn } from "./signin.js";
 import { startLoginAs } from "./account.js";
-import { buildReport, capUsage, type CapRow, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, SWITCH_DAYS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
+import { buildReport, capUsage, type CapRow, MONTHLY, permissionLabels, RETENTION_WEEKS, SCOPE_LABELS, userDetail, windowStart, type Report, type UserDetail } from "./report.js";
 import { now } from "./db.js";
 import { DEMO_CID } from "./demo.js";
 import { GA_TARGET } from "./ga4-changes.js";
@@ -434,16 +434,16 @@ function askedPlansCard(v: View): string {
   return card("Asked about plans", table(["user", ["asks", "r"], ["last asked", "r"], ["last seen", "r"]],
     v.report.askedPlans.map((a) => [`${userLink(v, a.id, a.email)}${a.clicks ? ` <span class="chip" title="opened plans or an upgrade link ${a.clicks}×">clicked</span>` : ""}`,
       num(a.asks), `<span class="r">${when(a.last)}</span>`, `<span class="r">${when(a.last_seen_at)}</span>`]),
-    "Nobody has asked about plans without buying."),
-    `<small title="Not paying, and their AI called billing (asks) or they opened plans or an upgrade link (clicked). 5 of the first 6 payers called billing just before paying.">not paying · all time</small>`);
+    `Nobody has asked about plans without buying ${inW(v.days)}.`),
+    `<small title="Not paying, and their AI called billing (asks) or they opened plans or an upgrade link (clicked). 5 of the first 6 payers called billing just before paying.">not paying · ${lastW(v.days)}</small>`);
 }
 
 /** Users who tried to move to another Google Ads account after their first day (report.ts switching). */
 function switchingCard(v: View): string {
   return card("Tried to switch accounts", table(["user", ["last tried", "r"]],
     v.report.switching.map((s) => [`${userLink(v, s.id, s.email)} ${planBadge(s.plan, true)}`, `<span class="r">${when(s.last)}</span>`]),
-    "Nobody tried to switch accounts."),
-    `<small title="After their first day: switch_account to a different Google Ads account than the one their plan covers, or stopped by the account limit. A first pick doesn't count.">last ${SWITCH_DAYS}d</small>`);
+    `Nobody tried to switch accounts ${inW(v.days)}.`),
+    `<small title="After their first day: switch_account to a different Google Ads account than the one their plan covers, or stopped by the account limit. A first pick doesn't count.">${lastW(v.days)}</small>`);
 }
 
 /** Accounts used (all time, demo excluded) over those the login can reach, managers counted on both sides since tool_calls

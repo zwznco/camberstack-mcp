@@ -158,20 +158,20 @@ export function buildReport(db: DB, o: ReportOptions) {
       `SELECT count(*) n, coalesce(sum(u.paid_ended_at >= ?), 0) in_window FROM {U} u WHERE u.paid_ended_at IS NOT NULL AND NOT (${PAYING})`, since)[0]!,
     /**
      * Users not paying who asked about plans: their AI called billing, or they opened the plans page or an upgrade link
-     * (plan_events). 5 of 6 payers called billing just before paying (2026-11-13), so this is the warm list. All time,
-     * newest ask first.
+     * (plan_events). 5 of 6 payers called billing just before paying (2026-11-13), so this is the warm list. In the window
+     * (asks and clicks counted there too), newest ask first.
      */
     askedPlans: q<{ id: string; email: string; asks: number; clicks: number; last: number; last_seen_at: number | null }>(
       `SELECT u.id, u.email,
-         (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing') asks,
-         (SELECT count(*) FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click')) clicks,
-         max(coalesce((SELECT max(at) FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing'), 0),
-             coalesce((SELECT max(at) FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click')), 0)) last,
+         (SELECT count(*) FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing' AND c.at >= ?) asks,
+         (SELECT count(*) FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click') AND p.at >= ?) clicks,
+         max(coalesce((SELECT max(at) FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing' AND c.at >= ?), 0),
+             coalesce((SELECT max(at) FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click') AND p.at >= ?), 0)) last,
          u.last_seen_at
        FROM {U} u WHERE NOT (${PAYING})
-         AND (EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing')
-           OR EXISTS (SELECT 1 FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click')))
-       ORDER BY last DESC`),
+         AND (EXISTS (SELECT 1 FROM tool_calls c WHERE c.user_id = u.id AND c.tool = 'billing' AND c.at >= ?)
+           OR EXISTS (SELECT 1 FROM plan_events p WHERE p.user_id = u.id AND p.kind IN ('plans_view', 'upgrade_click') AND p.at >= ?))
+       ORDER BY last DESC`, since, since, since, since, since, since),
     payingByPlan: q<{ plan: string; n: number }>(`SELECT u.plan, count(*) n FROM {U} u WHERE ${PAYING} GROUP BY 1 ORDER BY 1`),
     // Counted on its own: summing `errors` would stop at its 15 groups and undercount wide windows.
     errorsInWindow: n("SELECT count(*) n FROM tool_calls c JOIN {U} u ON u.id = c.user_id WHERE c.at >= ? AND c.ok = 0", since),
@@ -253,7 +253,7 @@ export function buildReport(db: DB, o: ReportOptions) {
          GROUP BY m.value HAVING count(DISTINCT u.id) > 1
        ORDER BY last DESC`),
     /**
-     * Who tried to move to another Google Ads account after their first day, in the last SWITCH_DAYS: a switch_account (choose_account on ChatGPT) to
+     * Who tried to move to another Google Ads account after their first day, in the window: a switch_account (choose_account on ChatGPT) to
      * a different account than the one they last ran a call on in the plan's current window (ACCOUNT_WINDOW_DAYS, and since
      * plan_reset_at), or a stop by the account gate (Plan limit, and the old Account switch notice). Not a first pick after
      * the Account choice notice (2026-11-09: a pick after a reset by hand read as a switch), a re-pick of the current account, or
@@ -278,7 +278,7 @@ export function buildReport(db: DB, o: ReportOptions) {
             AND ${ON_ADS} AND c.at >= ?) used,
          max(CASE WHEN e.switched OR (e.stopped AND coalesce(u.ads_accounts, 2) > 1) THEN e.at END) last
        FROM {U} u JOIN e ON e.user_id = u.id
-       GROUP BY u.id HAVING switches + stops > 0 ORDER BY last DESC`, now() - SWITCH_DAYS * 86400, now() - SWITCH_DAYS * 86400),
+       GROUP BY u.id HAVING switches + stops > 0 ORDER BY last DESC`, since, since),
     churn: churn(q),
     recent: q<{ at: number; email: string; tool: string; customer_id: string | null; ok: number; error: string | null; ms: number; client: string; flags: string | null }>(
       `SELECT c.at, u.email, c.tool, c.customer_id, c.ok, substr(c.error, 1, 300) error, c.ms, ${client} client, c.flags
@@ -295,8 +295,6 @@ export function buildReport(db: DB, o: ReportOptions) {
 export type Report = ReturnType<typeof buildReport>;
 
 export const RETENTION_WEEKS = 8;
-/** The switching card (report.ts switching): how far back it looks. */
-export const SWITCH_DAYS = 14;
 
 /** A return: active again after at least this many UTC days (1 is the next day, which is ongoing use, not a return). */
 const RETURN_MIN_DAYS = 2;

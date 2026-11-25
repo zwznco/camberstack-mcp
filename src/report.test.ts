@@ -70,6 +70,18 @@ describe("buildReport", () => {
     expect(buildReport(seed(), { days: 1, exclude: [] }).errorsInWindow).toBe(2);
   });
 
+  it("lists users who asked about plans in the window only, counting asks and clicks there", () => {
+    const db = seed(), t = now(), D = 86400;
+    const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at) VALUES (?, ?, ?, 'free', ?)");
+    for (const id of ["recent", "old"]) u.run(id, id, `${id}@x.com`, t - 60 * D);
+    const c = db.prepare("INSERT INTO tool_calls (at, user_id, tool, customer_id, ok, error, ms, bytes) VALUES (?, ?, 'billing', NULL, 1, NULL, 1, 1)");
+    c.run(t - 20 * D, "recent"); c.run(t - 60, "recent"); c.run(t - 20 * D, "old");
+    db.prepare("INSERT INTO plan_events (user_id, kind, at) VALUES ('old', 'plans_view', ?)").run(t - 10 * D);
+    const asked = (days: number) => buildReport(db, { days, exclude: [] }).askedPlans.map((a) => [a.id, a.asks, a.clicks]);
+    expect(asked(1)).toEqual([["recent", 1, 0]]);
+    expect(asked(30)).toEqual([["recent", 2, 0], ["old", 1, 1]]);
+  });
+
   it("lists real switch attempts after the first day: a different account or a gate stop, not a first pick, a re-pick or listing", () => {
     const db = seed(), t = now(), D = 86400;
     const u = db.prepare("INSERT INTO users (id, google_sub, email, plan, created_at, ads_accounts) VALUES (?, ?, ?, 'free', ?, ?)");
