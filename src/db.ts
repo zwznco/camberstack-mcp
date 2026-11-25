@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   error        TEXT,            -- first 1000 chars of the message shown to the AI (300 before 2026-10-15)
   ms           INTEGER NOT NULL,
   bytes        INTEGER NOT NULL, -- size of the result text
-  query_shape  TEXT,             -- run_gaql only: the query with every value replaced by ? (gaql.ts queryShape)
+  query_shape  TEXT,             -- run_gaql and merchant_report: the query with every value replaced by ? (gaql.ts queryShape)
   service      TEXT              -- Google services a real (non-demo) call used, comma-joined (tools.ts servicesOf), for the reports
 );
 CREATE INDEX IF NOT EXISTS tool_calls_at ON tool_calls(at);

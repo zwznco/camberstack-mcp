@@ -7,6 +7,15 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.49.2", date: "2026-11-25",
+    summary: "When a Merchant Center report query fails, your AI is told everything that's wrong with it at once, so it fixes it in one try.",
+    items: [
+      "**`merchant_report` errors** now add what Google's published Merchant field list finds: every field a view requires in SELECT, every condition it requires in WHERE (with the allowed values), and the view's real fields when a name doesn't exist. Google's own message names one problem per try; best-seller reports took four tries.",
+      "**`merchant_report`'s description** names what the price competitiveness, price insights and best sellers views require, and adds `best_sellers_brand_view`.",
+      "**Privacy:** the usage log now keeps the shape of a custom Merchant Center query, as it does for a custom Google Ads query: which fields and views it asked for, with every value removed. The privacy policy says so (updated 2026-11-25).",
+    ],
+  },
+  {
     version: "0.49.1", date: "2026-11-24",
     summary: "When short answered calls from your ads aren't counted as conversions, your AI can now change the call length, with undo.",
     items: [

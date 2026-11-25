@@ -20,7 +20,7 @@ import { NotGrantedError, grantName } from "./google.js";
 import { adsReport, campaignDetails, conversionTracking, keywordsReport, searchTerms } from "./reads.js";
 
 const SERVER_NAME = "camberstack";
-export const SERVER_VERSION = "0.49.1";
+export const SERVER_VERSION = "0.49.2";
 
 const INSTRUCTIONS = `Camberstack connects the user's Google Ads account.
 Start with list_accounts. Answer the user's questions with account_overview, campaign_details, conversion_tracking, search_terms_report, ads_report and keywords_report; performance_trend (Plus and above) for what changed lately and why; run_gaql (read-only) for anything they don't cover. To change something: propose_changes → show the user the summary and ask for approval → apply_changes.
@@ -154,7 +154,7 @@ interface ToolCall {
   error: string | null;
   ms: number;
   bytes: number;
-  /** run_gaql only: gaql.ts queryShape, never the values. */
+  /** run_gaql and merchant_report (MCQL quotes values the same way): gaql.ts queryShape, never the values. */
   queryShape?: string | null;
   /** servicesOf, comma-joined, on a call that ran (null when it used none, or was refused). */
   service?: string | null;
@@ -244,7 +244,7 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
           tool: name, customerId: typeof cid === "string" && !notice && !preview ? (cid.startsWith("mc:") ? cid : cid.replace(/-/g, "")) : null,
           ok: !("isError" in out), error: "isError" in out ? out.content[0]!.text.slice(7, 1007) : notice?.slice(0, 1000) ?? null,
           ms: Date.now() - t0, bytes: out.content[0]!.text.length,
-          queryShape: name === "run_gaql" && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
+          queryShape: (name === "run_gaql" || name === "merchant_report") && typeof (a as { query?: unknown })?.query === "string" ? queryShape((a as { query: string }).query) : null,
           service: services.length && !("isError" in out) && !notice && !preview ? services.join(",") : null,
           // A result's grant_url (search_console_sites, analytics_properties, …) names only the service, never edit.
           grantOffered: offered ?? GRANT_LINK.exec(out.content[0]!.text)?.[1] ?? null,

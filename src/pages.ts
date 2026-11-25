@@ -25,7 +25,7 @@ const serviceCost = (name: string, extra = "") => `${name} is included on every 
 
 const CONTACT = "adam@camberstack.io";
 // Each policy keeps its own date: changing the terms mustn't re-date a privacy policy Google is reviewing.
-const PRIVACY_UPDATED = "2026-11-11"; // Tag Manager
+const PRIVACY_UPDATED = "2026-11-25"; // Merchant Center query shapes in the usage log
 const TERMS_UPDATED = "2026-11-11"; // Tag Manager went public
 
 const CSS = `
@@ -1693,7 +1693,7 @@ Humans at Camberstack do not read your Google data unless you ask us to for supp
 <tr><td>Merchant Center product changes you approve: the values you set for a product, and for products you create through Camberstack, their details (such as title, price and link)</td><td>Google can't return these, so we keep them to show what's in place and to undo a change</td><td>You remove the change or the product, ask us to delete them, or two years without use (not while on a paid plan)</td></tr>
 <tr><td>Feedback you send from camberstack.io/feedback, or through your AI app with <code>send_feedback</code>: your message, what it's about, and your Google email. Your AI app sends only the message you approve, not your conversation</td><td>Read it and reply to you</td><td>You ask us to delete it</td></tr>
 <tr><td>A sign-in session for the feedback page (a cookie; we store only its hash)</td><td>Know who a message is from, so we can reply and keep spam out</td><td>1 day, or until you sign out</td></tr>
-<tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
+<tr><td>A usage log: which tool ran, for which Google Ads account ID, when, how long it took and any error message. For a custom Google Ads or Merchant Center query, which fields and resources it asked for, with every value in it (names, keywords, IDs, dates) removed. Never the tool's other inputs, or any results</td><td>Find and fix failures, see which features are used, and count how many Google Ads accounts you use for your plan</td><td>You ask us to delete it, or two years without use (not while on a paid plan)</td></tr>
 </table>
 <p>Reports, search-term lists, query results, Google Analytics reports, Merchant Center product statuses and reports, and Tag Manager containers' tags and triggers are computed on request and returned to your AI assistant. We do not store them.
 When a proposed ad uses an image URL, we download that image only to upload it to your Google Ads account as an image asset; we do not keep the file.

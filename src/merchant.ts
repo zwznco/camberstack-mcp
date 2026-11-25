@@ -14,8 +14,10 @@
 import type { DB } from "./db.js";
 import { now } from "./db.js";
 import { MerchantApiError, NotGrantedError, fetchGoogle, googleMessage, scopeMissing } from "./google.js";
-import { reportError } from "./sentry.js";
+import { reportBug, reportError } from "./sentry.js";
 import { allPages, withPage } from "./paging.js";
+import { DISCOVERY_URL, checkMcql, mcqlCatalog } from "./mcql.js";
+import { queryShape } from "./gaql.js";
 
 const API = "https://merchantapi.googleapis.com";
 export const DEMO_MERCHANT = "000000001";
@@ -366,9 +368,39 @@ export async function productIssues(m: Merchant, accountId: string, o: { offer_i
   };
 }
 
-export async function merchantReport(m: Merchant, accountId: string, query: string, limit: number) {
+/** What Google's field list (mcql.ts) finds wrong with a query; empty when nothing, or when the list can't be had. */
+async function mcqlFindings(query: string): Promise<string[]> {
+  const cat = await mcqlCatalog(async () => {
+    const res = await fetchGoogle(fetch, DISCOVERY_URL);
+    if (!res.ok) throw new Error(`discovery ${res.status}`);
+    return res.json();
+  });
+  return cat ? checkMcql(query, cat) : [];
+}
+
+export async function merchantReport(m: Merchant, accountId: string, query: string, limit: number,
+  findings: (query: string) => Promise<string[]> = mcqlFindings) {
   if (!/^\s*SELECT\s/i.test(query)) throw new Error("Only SELECT queries: Merchant Center reports are read-only.");
-  const r = await m.search(accountId, query, limit);
+  let r: SearchResult;
+  try {
+    r = await m.search(accountId, query, limit);
+  } catch (e) {
+    // Google names one problem per rejection (a missing required field, an invalid name with no list of valid ones): add
+    // everything the field list finds, so the next query can fix them all at once.
+    if (e instanceof MerchantApiError && e.status === 400) {
+      const f = await findings(query).catch(() => []);
+      if (f.length) e.message += `\nGoogle's Merchant field list: ${f.join(" ")}`;
+    }
+    throw e;
+  }
+  // A finding on a query Google ran is a bug in the check (as run_gaql's): report the shape, never the values, and never
+  // show it. Not on the demo account, whose stand-in accepts queries Google wouldn't.
+  if (accountId !== DEMO_MERCHANT) void findings(query).catch(() => []).then((f) => {
+    if (!f.length) return;
+    const msg = `mcql check false positive: ${f.join(" ")} | ${queryShape(query).slice(0, 300)}`;
+    console.error(msg);
+    reportBug(msg, "merchant_report");
+  });
   return { account_id: accountId, ...demoNote(accountId), row_count: r.rows.length, ...(r.truncated ? { truncated: true } : {}), rows: r.rows };
 }
 
