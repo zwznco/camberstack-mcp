@@ -1414,7 +1414,7 @@ const ADS_MCP_ROWS: [platform: string, official: string, changes: string, add: s
   ["LinkedIn", "None", "—", "Third-party tools only"],
   ["Reddit", "None", "—", "Third-party tools only"],
   ["Google Ads", `Yes, but you host it yourself (<a href="https://github.com/googleads/google-ads-mcp">googleads/google-ads-mcp</a>)`,
-    "Reads everything. Changes are limited to assets and labels: no campaigns, budgets, keywords, negatives or bids",
+    "Read-only for campaigns: it can't change campaigns, budgets, keywords, negatives or bids. Its only changes are adding assets and managing labels",
     "Run it on your own Google Cloud project with your own OAuth client, then add it as a custom connector"],
 ];
 
@@ -1438,7 +1438,7 @@ ${guideHero({
   title: "Don't pay for a Meta or TikTok ads MCP",
   lede: `Meta and TikTok now run their own MCP servers. They connect your ad accounts to Claude or ChatGPT, they can make changes,
 and neither lists a price. Third-party tools that bundle the same platforms charge anywhere from about $20 to several hundred dollars a month.
-Google is the exception: its official server is code you host yourself, and it can't change campaigns, budgets or keywords.
+Google is the exception: its official server is code you host yourself, and it's read-only for campaigns, budgets and keywords.
 That gap is the one Camberstack fills, and the only one we charge for.`,
   ctas: `<a class="btn btn-lg" href="#platforms">See every platform</a><a class="btn btn-lg btn-ghost" href="#google">Why Google is different</a>`,
 })}
@@ -1468,8 +1468,8 @@ numbers in one table.</p>
 
 <h2 id="google">Google Ads: where the official server stops</h2>
 <p>Google's <a href="https://github.com/googleads/google-ads-mcp">open-source Google Ads MCP server</a> is good at reading: it runs any
-Google Ads query. But Google doesn't host it, so you run it yourself on a Google Cloud project with your own OAuth client, and its changes
-are limited to creating assets and managing labels. Adding negative keywords, moving budget, pausing a campaign, changing bids or
+Google Ads query. But Google doesn't host it, so you run it yourself on a Google Cloud project with your own OAuth client, and it's
+read-only for campaigns: its only changes are adding assets and managing labels. Adding negative keywords, moving budget, pausing a campaign, changing bids or
 building a campaign all still happen in Google Ads by hand.</p>
 <p>Camberstack is that missing hosted half:</p>
 <ul>
