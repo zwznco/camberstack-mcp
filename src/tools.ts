@@ -705,7 +705,10 @@ export function buildServer(session: () => UserSession, log: (c: ToolCall) => vo
       + "FROM product_performance_view WHERE date DURING LAST_30_DAYS AND marketing_method = 'ADS' ORDER BY clicks DESC LIMIT 50. "
       + "product_view (current status): id, offer_id, title, brand, price, availability, gtin, feed_label, aggregated_reporting_context_status "
       + "(ELIGIBLE, ELIGIBLE_LIMITED, PENDING, NOT_ELIGIBLE_OR_DISAPPROVED), item_issues, click_potential (LOW, MEDIUM, HIGH); id must be selected. "
-      + "Also price_competitiveness_product_view, price_insights_product_view and best_sellers_product_cluster_view. "
+      + "price_competitiveness_product_view (benchmark_price) needs id and report_country_code selected; price_insights_product_view "
+      + "(suggested_price, effectiveness) needs id. best_sellers_product_cluster_view and best_sellers_brand_view need report_date, "
+      + "report_granularity, report_country_code and report_category_id selected and WHERE report_granularity = 'WEEKLY' (or 'MONTHLY') AND "
+      + "report_country_code = 'US'; ORDER BY rank. "
       + "WHERE joins conditions with AND only (no OR); dates as date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' or date DURING LAST_7_DAYS / LAST_30_DAYS. "
       + "Reports work on standalone accounts and sub-accounts, not on an advanced account itself. Changes nothing.",
     inputSchema: {
