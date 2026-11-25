@@ -197,6 +197,9 @@ nav a{margin-left:12px}nav{white-space:nowrap}
 .btn{padding:9px 14px;font-size:15px;border-radius:7px}
 .btn-danger{padding:9px 14px;font-size:15px}
 .signin{margin:40px auto 56px}.signin .card{padding:28px 20px}
+.stack tr:first-child{display:none}.stack tr{display:block;padding:14px 0;border-bottom:1px solid var(--line)}
+.stack td{display:block;border:0;padding:3px 0;white-space:normal;overflow-wrap:anywhere}.stack td:first-child{font-weight:600;font-size:17px;padding-bottom:6px}
+.stack td[data-label]::before{content:attr(data-label) ": ";font-weight:600}.stack td.none{display:none}
 .fb{margin:24px auto 48px}.fb .card{padding:20px 16px}.fb h1{font-size:24px}.fb .btn{width:100%}
 .big{font-size:22px}
 .change{padding:12px 14px}.change ul{padding-left:18px}.change li,.fold .preview{font-size:15px;line-height:1.5}
@@ -1415,6 +1418,9 @@ const ADS_MCP_ROWS: [platform: string, official: string, changes: string, add: s
     "Run it on your own Google Cloud project with your own OAuth client, then add it as a custom connector"],
 ];
 
+/** A cell of a .stack table: labelled when the row stacks on a phone; a "—" cell is hidden there. */
+const cell = (label: string, html: string) => html === "—" ? `<td class="none">—</td>` : `<td data-label="${label}">${html}</td>`;
+
 export function adsMcpServersPage(baseUrl: string): string {
   const checked = new Date(`${ADS_MCP_CHECKED}T00:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
   return layout({
@@ -1438,8 +1444,8 @@ That gap is the one Camberstack fills, and the only one we charge for.`,
 })}
 ${guideBody(`
 <h2 id="platforms">Which ad platforms have an official MCP server</h2>
-<table><tr><th>Platform</th><th>Official MCP</th><th>What it can change</th><th>How you add it</th></tr>
-${ADS_MCP_ROWS.map(([p, o, c, a]) => `<tr><td>${p}</td><td>${o}</td><td>${c}</td><td>${a}</td></tr>`).join("\n")}
+<table class="stack"><tr><th>Platform</th><th>Official MCP</th><th>What it can change</th><th>How you add it</th></tr>
+${ADS_MCP_ROWS.map(([p, o, c, a]) => `<tr><td>${p}</td>${cell("Official MCP", o)}${cell("What it can change", c)}${cell("How you add it", a)}</tr>`).join("\n")}
 </table>
 <p class="muted small">From each platform's own documentation on ${checked}. These change month to month; if a row is out of date,
 <a href="mailto:${CONTACT}">tell us</a> and we'll fix it.</p>
@@ -1454,10 +1460,11 @@ account. In Claude, TikTok's is a one-click connector from the directory; Meta's
 <ul>
 <li>LinkedIn or Reddit ads, which have no official server</li>
 <li>changes on Microsoft Ads or Snapchat, whose official servers only read for now</li>
-<li>one report across every platform, with the numbers already blended, rather than asking each connector in turn</li>
+<li>reports that refresh on their own, in a dashboard or spreadsheet, without anyone asking an AI</li>
 </ul>
-<p>For everything else, Claude and ChatGPT can hold several connectors in one conversation, so <em>"compare last month's cost per lead on
-Meta and Google"</em> works with the official Meta server and a Google Ads one side by side.</p>
+<p>A report across platforms doesn't need one. Claude and ChatGPT can use several connectors in one conversation, so
+<em>"compare last month's spend and cost per lead on Meta, TikTok and Google"</em> pulls from each platform's server and puts the
+numbers in one table.</p>
 
 <h2 id="google">Google Ads: where the official server stops</h2>
 <p>Google's <a href="https://github.com/googleads/google-ads-mcp">open-source Google Ads MCP server</a> is good at reading: it runs any
@@ -1474,10 +1481,10 @@ building a campaign all still happen in Google Ads by hand.</p>
 
 <h2>For agencies running several platforms</h2>
 <p>Bundled multi-platform tools price their agency plans at around $200 to $280 a month. The other way to cover the same clients:</p>
-<table><tr><th>Platform</th><th>Use</th><th>Cost</th></tr>
-<tr><td>Meta</td><td>Meta's official MCP</td><td>No price listed</td></tr>
-<tr><td>TikTok</td><td>TikTok's official MCP</td><td>No price listed</td></tr>
-<tr><td>Google Ads</td><td>Camberstack Agency</td><td>${AGENCY_PRICE_LABEL} for up to ${AGENCY_ACCOUNTS} Google Ads accounts; manager (MCC) accounts don't count</td></tr></table>
+<table class="stack"><tr><th>Platform</th><th>Use</th><th>Cost</th></tr>
+<tr><td>Meta</td>${cell("Use", "Meta's official MCP")}${cell("Cost", "No price listed")}</tr>
+<tr><td>TikTok</td>${cell("Use", "TikTok's official MCP")}${cell("Cost", "No price listed")}</tr>
+<tr><td>Google Ads</td>${cell("Use", "Camberstack Agency")}<td data-label="Cost">${AGENCY_PRICE_LABEL} for up to ${AGENCY_ACCOUNTS} Google Ads accounts; manager (MCC) accounts don't count</td></tr></table>
 <p>One Google Ads account is free on Camberstack, so you can try it on a client before paying anything.
 <a href="/#pricing">All plans</a>.</p>
 
