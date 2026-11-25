@@ -26,7 +26,7 @@ import { retain } from "./retention.js";
 import { Announcements } from "./announce.js";
 import { Survey } from "./survey.js";
 import { CHANGELOG } from "./changelog.js";
-import { aboutPage, changelogPage, docsPage, errorPage, infoPage, surveyPage, homePage, chatgptGuidePage, chatgptGuidePagePt, chatgptGuidePageEs, claudeGuidePage, geminiGuidePage, llmsTxt, merchantCenterPage, analyticsPage, tagManagerPage, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
+import { aboutPage, changelogPage, docsPage, errorPage, infoPage, surveyPage, homePage, chatgptGuidePage, chatgptGuidePagePt, chatgptGuidePageEs, claudeGuidePage, geminiGuidePage, adsMcpServersPage, llmsTxt, merchantCenterPage, analyticsPage, tagManagerPage, plansPage, privacyPage, robotsTxt, searchConsolePage, SITEMAP_PATHS, sitemapXml, termsPage, toolsPage } from "./pages.js";
 import { setChangeCap } from "./plans.js";
 import { indexNowKey, pageDates, pingIndexNow } from "./lastmod.js";
 import { readCookie } from "./http.js";
@@ -365,6 +365,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     "/google-analytics-mcp": analyticsPage(cfg.baseUrl),
     "/google-merchant-center-mcp": merchantCenterPage(cfg.baseUrl),
     "/google-tag-manager-mcp": tagManagerPage(cfg.baseUrl),
+    "/ads-mcp-servers": adsMcpServersPage(cfg.baseUrl),
     "/docs": docsPage(cfg.baseUrl),
     "/tools": toolsPage(cfg.baseUrl, tools),
     "/changelog": changelogPage(cfg.baseUrl, CHANGELOG),

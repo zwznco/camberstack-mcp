@@ -20,7 +20,7 @@ import { PUBLIC_GTM_CHANGES } from "./gtm-changes.js";
 import { PUBLIC_MC_CHANGES } from "./merchant-changes.js";
 import { SERVER_VERSION, servicesOf } from "./tools.js";
 import { CHANGELOG } from "./changelog.js";
-import { chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, merchantCenterPage, plansPage, searchConsolePage } from "./pages.js";
+import { adsMcpServersPage, chatgptGuidePage, claudeGuidePage, docsPage, geminiGuidePage, homePage, llmsTxt, merchantCenterPage, plansPage, searchConsolePage } from "./pages.js";
 import { parseCapFrom, parseChangeCap, servicesAnd, servicesOr, setChangeCap } from "./plans.js";
 import { CATALOG_QUERY } from "./gaql.js";
 import { reportBug } from "./sentry.js";
@@ -3811,7 +3811,7 @@ describe("OAuth + MCP end to end", () => {
 
   it("says nothing on any page, with the change cap off or on, that the live Free plan makes untrue", () => {
     const render = () => [homePage("https://x.test"), claudeGuidePage("https://x.test"), chatgptGuidePage("https://x.test"), geminiGuidePage("https://x.test"),
-      searchConsolePage("https://x.test"), merchantCenterPage("https://x.test"), docsPage("https://x.test"), plansPage("https://x.test"), llmsTxt("https://x.test", [])].join("\n");
+      searchConsolePage("https://x.test"), merchantCenterPage("https://x.test"), adsMcpServersPage("https://x.test"), docsPage("https://x.test"), plansPage("https://x.test"), llmsTxt("https://x.test", [])].join("\n");
     const off = render();
     setChangeCap(10);
     let on: string;

@@ -235,7 +235,7 @@ ${o.jsonLd ? `<script type="application/ld+json">${JSON.stringify(o.jsonLd)}</sc
 <nav><a href="/docs">Docs</a><a class="nav-hide" href="/#pricing">Pricing</a><a href="/account">Account</a><a class="nav-cta" href="/#setup">Connect</a></nav></div></header>
 <main${o.wide ? "" : ' class="wrap"'}>${o.body}</main>
 <footer><div class="wrap">
-<a href="/docs">Docs</a><a href="/tools">Tools</a><a href="/changelog">Changelog</a><a href="/about">About</a><a href="/feedback">Feedback</a><a href="${SOURCE_URL}">Source code (MIT)</a><a href="/privacy">Privacy policy</a><a href="/terms">Terms</a><a href="mailto:${CONTACT}">${CONTACT}</a>
+<a href="/docs">Docs</a><a href="/tools">Tools</a><a href="/ads-mcp-servers">Ads MCP servers</a><a href="/changelog">Changelog</a><a href="/about">About</a><a href="/feedback">Feedback</a><a href="${SOURCE_URL}">Source code (MIT)</a><a href="/privacy">Privacy policy</a><a href="/terms">Terms</a><a href="mailto:${CONTACT}">${CONTACT}</a>
 <p>Camberstack is independent and not affiliated with or endorsed by Google. Google Ads is a trademark of Google LLC.</p>
 </div></footer>
 <script src="/e.js" defer></script>
@@ -1387,6 +1387,117 @@ ${commonQuestions("Gemini")}
 }
 
 /**
+ * "Which ad platforms have an official MCP": for "meta ads mcp" (12,100/mo), "facebook ads mcp" (3,600), "tiktok ads mcp"
+ * (1,000), worldwide, Keyword Planner via the dev connector, Oct 2026. The honest answer sends Meta and TikTok searchers to
+ * the free official servers, and names Google as the one platform whose official server stops short. Agencies running
+ * several platforms are the buyer. Paid third-party tools are described, never named (operator, 2026-11-25: no free
+ * marketing). Every row is from the platform's own docs on ADS_MCP_CHECKED; recheck each quarter, these move monthly.
+ */
+const ADS_MCP_CHECKED = "2026-11-25";
+const ADS_MCP_ROWS: [platform: string, official: string, changes: string, add: string][] = [
+  ["Meta", `Yes, hosted by Meta at <code>mcp.facebook.com/ads</code> (<a href="https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-overview">docs</a>)`,
+    "Creates, edits and deletes campaigns, ad sets, ads and audiences; rules per ad account can hold it to read-only or approval first",
+    "Added by its URL, signing in with your Meta business login (Meta's docs cover ChatGPT and Claude Code). Meta is still rolling tools out"],
+  ["TikTok", `Yes, TikTok for Business MCP, hosted by TikTok (<a href="https://ads.tiktok.com/help/article/about-tiktok-for-business-mcp-server">docs</a>)`,
+    "Creates campaigns, changes targeting, budgets and bids, pauses",
+    `In <a href="https://claude.com/connectors/tiktok-for-business">Claude's connector directory</a>; no developer key needed`],
+  ["Microsoft Ads", `Yes, hosted by Microsoft, open pilot (<a href="https://learn.microsoft.com/en-us/advertising/guides/mcp-setup">docs</a>)`,
+    "Read-only", "Free; custom connector, after registering your own Microsoft Entra app"],
+  ["Snapchat", `Yes, hosted at <code>mcp.snapchat.com/ads</code> (<a href="https://developers.snap.com/marketing-api/Ads-MCP/Introduction">docs</a>)`,
+    "Read-only for now; changes are planned", "An admin of your Snapchat business approves each AI app"],
+  ["Amazon Ads", `Yes, open beta (<a href="https://advertising.amazon.com/en-us/library/news/amazon-ads-mcp-server-open-beta/">announcement</a>)`,
+    "Creates, updates and deletes campaigns", "Needs Amazon Ads API credentials, so in practice it's for API partners"],
+  ["Pinterest", "Alpha, invited partners only", "—", "Not open yet"],
+  ["LinkedIn", "None", "—", "Third-party tools only"],
+  ["Reddit", "None", "—", "Third-party tools only"],
+  ["Google Ads", `Yes, but you host it yourself (<a href="https://github.com/googleads/google-ads-mcp">googleads/google-ads-mcp</a>)`,
+    "Reads everything. Changes are limited to assets and labels: no campaigns, budgets, keywords, negatives or bids",
+    "Run it on your own Google Cloud project with your own OAuth client, then add it as a custom connector"],
+];
+
+export function adsMcpServersPage(baseUrl: string): string {
+  const checked = new Date(`${ADS_MCP_CHECKED}T00:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+  return layout({
+    baseUrl, path: "/ads-mcp-servers", wide: true,
+    title: "Official ads MCP servers: Meta, TikTok, Google and more | Camberstack",
+    description: "Which ad platforms have an official MCP server, what each can change, and how to add it to Claude or ChatGPT. Meta's and TikTok's are free, so don't pay for those. Google's is the one that stops short.",
+    jsonLd: {
+      "@context": "https://schema.org", "@type": "TechArticle",
+      headline: "Official ads MCP servers by ad platform", url: `${baseUrl}/ads-mcp-servers`, dateModified: ADS_MCP_CHECKED,
+      author: { "@type": "Organization", name: "Camberstack", url: baseUrl },
+    },
+    body: `
+${guideHero({
+  kicker: `Checked ${checked}`,
+  title: "Don't pay for a Meta or TikTok ads MCP",
+  lede: `Meta and TikTok now run their own MCP servers. They connect your ad accounts to Claude or ChatGPT, they can make changes,
+and neither lists a price. Third-party tools that bundle the same platforms charge anywhere from about $20 to several hundred dollars a month.
+Google is the exception: its official server is code you host yourself, and it can't change campaigns, budgets or keywords.
+That gap is the one Camberstack fills, and the only one we charge for.`,
+  ctas: `<a class="btn btn-lg" href="#platforms">See every platform</a><a class="btn btn-lg btn-ghost" href="#google">Why Google is different</a>`,
+})}
+${guideBody(`
+<h2 id="platforms">Which ad platforms have an official MCP server</h2>
+<table><tr><th>Platform</th><th>Official MCP</th><th>What it can change</th><th>How you add it</th></tr>
+${ADS_MCP_ROWS.map(([p, o, c, a]) => `<tr><td>${p}</td><td>${o}</td><td>${c}</td><td>${a}</td></tr>`).join("\n")}
+</table>
+<p class="muted small">From each platform's own documentation on ${checked}. These change month to month; if a row is out of date,
+<a href="mailto:${CONTACT}">tell us</a> and we'll fix it.</p>
+
+<h2>Meta and TikTok: use the official one</h2>
+<p>If you came here looking for a Meta ads MCP or a TikTok ads MCP, the platform's own server is the one to try first. It's run by the
+company that owns the ad system, it signs in with the business login you already have, and nobody stands between your AI and your
+account. In Claude, TikTok's is a one-click connector from the directory; Meta's is added by its URL, <code>https://mcp.facebook.com/ads</code>.</p>
+
+<h2>When a paid tool still earns its fee</h2>
+<p>Being honest about it: a paid multi-platform tool is still worth it when you need</p>
+<ul>
+<li>LinkedIn or Reddit ads, which have no official server</li>
+<li>changes on Microsoft Ads or Snapchat, whose official servers only read for now</li>
+<li>one report across every platform, with the numbers already blended, rather than asking each connector in turn</li>
+</ul>
+<p>For everything else, Claude and ChatGPT can hold several connectors in one conversation, so <em>"compare last month's cost per lead on
+Meta and Google"</em> works with the official Meta server and a Google Ads one side by side.</p>
+
+<h2 id="google">Google Ads: where the official server stops</h2>
+<p>Google's <a href="https://github.com/googleads/google-ads-mcp">open-source Google Ads MCP server</a> is good at reading: it runs any
+Google Ads query. But Google doesn't host it, so you run it yourself on a Google Cloud project with your own OAuth client, and its changes
+are limited to creating assets and managing labels. Adding negative keywords, moving budget, pausing a campaign, changing bids or
+building a campaign all still happen in Google Ads by hand.</p>
+<p>Camberstack is that missing hosted half:</p>
+<ul>
+<li><strong>Setup is a Google sign-in.</strong> No Cloud project, OAuth client or server. It's in <a href="/google-ads-claude">Claude's connector directory</a> and <a href="/google-ads-chatgpt">ChatGPT's</a>.</li>
+<li><strong>It makes the changes Google's server can't:</strong> negative keywords, budgets, bids and bid strategies, pausing, new Search, Performance Max, Display and YouTube campaigns (created paused), and <a href="/tools">more</a>.</li>
+<li><strong>You approve every change,</strong> and undo reverses it, apart from the few Google can't reverse, which warn you first.</li>
+<li><strong>The same connection reads</strong> <a href="/google-search-console-mcp">Search Console</a>, <a href="/google-analytics-mcp">Google Analytics 4</a>, <a href="/google-merchant-center-mcp">Merchant Center</a> and <a href="/google-tag-manager-mcp">Tag Manager</a>.</li>
+</ul>
+
+<h2>For agencies running several platforms</h2>
+<p>Bundled multi-platform tools price their agency plans at around $200 to $280 a month. The other way to cover the same clients:</p>
+<table><tr><th>Platform</th><th>Use</th><th>Cost</th></tr>
+<tr><td>Meta</td><td>Meta's official MCP</td><td>No price listed</td></tr>
+<tr><td>TikTok</td><td>TikTok's official MCP</td><td>No price listed</td></tr>
+<tr><td>Google Ads</td><td>Camberstack Agency</td><td>${AGENCY_PRICE_LABEL} for up to ${AGENCY_ACCOUNTS} Google Ads accounts; manager (MCC) accounts don't count</td></tr></table>
+<p>One Google Ads account is free on Camberstack, so you can try it on a client before paying anything.
+<a href="/#pricing">All plans</a>.</p>
+
+<h2>Questions</h2>
+<h3>Is Meta's ads MCP server free?</h3>
+<p>Meta doesn't list a price for it: you sign in with your Meta business login.
+Meta says its tools are still rolling out, so check <a href="https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-overview">its documentation</a> for what your account has.</p>
+<h3>Why does Camberstack charge for Google if Meta's is free?</h3>
+<p>Because Google doesn't host one. Someone has to run the server, hold Google's API access and keep it working as the API changes.
+One Google Ads account is free; paying covers ${capOn() ? "unlimited changes and " : ""}more accounts.</p>
+<h3>Is Camberstack affiliated with Google, Meta or TikTok?</h3>
+<p>No. Camberstack is independent, and connects to Google services only.</p>
+`)}
+${closer("Use the free official servers where they exist. Use Camberstack for Google Ads.", "One Google Ads account free, with Search Console, Analytics, Merchant Center and Tag Manager included.",
+  `<a class="btn btn-lg" href="/#setup">Connect Google Ads</a><a class="btn btn-lg btn-ghost" href="/#demo">Try the demo first</a>`)}
+`,
+  });
+}
+
+/**
  * The documentation page: the one URL the MCP directory listing, OAuth metadata and llms.txt point at for "how do I set
  * this up and what does it do". Links out to the per-app guides and /tools rather than repeating them.
  */
@@ -1523,7 +1634,7 @@ ${troubleshooting("Your AI app",
   "remove Camberstack from your AI app and add it again.")}
 
 <h2>More</h2>
-<p><a href="/tools">Every tool and its parameters</a> · <a href="${SOURCE_URL}">Source code (MIT)</a> · Questions: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
+<p><a href="/tools">Every tool and its parameters</a> · <a href="/ads-mcp-servers">Official MCP servers for Meta, TikTok and other ad platforms</a> · <a href="${SOURCE_URL}">Source code (MIT)</a> · Questions: <a href="mailto:${CONTACT}">${CONTACT}</a></p>`,
   });
 }
 
@@ -1874,7 +1985,7 @@ export function robotsTxt(baseUrl: string): string {
 }
 
 /** The indexable pages, in sitemap order. */
-export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/pt/google-ads-chatgpt", "/es/google-ads-chatgpt", "/google-search-console-mcp", "/google-analytics-mcp", "/google-merchant-center-mcp", "/google-tag-manager-mcp", "/tools", "/changelog", "/about", "/privacy", "/terms"];
+export const SITEMAP_PATHS = ["/", "/docs", "/google-ads-claude", "/google-ads-chatgpt", "/pt/google-ads-chatgpt", "/es/google-ads-chatgpt", "/google-search-console-mcp", "/google-analytics-mcp", "/google-merchant-center-mcp", "/google-tag-manager-mcp", "/ads-mcp-servers", "/tools", "/changelog", "/about", "/privacy", "/terms"];
 
 /** `lastmod`: each page's own last-changed date (lastmod.ts), never one date for the whole site. */
 export function sitemapXml(baseUrl: string, lastmod: Record<string, string>): string {
@@ -1905,6 +2016,7 @@ export function llmsTxt(baseUrl: string, tools: ToolDoc[]): string {
 - [Google Analytics MCP, GA4 (works without a Google Ads account)](${baseUrl}/google-analytics-mcp)
 - [Google Merchant Center MCP (works without a Google Ads account)](${baseUrl}/google-merchant-center-mcp)
 - [Google Tag Manager MCP (works without a Google Ads account)](${baseUrl}/google-tag-manager-mcp)
+- [Which ad platforms have an official MCP server (Meta, TikTok, Microsoft, Google and more)](${baseUrl}/ads-mcp-servers)
 - [Every tool, with its parameters](${baseUrl}/tools)
 - [Source (MIT)](${SOURCE_URL})
 - [Privacy](${baseUrl}/privacy)
