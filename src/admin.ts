@@ -547,9 +547,9 @@ function capPage(v: View): string {
 ${stat("At cap", num(at.length))}
 ${stat("Stopped", num(stopped.length))}
 </div>
-${card("Hit the cap", table(cols, hit.map(line), "Nobody yet."), `<small>at the cap now, or stopped by it · opens = next change frees up</small>`)}
+${card("Hit the cap", table(cols, hit.map(line), "Nobody yet."), `<small>at it or stopped</small>`)}
 ${card("Counting", table(["user", ["used", "r"], "opens", "seen"], rows.filter((r) => !r.atCap && !r.stops).map(counting), "Nothing yet."),
-    `<small>since ${new Date(changeCapFrom() * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · opens = oldest rolls off</small>`)}`;
+    `<small>since ${new Date(changeCapFrom() * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}</small>`)}`;
 }
 
 /**
