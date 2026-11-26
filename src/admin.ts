@@ -402,7 +402,7 @@ function usersPage(v: View): string {
   const users = v.all ? r.users : r.users.filter((u) => (u.last_seen_at ?? u.created_at) >= since);
   const shown = v.all && users.length < r.funnel.all.connected ? `${users.length} of ${r.funnel.all.connected} users` : `${users.length} users`;
   const toggle = v.all ? `all time · <a href="${qs(v)}">seen ${inW(v.days)}</a>` : `seen ${inW(v.days)} · <a href="${qs(v)}&all=1">all</a>`;
-  return churnCard(v) + switchingCard(v) + askedPlansCard(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
+  return switchingCard(v) + askedPlansCard(v) + retentionCard(v) + sharingCard(v, true) + card(shown, table(["user", "plan", "signed up", "last seen", ["calls", "r"], ["errors", "r"], ["applied", "r"], ["accounts", "r"], "app"],
     users.map((u) => [userLink(v, u.id, u.email), planBadge(u.plan, u.paying),
       when(u.created_at), when(u.last_seen_at), num(u.calls), bad(u.errors), num(u.applied), usedOf(u.used_accounts, u.ads_accounts, u.ads_managers),
       `<span class="muted">${esc(u.client ?? "—")}</span>`]), "No users.", "users"),
@@ -418,15 +418,6 @@ function sharingCard(v: View, always = false): string {
     return [s.kind, cid(s.customer_id), users.map((u) => `${userLink(v, u.id, u.email)} ${planBadge(u.plan, true)}`).join("<br>"),
       `<span class="r">${when(s.last)}</span>`];
   }), "No ad or manager account is shared by two logins."), `<small>ad account: tools run by 2+ users · manager: reachable by 2+</small>`);
-}
-
-/** How many regular users have gone quiet for longer than is normal (report.ts churn): a count only (operator, 2026-11-12). */
-function churnCard(v: View): string {
-  const c = v.report.churn;
-  return `<div class="stats" title="Regular: active on 2+ days, and applied a real change or made more requests than the median user (${c.medianCalls}). Counted once quiet longer than ${c.p90} days (90% of users are back by then) and longer than their own longest break. Active again, they drop off.">
-${stat("Regulars gone quiet", bad(c.overdue.length), "quiet past the norm")}
-</div>
-`;
 }
 
 /** Users not paying who asked about plans (report.ts askedPlans): the warm list. */
