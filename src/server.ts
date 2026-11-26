@@ -108,6 +108,7 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
     refreshPlan: (userId) => billing.refreshPlan(userId),
     grantLink: (kind, userId) => grants.link(kind, userId), ...overrides,
   };
+  const accountDeps: SessionDeps = { ...deps, billingLink: overrides.billingLink ?? ((kind, userId) => billing.link(kind, userId, "account")) };
   const mcpUrl = new URL(`${cfg.baseUrl}/mcp`);
   const logCall = db.prepare(`INSERT INTO tool_calls (at, user_id, client_id, tool, customer_id, ok, error, ms, bytes, query_shape, service, grant_offered, flags)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -191,7 +192,8 @@ export function createApp(cfg: Config, db: DB, overrides: Overrides = {}): Servi
 
   const account = mountAccount(app, {
     db, google: cfg.google, baseUrl: cfg.baseUrl, fetch: overrides.fetch,
-    session: (userId, o) => UserSession.load(deps, userId, o),
+    // The account page's buttons come from the same plan() as the billing tool; label their clicks "account", not "tool".
+    session: (userId, o) => UserSession.load(accountDeps, userId, o),
     adminUrl: cfg.adminUrl,
   });
   const feedbackDeps = {
