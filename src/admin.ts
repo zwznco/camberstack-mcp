@@ -541,12 +541,14 @@ function capPage(v: View): string {
     r.stops ? `<span title="last ${r.lastStop ? date(r.lastStop) : ""} UTC">${bad(r.stops)}</span>` : `<span class="n dim">0</span>`,
     r.emailed ? `<span title="${date(r.emailed)} UTC">✓</span>` : `<span class="dim">—</span>`];
   const cols: (string | [string, "r"])[] = ["user", ["used", "r"], "opens", ["stops", "r"], "mail"];
+  // Counting: nobody here was stopped or mailed (both are "Hit the cap" facts), so last seen replaces those two columns.
+  const counting = (r: (typeof rows)[number]) => [...line(r).slice(0, 3), when(r.lastSeen)];
   return `<div class="stats">
 ${stat("At cap", num(at.length))}
 ${stat("Stopped", num(stopped.length))}
 </div>
 ${card("Hit the cap", table(cols, hit.map(line), "Nobody yet."), `<small>at the cap now, or stopped by it · opens = next change frees up</small>`)}
-${card("Counting", table(cols, rows.filter((r) => !r.atCap && !r.stops).map(line), "Nothing yet."),
+${card("Counting", table(["user", ["used", "r"], "opens", "seen"], rows.filter((r) => !r.atCap && !r.stops).map(counting), "Nothing yet."),
     `<small>since ${new Date(changeCapFrom() * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · opens = oldest rolls off</small>`)}`;
 }
 

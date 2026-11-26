@@ -93,6 +93,8 @@ export interface CapRow {
   /** At the cap: when the next change opens. Below it: when the oldest counted approval rolls off (null with none). */
   windowEnds: number | null;
   stops: number; lastStop: number | null; emailed: number | null;
+  /** users.last_seen_at: their last tool call. */
+  lastSeen: number | null;
 }
 
 /**
@@ -103,8 +105,8 @@ export function capUsage(db: DB, exclude: string[], t = Math.floor(Date.now() / 
   const cap = changeCap();
   if (!cap) return [];
   const from = changeCapFrom(), win = ACCOUNT_WINDOW_DAYS * 86400, ex = new Set(exclude.map((e) => e.toLowerCase()));
-  const users = (db.prepare(`SELECT id, email, plan, coalesce(stripe_sub, '') != '' paying, plan_reset_at FROM users`).all() as
-    { id: string; email: string; plan: string; paying: number; plan_reset_at: number | null }[]).filter((u) => !ex.has(u.email.toLowerCase()));
+  const users = (db.prepare(`SELECT id, email, plan, coalesce(stripe_sub, '') != '' paying, plan_reset_at, last_seen_at FROM users`).all() as
+    { id: string; email: string; plan: string; paying: number; plan_reset_at: number | null; last_seen_at: number | null }[]).filter((u) => !ex.has(u.email.toLowerCase()));
   const stops = db.prepare(`SELECT count(*) n, max(at) last FROM tool_calls WHERE user_id = ? AND error LIKE '${CHANGE_LIMIT_PREFIX}%' AND at >= ?`);
   const mailed = db.prepare(`SELECT sent_at FROM email_log WHERE user_id = ? AND kind = 'change_limit'`);
   const gpt = db.prepare(`SELECT 1 FROM tool_calls c JOIN clients cl ON cl.client_id = c.client_id WHERE c.user_id = ?
@@ -118,7 +120,7 @@ export function capUsage(db: DB, exclude: string[], t = Math.floor(Date.now() / 
     rows.push({ id: u.id, email: u.email, plan: u.plan, paying: Boolean(u.paying), chatgpt: Boolean(gpt.get(u.id)),
       used: counted.length, cap, atCap,
       windowEnds: atCap ? counted[counted.length - cap]! + win : counted.length ? counted[0]! + win : null,
-      stops: st.n, lastStop: st.last, emailed: (mailed.get(u.id) as { sent_at: number } | undefined)?.sent_at ?? null });
+      stops: st.n, lastStop: st.last, emailed: (mailed.get(u.id) as { sent_at: number } | undefined)?.sent_at ?? null, lastSeen: u.last_seen_at });
   }
   return rows.sort((a, b) => Number(b.atCap) - Number(a.atCap) || b.stops - a.stops || b.used - a.used);
 }
