@@ -525,17 +525,18 @@ const ends = (t: number | null) => {
 
 /**
  * The change cap (FREE_CHANGE_CAP; projects/camberstack/PRICING-TEST.md): who hit it, then everyone else counting toward it
- * (dropped 2026-11-12, back 2026-11-13 at the operator's ask; Free only, since paid plans have no cap). Hit = at the cap now, or stopped by it in the window (so one
- * who then paid or rolled off stays listed).
+ * (dropped 2026-11-12, back 2026-11-13 at the operator's ask). Free only: anyone on another plan, paid or complimentary, has no cap
+ * and drops off the page (operator, 2026-11-26; the "Paid after" stat went with it). Hit = at the cap now, or stopped by it in the
+ * window (so one who rolled off stays listed).
  * Kept narrow for a phone: five columns, short labels, plan and app as chips beside the email, details on hover. Not
  * filtered by ?days: the cap's own 30-day window decides.
  */
 function capPage(v: View): string {
   const cap = changeCap();
   if (!cap) return card("Change cap", `<p class="empty">Cap is off.</p>`);
-  const rows = v.cap, at = rows.filter((r) => r.atCap), hit = rows.filter((r) => r.atCap || r.stops), stopped = rows.filter((r) => r.stops), paid = stopped.filter((r) => r.paying);
+  const rows = v.cap.filter((r) => r.plan === "free"), at = rows.filter((r) => r.atCap), hit = rows.filter((r) => r.atCap || r.stops), stopped = rows.filter((r) => r.stops);
   const line = (r: (typeof rows)[number]) => [
-    `${userLink(v, r.id, r.email)}${r.plan === "free" ? "" : ` ${planBadge(r.plan, r.paying)}`}${r.chatgpt ? ` <span class="chip">GPT</span>` : ""}`,
+    `${userLink(v, r.id, r.email)}${r.chatgpt ? ` <span class="chip">GPT</span>` : ""}`,
     `${num(r.used)}<span class="dim">/${cap}</span>`, ends(r.windowEnds),
     r.stops ? `<span title="last ${r.lastStop ? date(r.lastStop) : ""} UTC">${bad(r.stops)}</span>` : `<span class="n dim">0</span>`,
     r.emailed ? `<span title="${date(r.emailed)} UTC">✓</span>` : `<span class="dim">—</span>`];
@@ -543,10 +544,9 @@ function capPage(v: View): string {
   return `<div class="stats">
 ${stat("At cap", num(at.length))}
 ${stat("Stopped", num(stopped.length))}
-${stat("Paid after", num(paid.length))}
 </div>
 ${card("Hit the cap", table(cols, hit.map(line), "Nobody yet."), `<small>at the cap now, or stopped by it · opens = next change frees up</small>`)}
-${card("Counting", table(cols, rows.filter((r) => r.plan === "free" && !r.atCap && !r.stops).map(line), "Nothing yet."),
+${card("Counting", table(cols, rows.filter((r) => !r.atCap && !r.stops).map(line), "Nothing yet."),
     `<small>since ${new Date(changeCapFrom() * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · opens = oldest rolls off</small>`)}`;
 }
 
