@@ -1914,7 +1914,9 @@ export class UserSession {
     const left = Math.max(0, cap - used.length);
     const window = (i: number) => new Date((used[i]! + ACCOUNT_WINDOW_DAYS * 86400) * 1000).toISOString().slice(0, 10);
     // The next change opens when the cap-th most recent ages out; this proposal fits once enough have aged out for all n.
-    const opens = window(Math.max(0, used.length - cap));
+    // Nothing counted yet (a first proposal bigger than the whole cap): nothing ages out, so no date. It's only shown when
+    // none are left, which needs a count of at least cap. Prod, 2026-11-25: used[0] undefined threw "Invalid time value".
+    const opens = used.length ? window(Math.max(0, used.length - cap)) : null;
     const fits = n <= cap ? window(used.length + n - cap - 1) : null;
     const plan = this.chatgpt ? "The current plan" : "The Free plan";
     const common = { stop: "change_limit", changes_applied: used.length, changes_included: cap, changes_left: left, proposal_changes: n,

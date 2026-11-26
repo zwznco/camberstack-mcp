@@ -3623,6 +3623,17 @@ describe("OAuth + MCP end to end", () => {
       const status = (id: string) => (db.prepare("SELECT status FROM proposals WHERE id = ?").get(id) as { status: string }).status;
       const count = () => db.prepare("SELECT count(*) n FROM proposals WHERE user_id = ? AND status = 'applied'").get(uid) as { n: number };
 
+      // Nothing applied yet and more changes than the whole cap: the stop, not a crash on an empty count.
+      // Prod, 2026-11-25/26: 3 applies (14 and 12 changes, cap 10, none used) failed with "Invalid time value".
+      const first: string[] = [];
+      for (let k = 0; k < 5; k++) first.push(await negative(`first five ${k}`));
+      const fresh = await call(t, "apply_changes", { proposal_ids: first });
+      expect(fresh.isError).toBeFalsy();
+      expect(fresh.json).toMatchObject({ stop: "change_limit", changes_applied: 0, changes_left: 4, proposal_changes: 5, proposal_fits_on: null, next_change_opens: null });
+      expect(fresh.text).toContain("A smaller proposal of up to 4 can be applied now");
+      expect(first.map(status)).toEqual(Array(5).fill("proposed"));
+      for (const id of first) await call(t, "discard_proposal", { proposal_id: id });
+
       // Two proposals applied together: one merged proposal, both changes in, and both count.
       const a = await negative("batch one"), b = await pause();
       const both = await call(t, "apply_changes", { proposal_ids: [a, b] });

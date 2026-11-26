@@ -7,6 +7,10 @@ export interface Release { version: string; date: string; summary: string; items
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.49.3", date: "2026-11-26",
+    summary: "On Free, applying more changes at once than the plan includes now says so and how many fit, instead of failing with a date error.",
+  },
+  {
     version: "0.49.2", date: "2026-11-25",
     summary: "When a Merchant Center report query fails, your AI is told everything that's wrong with it at once, so it fixes it in one try.",
     items: [
