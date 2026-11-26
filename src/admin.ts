@@ -252,7 +252,7 @@ h1{font-size:18px;font-weight:600;margin:0;letter-spacing:-.2px}h2{font-size:13p
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;min-width:0}
 .card>header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
 .card>header{gap:12px}.card>header small{color:var(--dim);font-size:12px;text-align:right}
-.ret{display:inline-block;min-width:44px;padding:0 6px;border-radius:4px}.ret.open{border:1px dashed var(--line);color:var(--dim)}.card>.pad{padding:14px}
+.card>.pad{padding:14px}
 .mfoot{display:none}.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%}
 th{font-weight:500;color:var(--muted);font-size:12px;text-align:left;padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
 td{padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--hover)}
@@ -277,7 +277,7 @@ table.users td:nth-child(4){margin-left:auto;color:var(--dim);font-size:12px}
 table.stack thead{display:none}table.stack tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:10px 14px;border-bottom:1px solid var(--line)}
 table.stack tr:last-child{border-bottom:0}table.stack td{padding:0;border:0;font-size:12px;color:var(--muted)}table.stack td.wrap{flex-basis:100%;min-width:0;color:var(--fg);font-size:13px}
 table.stack .err{max-width:none}
-table.cohorts th,table.cohorts td{padding:7px 6px}table.cohorts .ret{min-width:38px;padding:0 3px}}
+}
 </style></head><body><div class="app">
 <aside><div class="brand">camberstack<span>/admin</span></div><nav>${nav.map(([p, l, c]) =>
   `<a class="${p === path ? "on" : ""}" href="${p}${qs(v)}">${l}<em>${c}</em></a>`).join("")}</nav>
@@ -379,21 +379,16 @@ function resultsCard(v: View): string {
     `<small title="A tool told the AI a change's before/after results were ready; opened = change_results on that account within the hour">${lastW(v.days)}</small>`);
 }
 
-/** Weekly cohorts (report.ts retention): of each signup week's users who applied a change, the share applying one N weeks on, and who pays. Not windowed. */
+/** Retention (report.ts retention), as one share. Not windowed. */
 function retentionCard(v: View): string {
-  const rows = v.report.retention;
-  // A week still under way for someone in the cohort is outlined and dim: it can only go up, so it isn't a drop yet.
-  const cell = (n: number, of: number, open: boolean) => {
-    const p = Math.round((100 * n) / Math.max(1, of));
-    return open ? `<span class="ret open" title="${n} of ${of} so far · week still under way">${p}%</span>`
-      : `<span class="ret" style="background:color-mix(in srgb,var(--bar) ${Math.round(p * 0.6)}%,transparent)" title="${n} of ${of}">${p}%</span>`;
-  };
-  const wks = Array.from({ length: RETENTION_WEEKS }, (_, n): [string, "r"] => [`W${n}`, "r"]);
-  // The pricing read (projects/camberstack/PRICING-TEST.md): of those who applied a change, how many keep applying, and who pays.
-  return card("Retention", table(["signup week", ["users", "r"], ["applied", "r"], ["paid", "r"], ...wks],
-    rows.map((c) => [c.week, num(c.users), num(c.appliers), num(c.paid),
-      ...Array.from({ length: RETENTION_WEEKS }, (_, n) => n < c.applied.length && c.appliers ? cell(c.applied[n]!, c.appliers, n >= c.done) : "")]),
-    `No signups in the last ${RETENTION_WEEKS} weeks.`, "cohorts"), `<small title="Of each week's users who ever applied a real-account change, the share that applied one 7n–7n+7 days after their own signup. Demo account excluded. Paid: on a paid plan now.">all time · applied in week N, of appliers</small>`);
+  // One number (operator, 2026-11-26; was a weekly cohort grid): of users who applied a real-account change, the share that
+  // applied one 7–14 days after their own signup. Pooled over cohorts whose second week has ended for everyone in them.
+  const ended = v.report.retention.filter((c) => c.done > 1);
+  const of = ended.reduce((a, c) => a + c.appliers, 0), n = ended.reduce((a, c) => a + (c.applied[1] ?? 0), 0);
+  return `<div class="stats" title="Of users who applied a real-account change (demo excluded), those who applied one 7–14 days after signing up. Signups in the last ${RETENTION_WEEKS} weeks whose second week has ended.">
+${stat("Still applying in week 2", of ? `${Math.round((100 * n) / of)}%` : "—", `${n} of ${of} who applied`)}
+</div>
+`;
 }
 
 function usersPage(v: View): string {
